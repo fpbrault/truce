@@ -21,8 +21,9 @@ cd my-plugin
 # Run the plugin standalone — no DAW needed
 cargo truce run
 
-# Build and install (CLAP by default)
+# Build and install
 cargo truce install --clap
+cargo truce install --vst3
 
 # Open your DAW, scan for plugins, load "MyPlugin"
 ```
@@ -39,6 +40,8 @@ cargo truce install --aax        # AAX (requires AAX SDK)
 
 cargo truce validate             # auval + pluginval + clap-validator on installed plugins
 ```
+
+Refer to (docs/formats)[docs/formats] on setting up AU and AAX builds as they need additional env vars.
 
 Build without installing:
 
