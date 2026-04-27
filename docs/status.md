@@ -1,6 +1,6 @@
 # truce — Project Status
 
-Updated 2026-04-26. Version 0.13.1.
+Updated 2026-04-27. Version 0.14.1.
 
 ## Summary
 
