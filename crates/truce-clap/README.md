@@ -9,8 +9,11 @@ Bridges a truce `PluginExport` implementation to the
 the CLAP entry point, plugin descriptor, and all required extension callbacks so
 the plugin appears as a native CLAP plugin to any compatible host.
 
-This crate is activated by the `clap` feature on the `truce` crate and is not
-typically depended on directly.
+User plugins typically take a direct optional dep on this crate
+(`truce-clap = { workspace = true, optional = true }`) gated behind a
+`clap` Cargo feature; the `truce::plugin!` macro emits a
+`::truce_clap::export_clap!(...)` call when that feature is on. `cargo
+truce build --clap` / `install --clap` selects it at the CLI.
 
 ## What it handles
 

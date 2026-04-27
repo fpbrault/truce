@@ -1,31 +1,37 @@
 # truce-loader
 
-Hot-reloadable plugin logic for truce.
+Plugin runtime + hot-reload infrastructure for truce.
 
 ## Overview
 
-Splits a plugin into two parts: a static shell (the binary loaded by the DAW)
-and a hot-reloadable logic dylib that can be swapped at runtime without
-restarting the host. When you recompile your plugin logic, the shell detects
-the new dylib and loads it on the fly, preserving audio continuity.
+Provides the runtime that wires a plugin's `PluginLogic` to its host-side
+shell. Used by every truce plugin, in two modes:
 
-Developers implement the `PluginLogic` trait -- a safe Rust trait -- and export
-it via `#[no_mangle]` functions. The shell loads the dylib with `libloading`,
-verifies ABI compatibility, and delegates audio processing and GUI rendering to
-the trait object.
+- **Static (default).** `export_static!` embeds the logic directly into
+  the format wrapper at compile time. Zero runtime overhead, single dylib.
+- **Hot-reload (opt-in).** `export_plugin!` exports the logic across a
+  `#[no_mangle]` C ABI in a separate dylib; the shell loads it via
+  `libloading`, verifies ABI compatibility, and swaps the trait object
+  on rebuild without restarting the DAW. Preserves audio continuity.
 
-This is the infrastructure behind the `hot-reload` feature flag in the `truce` crate.
+Developers implement the safe `PluginLogic` trait. The `truce::plugin!`
+macro emits the right `export_*!` call based on the `hot-reload`
+Cargo feature on the `truce` facade.
 
-## Key types
+## Key types and macros
 
-- **`PluginLogic`** -- trait for the reloadable half of a plugin
-- **`LogicHost`** -- shell-side dylib loader and hot-swap manager
+- **`PluginLogic`** -- safe trait every plugin implements
+- **`HotShell`** -- shell-side dylib loader and hot-swap manager
+- **`StaticShell`** -- shell-side wrapper that embeds the logic at compile time
+- **`export_static!`** -- emits the `__HotShellWrapper` for static mode
+- **`export_plugin!`** -- emits the `#[no_mangle]` C ABI for hot-reload mode
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
-| `shell` | Enable dylib loading via `libloading` |
+| `shell` | Enable dylib loading via `libloading` (turns on `HotShell`) |
+| `hot-debug` | Verbose hot-reload diagnostics (load timings, ABI checks) |
 | `gpu` | GPU rendering support in the shell |
 
 ## Usage

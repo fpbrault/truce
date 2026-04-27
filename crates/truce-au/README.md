@@ -11,9 +11,10 @@ is selected by the `TRUCE_AU_VERSION` env var that `cargo truce` sets
 per-invocation. The Rust dylib is identical across versions; only the
 C / Swift shim and the bundle shape differ.
 
-This crate only builds on macOS and isn't typically depended on directly —
-`truce-xtask` / `cargo truce` select it automatically when bundling AU
-plugins.
+This crate only builds on macOS. User plugins opt into AU by adding
+`truce-au = { workspace = true, optional = true }` and gating it behind
+an `au` Cargo feature; `cargo truce build --au2 / --au3 / install /
+package` picks the right `TRUCE_AU_VERSION` and bundle shape per format.
 
 ## What it handles
 

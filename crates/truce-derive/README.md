@@ -14,6 +14,20 @@ optional env-var overrides; see the `truce-build` crate.)
 The macro is re-exported through `truce::plugin_info!()`, so plugin authors do
 not need to depend on this crate directly.
 
+## Why a separate crate (vs. `truce-params-derive`)
+
+Both proc-macro crates expose derives consumed by the `truce` facade,
+but they're kept separate for two reasons:
+
+- **Compile-time deps.** `plugin_info!()` reads and parses `truce.toml`,
+  which means this crate pulls in `toml` + `serde` (with derive). That's
+  a non-trivial proc-macro compile cost. `truce-params-derive` is pure
+  `syn` + `quote` and stays cheap.
+- **Different consumers.** `truce-params-derive` is also a direct dep
+  of `truce-loader`. This crate is only consumed by the `truce` facade.
+  Merging would drag the toml-reading proc-macro into the loader's
+  compile graph for no reason.
+
 ## Key macro
 
 - **`plugin_info!()`** -- expands to a `PluginInfo` struct populated from `truce.toml`

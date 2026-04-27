@@ -15,6 +15,9 @@ single import path for everything.
 - `FloatParam`, `IntParam`, `BoolParam`, `EnumParam`, `Smoother` -- from truce-params
 - `#[derive(Params)]`, `#[derive(ParamEnum)]` -- from truce-params-derive
 - `plugin_info!()` -- from truce-derive
+- `PluginLogic`, `export_plugin!`, `export_static!`, `HotShell` -- from truce-loader
+- The `truce::plugin!` macro -- generates all the format-export glue from
+  one declaration
 
 ## Features
 
@@ -22,8 +25,16 @@ single import path for everything.
 |---------|-------------|
 | `clap` (default) | Enable CLAP format export |
 | `vst3` | Enable VST3 format export |
-| `dev` | Hot-reload support for development |
-| `gpu` | GPU-accelerated GUI rendering |
+| `vst2` | Enable VST2 format export (legacy — see `Cargo.toml` note) |
+| `lv2` | Enable LV2 format export |
+| `hot-reload` | Hot-reloadable logic dylib (turns on `truce-loader/shell`) |
+| `hot-debug` | Verbose hot-reload diagnostics |
+
+AU and AAX live in their own optional `truce-au` / `truce-aax` deps
+(macOS-only AU; macOS/Windows AAX with the SDK + PACE wraptool). User
+plugins gate them behind their own `au` / `aax` features rather than
+through the facade. See `examples/truce-example-gain/Cargo.toml` for
+the conventional pattern.
 
 ## Usage
 

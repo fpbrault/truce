@@ -9,8 +9,11 @@ by Pro Tools. Instead of linking against the AAX SDK, the Rust code exports C
 ABI functions that a pre-built AAX template binary loads at runtime via
 `dlopen`. This means no AAX SDK dependency exists in the Rust source.
 
-This crate is not depended on directly -- the `truce-xtask` build system
-selects it automatically when bundling AAX plugins.
+User plugins opt into AAX by adding `truce-aax = { workspace = true,
+optional = true }` and gating it behind an `aax` Cargo feature. Building
+the actual `.aaxplugin` bundle (which invokes the AAX template build, PACE
+wrapping, and codesigning) is driven by `cargo truce build --aax` /
+`install --aax` / `package --formats aax`.
 
 ## What it handles
 
