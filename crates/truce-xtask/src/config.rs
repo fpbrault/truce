@@ -24,18 +24,6 @@ pub(crate) struct Config {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) packaging: PackagingConfig,
-    /// Per-project install/package scope policy. See
-    /// `docs/internal/install-scope.md` for the precedence table.
-    #[serde(default)]
-    pub(crate) install: InstallConfig,
-}
-
-#[derive(Deserialize, Default)]
-pub(crate) struct InstallConfig {
-    /// `"user"`, `"system"`, or `"ask"`. Absent = OS default
-    /// (user on every platform). CLI flags (`--user` / `--system`)
-    /// override.
-    pub(crate) default_scope: Option<String>,
 }
 
 // Windows-only config fields. Consumed by `packaging_windows.rs`, which
@@ -163,12 +151,25 @@ pub(crate) struct MacosPackagingConfig {
 }
 
 #[derive(Deserialize, Default)]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct PackagingConfig {
     #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) formats: Vec<String>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) welcome_html: Option<String>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) license_html: Option<String>,
+    /// Preferred scope for `cargo truce package`: `"user"`,
+    /// `"system"`, or `"ask"`. Absent = `"ask"` (the indie-installer
+    /// convention where the end user picks at install time). CLI
+    /// flags (`--user` / `--system` / `--ask`) override.
+    /// Linux has no packaging pipeline, so the field is read only on
+    /// macOS / Windows.
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "windows")),
+        allow(dead_code)
+    )]
+    pub(crate) preferred_scope: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -18,7 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::install_scope::{note_once, InstallScope, PkgScope};
+use crate::install_scope::{note_once, PkgScope};
 use crate::{
     build_aax_template, cargo_build, detect_default_features, load_config, project_root,
     read_workspace_version, release_lib_for_target, resolve_aax_sdk_path, rustup_has_target,
@@ -108,7 +108,7 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     let archs = opts.archs();
     let universal = archs.len() > 1;
 
-    // Scope resolution: CLI > truce.toml [install] default_scope >
+    // Scope resolution: CLI > truce.toml [packaging] preferred_scope >
     // OS default (`--ask`).
     let scope = resolve_pkg_scope(opts.cli_scope, &config)?;
     eprintln!("Package scope: {}", scope.label());
@@ -286,10 +286,8 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
     if let Some(s) = cli {
         return Ok(s);
     }
-    if let Some(ref raw) = config.install.default_scope {
-        let toml =
-            InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
-        return Ok(toml.for_package());
+    if let Some(ref raw) = config.packaging.preferred_scope {
+        return PkgScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() });
     }
     Ok(PkgScope::os_default())
 }

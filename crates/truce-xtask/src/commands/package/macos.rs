@@ -8,7 +8,7 @@ use super::stage::{
     write_postinstall_script,
 };
 use super::PkgFormat;
-use crate::install_scope::{note_once, InstallScope, PkgScope};
+use crate::install_scope::{note_once, PkgScope};
 use crate::{
     cargo_build_for_arch, copy_dir_recursive, deployment_target, detect_default_features,
     lipo_into, load_config, project_root, read_workspace_version, release_lib_for_target, Config,
@@ -68,9 +68,10 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         i += 1;
     }
 
-    // Scope resolution: CLI > truce.toml [install] default_scope >
-    // OS default (`--ask` on macOS / Windows). Mirrors install,
-    // except `"ask"` in toml stays `Ask` for the package command.
+    // Scope resolution: CLI > truce.toml [packaging] preferred_scope >
+    // OS default (`--ask`). `cargo truce install` has no toml
+    // override — the install scope is a per-invocation developer
+    // choice, not a project-wide one.
     let scope = resolve_pkg_scope(cli_scope, &config)?;
     eprintln!("Package scope: {}", scope.label());
 
@@ -618,10 +619,8 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
     if let Some(s) = cli {
         return Ok(s);
     }
-    if let Some(ref raw) = config.install.default_scope {
-        let toml =
-            InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
-        return Ok(toml.for_package());
+    if let Some(ref raw) = config.packaging.preferred_scope {
+        return PkgScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() });
     }
     Ok(PkgScope::os_default())
 }

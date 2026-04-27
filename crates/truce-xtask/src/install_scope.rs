@@ -1,11 +1,11 @@
 //! Per-user vs per-machine plug-in install scope.
 //!
-//! Phase 1 of `docs/internal/install-scope.md`: every plug-in install
-//! path flows through [`InstallScope`], the user picks one via
-//! `--user` / `--system` (or `[install] default_scope` in
-//! `truce.toml`), and three formats with platform-specific constraints
-//! silently fall back to system scope when `--user` isn't reliably
-//! supported (AAX, AU v3, Windows VST2). See
+//! Every plug-in install path flows through [`InstallScope`]; the
+//! developer picks scope via `--user` / `--system` on
+//! `cargo truce install`, with `--ask` added for `cargo truce
+//! package` ([`PkgScope`]). Three formats with platform-specific
+//! constraints silently fall back to system scope when `--user`
+//! isn't reliably supported (AAX, AU v3, Windows VST2). See
 //! [`effective_scope`] for the fallback policy.
 
 use std::path::PathBuf;
@@ -32,28 +32,11 @@ pub(crate) enum Format {
 }
 
 impl InstallScope {
-    /// Default install scope for the current OS when neither the CLI
-    /// flag nor `[install] default_scope` in `truce.toml` is set.
-    /// Phase 1 hard-flips macOS and Windows to user; Linux is
-    /// unchanged (every supported path is user-scope already).
+    /// Default install scope for the current OS when no CLI flag is
+    /// set. User on every platform: avoids the password prompt in
+    /// the dev loop and matches indie-installer convention.
     pub(crate) fn os_default() -> Self {
         Self::User
-    }
-
-    /// Parse the value side of `[install] default_scope = "..."`.
-    /// `"ask"` resolves to `None` here; the caller decides how to
-    /// resolve "ask" for the specific command (install: user;
-    /// package: actually-ask).
-    pub(crate) fn parse_toml_value(s: &str) -> Result<TomlScope, String> {
-        match s {
-            "user" => Ok(TomlScope::User),
-            "system" => Ok(TomlScope::System),
-            "ask" => Ok(TomlScope::Ask),
-            other => Err(format!(
-                "[install] default_scope: unknown value {other:?} \
-                 (expected \"user\", \"system\", or \"ask\")"
-            )),
-        }
     }
 
     /// True when writing to this scope's plug-in directory needs
@@ -64,37 +47,6 @@ impl InstallScope {
         match self {
             Self::User => false,
             Self::System => cfg!(target_os = "macos") || cfg!(target_os = "windows"),
-        }
-    }
-}
-
-/// `truce.toml` `[install] default_scope` value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TomlScope {
-    User,
-    System,
-    Ask,
-}
-
-impl TomlScope {
-    /// Resolve the toml setting for the `install` command. `"ask"`
-    /// becomes `User` since `cargo truce install` has no end user to
-    /// prompt and user is the indie default.
-    pub(crate) fn for_install(self) -> InstallScope {
-        match self {
-            Self::User | Self::Ask => InstallScope::User,
-            Self::System => InstallScope::System,
-        }
-    }
-
-    /// Resolve the toml setting for the `package` command. `"ask"`
-    /// stays `Ask` — the end user picks at install time.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(crate) fn for_package(self) -> PkgScope {
-        match self {
-            Self::User => PkgScope::User,
-            Self::System => PkgScope::System,
-            Self::Ask => PkgScope::Ask,
         }
     }
 }
@@ -114,10 +66,26 @@ pub(crate) enum PkgScope {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 impl PkgScope {
     /// `cargo truce package` default when no flag and no
-    /// `[install] default_scope` is set: ask the end user. Matches
-    /// indie-installer convention (u-he, Valhalla, FabFilter).
+    /// `[packaging] preferred_scope` is set: ask the end user.
+    /// Matches indie-installer convention (u-he, Valhalla, FabFilter).
     pub(crate) fn os_default() -> Self {
         Self::Ask
+    }
+
+    /// Parse the value side of `[packaging] preferred_scope = "..."`.
+    /// `cargo truce install` has no toml override; only package
+    /// supports it because the developer's choice at packaging time
+    /// is the install-time UX an end user will see.
+    pub(crate) fn parse_toml_value(s: &str) -> Result<Self, String> {
+        match s {
+            "user" => Ok(Self::User),
+            "system" => Ok(Self::System),
+            "ask" => Ok(Self::Ask),
+            other => Err(format!(
+                "[packaging] preferred_scope: unknown value {other:?} \
+                 (expected \"user\", \"system\", or \"ask\")"
+            )),
+        }
     }
 
     pub(crate) fn label(self) -> &'static str {

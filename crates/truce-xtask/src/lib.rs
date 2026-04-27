@@ -113,8 +113,7 @@ Commands:
       `--system` to install into the shared system directories (sudo
       / admin required). AAX and AU v3 are always system-scope, and
       `--user` for these formats falls back silently with a one-line
-      note. Set [install] default_scope = \"user\"|\"system\"|\"ask\" in
-      truce.toml to change the default for a project.
+      note.
       --clap         CLAP only (no sudo)
       --vst3         VST3 only
       --vst2         VST2 only (legacy format — see truce/Cargo.toml note)
@@ -206,7 +205,7 @@ Commands:
                    when AAX/AU v3 are present).
       --system     Hard-lock to system paths (today's behavior).
 
-      Set `[install] default_scope = \"user\" | \"system\" | \"ask\"`
+      Set `[packaging] preferred_scope = \"user\" | \"system\" | \"ask\"`
       in `truce.toml` to override the default for a project.
 
   build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--hot-reload] [--debug]

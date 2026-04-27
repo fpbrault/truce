@@ -3,7 +3,7 @@
 
 #![allow(unused_imports)]
 
-use crate::install_scope::{effective_scope, note_once, Format, InstallScope, TomlScope};
+use crate::install_scope::{effective_scope, note_once, Format, InstallScope};
 use crate::util::fs_ctx;
 use crate::{
     cargo_build, codesign_bundle, deployment_target, detect_default_features, dirs, load_config,
@@ -70,7 +70,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--ask" => {
                 return Err(
                     "--ask is not valid for `cargo truce install` (no end user to prompt). \
-                     Use --user or --system, or set [install] default_scope in truce.toml."
+                     Use --user or --system."
                         .into(),
                 );
             }
@@ -88,10 +88,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         i += 1;
     }
 
-    // Scope resolution: CLI flag > truce.toml [install] default_scope >
-    // OS default (user on every platform). The doc's precedence table
-    // is the source of truth.
-    let scope = resolve_scope(cli_scope, &config)?;
+    // Scope resolution: CLI flag wins, otherwise OS default (user
+    // on every platform).
+    let scope = cli_scope.unwrap_or_else(InstallScope::os_default);
 
     if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
         // No format flags specified — enable all formats that the project supports.
@@ -450,23 +449,6 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
     eprintln!("\nDone. Restart your DAW to rescan.");
     Ok(())
-}
-
-/// Resolve the install scope from CLI flag, `truce.toml [install]
-/// default_scope`, and OS default — in that precedence order.
-fn resolve_scope(
-    cli: Option<InstallScope>,
-    config: &Config,
-) -> Result<InstallScope, crate::BoxErr> {
-    if let Some(s) = cli {
-        return Ok(s);
-    }
-    if let Some(ref raw) = config.install.default_scope {
-        let toml =
-            InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
-        return Ok(toml.for_install());
-    }
-    Ok(InstallScope::os_default())
 }
 
 /// Resolve the per-format effective scope and print the fallback note

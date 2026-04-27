@@ -72,9 +72,9 @@ every platform** — the dev loop doesn't prompt for a password.
 AAX and AU v3 are always system-scope (Pro Tools / pluginkit only
 scan the system root); `--user` for those formats falls back to
 the system path with a one-line `note: ... is system-only`.
-Windows VST2 is also system-only on Windows. Project-wide default:
-set `[install] default_scope = "user" | "system" | "ask"` in
-`truce.toml`.
+Windows VST2 is also system-only on Windows. The install scope is
+a per-invocation developer choice — `cargo truce install` has no
+`truce.toml` override, only the CLI flag.
 
 Full per-platform table in [formats/README.md](../formats/).
 
@@ -162,7 +162,7 @@ don't overwrite each other in `dist/`. Version comes from
 `--user` and `--system` hard-lock the choice — useful for IT-
 managed studios that always want one scope, or a plugin author who
 needs to ship a user-only or system-only build separately. Set the
-project-wide default with `[install] default_scope = "user" |
+project-wide default with `[packaging] preferred_scope = "user" |
 "system" | "ask"` in `truce.toml`; the CLI flag wins when both
 are set.
 
@@ -517,12 +517,7 @@ Three credential sources, tried in order; first wins.
 | `formats` | plugin's default features | Formats to include when packaging. Valid: `clap`, `vst3`, `vst2`, `lv2`, `au2`, `au3`, `aax`. `--formats` on the CLI overrides. |
 | `welcome_html` | — | **macOS only** — welcome screen HTML in the `.pkg`. |
 | `license_html` | — | **macOS only** — licence HTML in the `.pkg`. |
-
-### `[install]` — optional
-
-| Field | Default | Notes |
-|-------|---------|-------|
-| `default_scope` | OS default (user for `install`, ask for `package`) | Project-wide default for `cargo truce install` and `cargo truce package`. Accepts `"user"`, `"system"`, or `"ask"`. CLI flags (`--user` / `--system` / `--ask`) override. `"ask"` resolves to `user` for `install` (no end user to prompt) and to `ask` for `package`. |
+| `preferred_scope` | `"ask"` | Project-wide default for `cargo truce package`. `"user"`, `"system"`, or `"ask"`. CLI flags (`--user` / `--system` / `--ask`) override. `cargo truce install` has no toml override — pass `--user` / `--system` per invocation. |
 
 ### Environment variables
 
