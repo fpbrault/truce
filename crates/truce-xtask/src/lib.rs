@@ -189,9 +189,25 @@ Commands:
       historical entries use `log show --last <duration>` directly.
       Press Ctrl-C to stop.
 
-  package [-p <crate>] [--formats clap,vst3,...] [--no-notarize]
-      Build, sign, and package plugins into macOS .pkg installers.
-      Output goes to `target/dist/`.
+  package [-p <crate>] [--formats clap,vst3,...] [--user|--system|--ask] [--no-notarize]
+      Build, sign, and package plugins into macOS .pkg / Windows .exe
+      installers. Output goes to `target/dist/`.
+
+      Scope flags pick how the resulting installer behaves at the
+      end user's machine:
+      --ask        End user picks at install time via the macOS
+                   Installer.app destination page or the Inno Setup
+                   \"Choose installation mode\" page (default).
+      --user       Hard-lock to user-scope. CLAP/VST3 land in user
+                   paths with no admin prompt. AAX, AU v3, and
+                   Windows VST2 are kept and installed to the system
+                   path (one admin prompt at install time on Windows;
+                   on macOS the whole pkg widens to system-domain
+                   when AAX/AU v3 are present).
+      --system     Hard-lock to system paths (today's behavior).
+
+      Set `[install] default_scope = \"user\" | \"system\" | \"ask\"`
+      in `truce.toml` to override the default for a project.
 
   build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--hot-reload] [--debug]
       Build per-format bundles into target/bundles/ without installing.

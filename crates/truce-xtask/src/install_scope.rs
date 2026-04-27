@@ -86,6 +86,60 @@ impl TomlScope {
             Self::System => InstallScope::System,
         }
     }
+
+    /// Resolve the toml setting for the `package` command. `"ask"`
+    /// stays `Ask` — the end user picks at install time.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    pub(crate) fn for_package(self) -> PkgScope {
+        match self {
+            Self::User => PkgScope::User,
+            Self::System => PkgScope::System,
+            Self::Ask => PkgScope::Ask,
+        }
+    }
+}
+
+/// Distribution-installer scope for `cargo truce package`. Adds
+/// `Ask` to [`InstallScope`] for the indie-installer default that
+/// lets the end user pick at install time (macOS `Installer.app`
+/// destination page; Inno Setup "Choose installation mode" page).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PkgScope {
+    User,
+    System,
+    Ask,
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl PkgScope {
+    /// `cargo truce package` default when no flag and no
+    /// `[install] default_scope` is set: ask the end user. Matches
+    /// indie-installer convention (u-he, Valhalla, FabFilter).
+    pub(crate) fn os_default() -> Self {
+        Self::Ask
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::System => "system",
+            Self::Ask => "ask",
+        }
+    }
+
+    /// Suffix appended to `target/dist/<plugin>-<version>-<platform>`
+    /// so a `--user` and `--system` build of the same plugin don't
+    /// overwrite each other in `dist/`. `--ask` (the default)
+    /// produces the unsuffixed filename so existing release artefacts
+    /// keep their canonical name.
+    pub(crate) fn dist_suffix(self) -> &'static str {
+        match self {
+            Self::User => "-user",
+            Self::System => "-system",
+            Self::Ask => "",
+        }
+    }
 }
 
 /// Resolve the requested scope for one format, applying the per-format

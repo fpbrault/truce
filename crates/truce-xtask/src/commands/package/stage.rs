@@ -4,6 +4,8 @@
 #[cfg(target_os = "macos")]
 use super::PkgFormat;
 #[cfg(target_os = "macos")]
+use crate::install_scope::PkgScope;
+#[cfg(target_os = "macos")]
 use crate::pace_sign_aax_macos;
 use crate::{codesign_bundle, release_lib, Config, PluginDef, Res};
 #[cfg(target_os = "macos")]
@@ -368,6 +370,7 @@ pub(crate) fn generate_distribution_xml(
     formats: &[PkgFormat],
     version: &str,
     resources: Option<&PackagingConfig>,
+    scope: PkgScope,
 ) -> String {
     let mut choices_outline = String::new();
     let mut choices = String::new();
@@ -410,12 +413,29 @@ pub(crate) fn generate_distribution_xml(
         .map(|_| "    <license file=\"license.html\"/>\n")
         .unwrap_or("");
 
+    // Per-scope <domains> drives Installer.app's "Destination Select"
+    // page. `--ask` enables both — Installer.app shows the radio
+    // buttons. `--user` / `--system` hard-lock the prefix, no page.
+    let domains = match scope {
+        PkgScope::User => {
+            "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"true\" \
+             enable_localSystem=\"false\"/>\n"
+        }
+        PkgScope::System => {
+            "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"false\" \
+             enable_localSystem=\"true\"/>\n"
+        }
+        PkgScope::Ask => {
+            "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"true\" \
+             enable_localSystem=\"true\"/>\n"
+        }
+    };
+
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>{plugin_name}</title>
-{welcome}{license}
-    <options customize="always" require-scripts="false"/>
+{welcome}{license}{domains}    <options customize="always" require-scripts="false"/>
 
     <choices-outline>
 {choices_outline}    </choices-outline>

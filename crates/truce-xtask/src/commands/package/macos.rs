@@ -8,6 +8,7 @@ use super::stage::{
     write_postinstall_script,
 };
 use super::PkgFormat;
+use crate::install_scope::{note_once, InstallScope, PkgScope};
 use crate::{
     cargo_build_for_arch, copy_dir_recursive, deployment_target, detect_default_features,
     lipo_into, load_config, project_root, read_workspace_version, release_lib_for_target, Config,
@@ -27,6 +28,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
     let mut no_notarize = false;
     let mut host_only = false;
     let mut no_pace_sign = false;
+    let mut cli_scope: Option<PkgScope> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -45,6 +47,9 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             }
             "--no-notarize" => no_notarize = true,
             "--no-pace-sign" => no_pace_sign = true,
+            "--user" => set_cli_scope(&mut cli_scope, PkgScope::User)?,
+            "--system" => set_cli_scope(&mut cli_scope, PkgScope::System)?,
+            "--ask" => set_cli_scope(&mut cli_scope, PkgScope::Ask)?,
             // Universal is the default on macOS — accept the flag explicitly
             // as a no-op so cross-platform CI scripts (that also hit Windows)
             // keep working.
@@ -62,6 +67,12 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         }
         i += 1;
     }
+
+    // Scope resolution: CLI > truce.toml [install] default_scope >
+    // OS default (`--ask` on macOS / Windows). Mirrors install,
+    // except `"ask"` in toml stays `Ask` for the package command.
+    let scope = resolve_pkg_scope(cli_scope, &config)?;
+    eprintln!("Package scope: {}", scope.label());
 
     // Universal by default: produce a fat Mach-O covering both Apple arches.
     // `--host-only` falls back to the host-only build for faster dev iteration.
@@ -98,6 +109,43 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             fmts.push(PkgFormat::Aax);
         }
         fmts
+    };
+
+    // System-only formats (AAX, AU v3) are kept in the package
+    // regardless of scope — they always install to the system root.
+    // The note tells the developer that end users will see a sudo
+    // prompt for those payloads even in a `--user` build.
+    //
+    // macOS limitation: `<domains>` is global to the installer, not
+    // per-payload, so when system-only formats are present in a
+    // `--user` build we widen the domain back to system-only at
+    // install time (the user picks "for all users" in Installer.app).
+    // The non-system-only formats then also land at `/Library/...`.
+    // Devs who want pure user-scope on macOS should drop AAX / AU v3
+    // explicitly via `--formats clap,vst3,…`.
+    let has_system_only = formats
+        .iter()
+        .any(|f| matches!(f, PkgFormat::Aax | PkgFormat::Au3));
+    let effective_scope = match scope {
+        PkgScope::User if has_system_only => {
+            for f in &formats {
+                match f {
+                    PkgFormat::Aax => note_once(
+                        "AAX is system-only; --user package keeps AAX but installs every \
+                         format to /Library/ (macOS Installer.app can't mix per-payload \
+                         scopes). Drop AAX with --formats to keep a pure user-scope build.",
+                    ),
+                    PkgFormat::Au3 => note_once(
+                        "AU v3 is system-only; --user package keeps AU v3 but installs every \
+                         format to /Library/ (macOS Installer.app can't mix per-payload \
+                         scopes). Drop AU v3 with --formats to keep a pure user-scope build.",
+                    ),
+                    _ => {}
+                }
+            }
+            PkgScope::System
+        }
+        other => other,
     };
 
     if formats.is_empty() {
@@ -487,6 +535,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             &formats,
             &version,
             Some(&config.packaging),
+            effective_scope,
         );
         let dist_xml_path = staging.join("distribution.xml");
         fs::write(&dist_xml_path, &dist_xml)?;
@@ -508,7 +557,17 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         }
 
         // Step 6: productbuild → signed .pkg
-        let pkg_name = format!("{}-{}-macos.pkg", p.name, version);
+        //
+        // The dist suffix uses the developer-requested `scope`, not
+        // the effective one — a `--user` build that quietly widens
+        // to system-domain because of AAX still gets the `-user`
+        // filename so the developer's CI scripts find it.
+        let pkg_name = format!(
+            "{}-{}-macos{}.pkg",
+            p.name,
+            version,
+            scope.dist_suffix()
+        );
         let pkg_path = dist_dir.join(&pkg_name);
 
         let mut pb_args = vec![
@@ -548,6 +607,27 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
 
     eprintln!("\nDone. Installers in {}", dist_dir.display());
     Ok(())
+}
+
+fn set_cli_scope(slot: &mut Option<PkgScope>, want: PkgScope) -> Res {
+    if let Some(prev) = *slot {
+        if prev != want {
+            return Err("--user, --system, and --ask are mutually exclusive".into());
+        }
+    }
+    *slot = Some(want);
+    Ok(())
+}
+
+fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope, crate::BoxErr> {
+    if let Some(s) = cli {
+        return Ok(s);
+    }
+    if let Some(ref raw) = config.install.default_scope {
+        let toml = InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
+        return Ok(toml.for_package());
+    }
+    Ok(PkgScope::os_default())
 }
 
 /// Notarize a .pkg and staple the ticket. (Phase 3)

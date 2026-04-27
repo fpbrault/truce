@@ -18,6 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::install_scope::{note_once, InstallScope, PkgScope};
 use crate::{
     build_aax_template, cargo_build, detect_default_features, load_config, project_root,
     read_workspace_version, release_lib_for_target, resolve_aax_sdk_path, rustup_has_target,
@@ -107,6 +108,33 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     let archs = opts.archs();
     let universal = archs.len() > 1;
 
+    // Scope resolution: CLI > truce.toml [install] default_scope >
+    // OS default (`--ask`).
+    let scope = resolve_pkg_scope(opts.cli_scope, &config)?;
+    eprintln!("Package scope: {}", scope.label());
+
+    // System-only formats (AAX, VST2 on Windows) stay in the package
+    // even under `--user`. The note tells the developer the end
+    // user will see a UAC prompt for those. The `.iss` template
+    // routes CLAP / VST3 to user paths and AAX / VST2 to system
+    // paths in that mode (and bumps `PrivilegesRequired` to admin
+    // so the installer can write to `{commoncf}` / `{pf}`).
+    if matches!(scope, PkgScope::User) {
+        for f in &formats {
+            match f {
+                PkgFormat::Aax => note_once(
+                    "AAX is system-only; --user package keeps AAX but installs it to \
+                     %COMMONPROGRAMFILES%\\Avid (end user will see one UAC prompt).",
+                ),
+                PkgFormat::Vst2 => note_once(
+                    "VST2 on Windows is system-only; --user package keeps VST2 but installs \
+                     it to %PROGRAMFILES%\\Steinberg\\VstPlugins (end user will see one UAC prompt).",
+                ),
+                _ => {}
+            }
+        }
+    }
+
     if universal && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
         eprintln!(
             "NOTE: AAX is host-arch-only ({}); the universal installer won't \
@@ -174,12 +202,26 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
             continue;
         }
 
-        let iss = render_iss(&config, p, &formats, &archs, &staging, &version, &dist_dir);
+        let iss = render_iss(
+            &config,
+            p,
+            &formats,
+            &archs,
+            &staging,
+            &version,
+            &dist_dir,
+            scope,
+        );
         let iss_path = staging.join("installer.iss");
         fs::write(&iss_path, &iss)?;
         run_iscc(&iss_path)?;
 
-        let installer = dist_dir.join(format!("{}-{}-windows.exe", p.name, version));
+        let installer = dist_dir.join(format!(
+            "{}-{}-windows{}.exe",
+            p.name,
+            version,
+            scope.dist_suffix()
+        ));
         if !installer.exists() {
             return Err(format!(
                 "ISCC reported success but installer is missing: {}",
@@ -220,6 +262,11 @@ struct Opts {
     /// single `cargo truce package` run produces the release artefact users
     /// expect; `--host-only` opts out for dev iteration speed.
     host_only: bool,
+    /// Install scope the resulting installer targets. `--ask` (the
+    /// default) lets the end user pick at install time via Inno
+    /// Setup's "Choose installation mode" page; `--user` /
+    /// `--system` hard-lock to one mode.
+    cli_scope: Option<PkgScope>,
 }
 
 impl Opts {
@@ -230,6 +277,27 @@ impl Opts {
             vec![TargetArch::X64, TargetArch::Arm64]
         }
     }
+}
+
+fn set_cli_scope(slot: &mut Option<PkgScope>, want: PkgScope) -> Res {
+    if let Some(prev) = *slot {
+        if prev != want {
+            return Err("--user, --system, and --ask are mutually exclusive".into());
+        }
+    }
+    *slot = Some(want);
+    Ok(())
+}
+
+fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope, crate::BoxErr> {
+    if let Some(s) = cli {
+        return Ok(s);
+    }
+    if let Some(ref raw) = config.install.default_scope {
+        let toml = InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
+        return Ok(toml.for_package());
+    }
+    Ok(PkgScope::os_default())
 }
 
 fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
@@ -252,6 +320,9 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
             "--no-sign" => opts.no_sign = true,
             "--no-pace-sign" => opts.no_pace_sign = true,
             "--no-installer" => opts.no_installer = true,
+            "--user" => set_cli_scope(&mut opts.cli_scope, PkgScope::User)?,
+            "--system" => set_cli_scope(&mut opts.cli_scope, PkgScope::System)?,
+            "--ask" => set_cli_scope(&mut opts.cli_scope, PkgScope::Ask)?,
             // Universal is the default; accepted explicitly as a no-op so
             // existing CI scripts (and cross-platform invocations) keep working.
             "--universal" => {}
@@ -876,6 +947,7 @@ fn pace_sign_aax(bundle: &Path) -> Res {
 // Inno Setup
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn render_iss(
     config: &Config,
     p: &PluginDef,
@@ -884,6 +956,7 @@ fn render_iss(
     staging: &Path,
     version: &str,
     dist_dir: &Path,
+    scope: PkgScope,
 ) -> String {
     let publisher = config
         .windows
@@ -970,7 +1043,35 @@ fn render_iss(
         setup.push_str("ArchitecturesInstallIn64BitMode=x64compatible\r\n");
         setup.push_str("ArchitecturesAllowed=x64compatible and not arm64\r\n");
     }
-    setup.push_str("PrivilegesRequired=admin\r\n");
+    // PrivilegesRequired drives whether the installer relaunches
+    // itself elevated before the wizard even appears.
+    //   --user   → `lowest` if no system-only payloads (AAX, VST2);
+    //              `admin` otherwise — AAX / VST2 still need to write
+    //              under %COMMONPROGRAMFILES%/%PROGRAMFILES% so the
+    //              whole installer escalates once for them while
+    //              CLAP / VST3 still target user paths.
+    //   --system → `admin`. UAC on launch, lands under system paths.
+    //   --ask    → `admin` + `PrivilegesRequiredOverridesAllowed=...`
+    //              shows the "Choose installation mode" page and
+    //              relaunches elevated only if the user picks all-users.
+    let has_system_only_format = formats
+        .iter()
+        .any(|f| matches!(f, PkgFormat::Aax | PkgFormat::Vst2));
+    match scope {
+        PkgScope::User if has_system_only_format => {
+            setup.push_str("PrivilegesRequired=admin\r\n");
+        }
+        PkgScope::User => {
+            setup.push_str("PrivilegesRequired=lowest\r\n");
+        }
+        PkgScope::System => {
+            setup.push_str("PrivilegesRequired=admin\r\n");
+        }
+        PkgScope::Ask => {
+            setup.push_str("PrivilegesRequired=admin\r\n");
+            setup.push_str("PrivilegesRequiredOverridesAllowed=commandline dialog\r\n");
+        }
+    }
     setup.push_str("WizardStyle=modern\r\n");
     setup.push_str("UninstallDisplayName=");
     setup.push_str(&iss_escape(&p.name));
@@ -1008,7 +1109,7 @@ fn render_iss(
     setup.push_str("[Files]\r\n");
     for fmt in formats {
         for &arch in archs {
-            let block = iss_files_block(fmt, p, staging, arch, universal);
+            let block = iss_files_block(fmt, p, staging, arch, universal, scope);
             setup.push_str(&block);
         }
     }
@@ -1017,7 +1118,7 @@ fn render_iss(
     // [UninstallDelete] — per-format (bundle dirs get wholesale cleanup).
     setup.push_str("[UninstallDelete]\r\n");
     for fmt in formats {
-        if let Some(line) = iss_uninstall_line(fmt, &p.name) {
+        for line in iss_uninstall_lines(fmt, &p.name, scope) {
             setup.push_str(&line);
             setup.push_str("\r\n");
         }
@@ -1040,19 +1141,27 @@ fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static 
 /// (CLAP, VST2) we gate with a `Check:` directive so only the matching arch's
 /// DLL is installed on a given machine. Bundle formats (VST3, AAX) install
 /// both archs side-by-side; the host picks at load time.
+///
+/// Scope-driven destinations:
+/// - `--system` and `--user` use a single hard-coded DestDir.
+/// - `--ask` emits *two* entries for CLAP / VST3 (system + user) gated on
+///   `IsAdminInstallMode` so the runtime install mode picks one. AAX always
+///   stays system-rooted with `Check: IsAdminInstallMode` — end users who
+///   pick "for me only" simply don't get AAX (per the install-scope doc).
 fn iss_files_block(
     fmt: &PkgFormat,
     p: &PluginDef,
     staging: &Path,
     arch: TargetArch,
     universal: bool,
+    scope: PkgScope,
 ) -> String {
     // For single-arch installers the Check: directive is unnecessary — drop it
     // so the output .iss stays simple.
-    let check_clause = if universal {
-        format!(" Check: {};", arch.iss_check())
+    let arch_check = if universal {
+        Some(arch.iss_check())
     } else {
-        String::new()
+        None
     };
 
     match fmt {
@@ -1061,11 +1170,15 @@ fn iss_files_block(
                 .join("clap")
                 .join(arch.tag())
                 .join(format!("{}.clap", p.name));
-            format!(
-                "Source: \"{src}\"; DestDir: \"{{commoncf}}\\CLAP\"; \
-                 Components: clap;{check_clause} Flags: ignoreversion overwritereadonly\r\n",
-                src = iss_escape_path(&src),
-                check_clause = check_clause,
+            let src_quoted = iss_escape_path(&src);
+            iss_dual_dest(
+                scope,
+                &src_quoted,
+                "{commoncf}\\CLAP",
+                "{localappdata}\\Programs\\Common\\CLAP",
+                "clap",
+                arch_check,
+                /* is_dir= */ false,
             )
         }
         PkgFormat::Vst3 => {
@@ -1078,25 +1191,40 @@ fn iss_files_block(
                 .join("Contents")
                 .join(arch.vst3_bundle_subdir());
             let src_glob = src_dir.join("*");
-            format!(
-                "Source: \"{src}\"; \
-                 DestDir: \"{{commoncf}}\\VST3\\{name}.vst3\\Contents\\{subdir}\"; \
-                 Components: vst3; Flags: ignoreversion overwritereadonly recursesubdirs createallsubdirs\r\n",
-                src = iss_escape_path(&src_glob),
-                name = iss_escape(&p.name),
-                subdir = arch.vst3_bundle_subdir(),
+            let src_quoted = iss_escape_path(&src_glob);
+            let name = iss_escape(&p.name);
+            let subdir = arch.vst3_bundle_subdir();
+            let system_dest = format!("{{commoncf}}\\VST3\\{name}.vst3\\Contents\\{subdir}");
+            let user_dest = format!(
+                "{{localappdata}}\\Programs\\Common\\VST3\\{name}.vst3\\Contents\\{subdir}"
+            );
+            iss_dual_dest(
+                scope,
+                &src_quoted,
+                &system_dest,
+                &user_dest,
+                "vst3",
+                /* arch_check = */ None,
+                /* is_dir = */ true,
             )
         }
         PkgFormat::Vst2 => {
+            // Windows VST2 has no settled per-user path; in `--ask` mode
+            // the doc keeps it system-only with `Check: IsAdminInstallMode`,
+            // so end users in for-me-only mode simply don't receive VST2.
+            // `--user` already filtered it out before render_iss is called.
             let src = staging
                 .join("vst2")
                 .join(arch.tag())
                 .join(format!("{}.dll", p.name));
-            format!(
-                "Source: \"{src}\"; DestDir: \"{{pf}}\\Steinberg\\VstPlugins\"; \
-                 Components: vst2;{check_clause} Flags: ignoreversion overwritereadonly\r\n",
-                src = iss_escape_path(&src),
-                check_clause = check_clause,
+            let src_quoted = iss_escape_path(&src);
+            iss_admin_only(
+                scope,
+                &src_quoted,
+                "{pf}\\Steinberg\\VstPlugins",
+                "vst2",
+                arch_check,
+                /* is_dir = */ false,
             )
         }
         PkgFormat::Aax => {
@@ -1119,21 +1247,25 @@ fn iss_files_block(
                 .join("Contents")
                 .join("Resources")
                 .join(format!("{}_aax_{}.dll", p.dylib_stem(), arch.tag()));
+            let name = iss_escape(&p.name);
+            let subdir = arch.aax_bundle_subdir();
+            let bundle_root = format!("{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin");
             let mut out = String::new();
-            out.push_str(&format!(
-                "Source: \"{src}\"; \
-                 DestDir: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\\Contents\\{subdir}\"; \
-                 Components: aax; Flags: ignoreversion overwritereadonly recursesubdirs createallsubdirs\r\n",
-                src = iss_escape_path(&src_arch_glob),
-                name = iss_escape(&p.name),
-                subdir = arch.aax_bundle_subdir(),
+            out.push_str(&iss_admin_only(
+                scope,
+                &iss_escape_path(&src_arch_glob),
+                &format!("{bundle_root}\\Contents\\{subdir}"),
+                "aax",
+                /* arch_check = */ None,
+                /* is_dir = */ true,
             ));
-            out.push_str(&format!(
-                "Source: \"{src}\"; \
-                 DestDir: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\\Contents\\Resources\"; \
-                 Components: aax; Flags: ignoreversion overwritereadonly\r\n",
-                src = iss_escape_path(&resource_dll),
-                name = iss_escape(&p.name),
+            out.push_str(&iss_admin_only(
+                scope,
+                &iss_escape_path(&resource_dll),
+                &format!("{bundle_root}\\Contents\\Resources"),
+                "aax",
+                /* arch_check = */ None,
+                /* is_dir = */ false,
             ));
             out
         }
@@ -1141,18 +1273,130 @@ fn iss_files_block(
     }
 }
 
-fn iss_uninstall_line(fmt: &PkgFormat, plugin_name: &str) -> Option<String> {
-    match fmt {
-        PkgFormat::Vst3 => Some(format!(
-            "Type: filesandordirs; Name: \"{{commoncf}}\\VST3\\{}.vst3\"; Components: vst3",
-            iss_escape(plugin_name)
-        )),
+/// Emit the `[Files]` line(s) for a system-or-user-aware destination.
+/// Under `--ask` two lines are produced, branched on `IsAdminInstallMode`.
+fn iss_dual_dest(
+    scope: PkgScope,
+    src_quoted: &str,
+    system_dest: &str,
+    user_dest: &str,
+    component: &str,
+    arch_check: Option<&str>,
+    is_dir: bool,
+) -> String {
+    let dir_flags = if is_dir {
+        " recursesubdirs createallsubdirs"
+    } else {
+        ""
+    };
+    let arch_clause = arch_check.map(|c| format!(" and {c}")).unwrap_or_default();
+    match scope {
+        PkgScope::System => {
+            let arch = arch_check.map(|c| format!(" Check: {c};")).unwrap_or_default();
+            format!(
+                "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
+                 Components: {component};{arch} \
+                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
+            )
+        }
+        PkgScope::User => {
+            let arch = arch_check.map(|c| format!(" Check: {c};")).unwrap_or_default();
+            format!(
+                "Source: \"{src_quoted}\"; DestDir: \"{user_dest}\"; \
+                 Components: {component};{arch} \
+                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
+            )
+        }
+        PkgScope::Ask => {
+            // Two entries, branched on IsAdminInstallMode. Inno Setup
+            // sets it after the "Choose installation mode" page; only
+            // one of the two `Check:` predicates fires per install.
+            format!(
+                "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
+                 Components: {component}; Check: IsAdminInstallMode{arch_clause}; \
+                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n\
+                 Source: \"{src_quoted}\"; DestDir: \"{user_dest}\"; \
+                 Components: {component}; Check: (not IsAdminInstallMode){arch_clause}; \
+                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
+            )
+        }
+    }
+}
+
+/// Emit the `[Files]` line for a payload that is always system-rooted
+/// (AAX, Windows VST2). `--system` and `--user` (which has already
+/// bumped `PrivilegesRequired` to admin in the caller) both copy
+/// unconditionally; `--ask` gates on `IsAdminInstallMode` so end users
+/// who pick "for me only" see CLAP/VST3 land in user paths and AAX /
+/// VST2 simply skip.
+fn iss_admin_only(
+    scope: PkgScope,
+    src_quoted: &str,
+    system_dest: &str,
+    component: &str,
+    arch_check: Option<&str>,
+    is_dir: bool,
+) -> String {
+    let dir_flags = if is_dir {
+        " recursesubdirs createallsubdirs"
+    } else {
+        ""
+    };
+    let arch_clause = arch_check.map(|c| format!(" and {c}")).unwrap_or_default();
+    match scope {
+        PkgScope::System | PkgScope::User => {
+            let arch = arch_check.map(|c| format!(" Check: {c};")).unwrap_or_default();
+            format!(
+                "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
+                 Components: {component};{arch} \
+                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
+            )
+        }
+        PkgScope::Ask => format!(
+            "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
+             Components: {component}; Check: IsAdminInstallMode{arch_clause}; \
+             Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
+        ),
+    }
+}
+
+fn iss_uninstall_lines(fmt: &PkgFormat, plugin_name: &str, scope: PkgScope) -> Vec<String> {
+    let name = iss_escape(plugin_name);
+    let system = match fmt {
+        PkgFormat::Vst3 => Some(format!("{{commoncf}}\\VST3\\{name}.vst3")),
         PkgFormat::Aax => Some(format!(
-            "Type: filesandordirs; Name: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{}.aaxplugin\"; Components: aax",
-            iss_escape(plugin_name)
+            "{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin"
         )),
         _ => None,
+    };
+    let user = match fmt {
+        PkgFormat::Vst3 => Some(format!(
+            "{{localappdata}}\\Programs\\Common\\VST3\\{name}.vst3"
+        )),
+        // AAX has no per-user uninstall path (always system).
+        _ => None,
+    };
+    let component = match fmt {
+        PkgFormat::Vst3 => "vst3",
+        PkgFormat::Aax => "aax",
+        _ => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    if let Some(p) = system.as_ref() {
+        if matches!(scope, PkgScope::System | PkgScope::Ask) {
+            out.push(format!(
+                "Type: filesandordirs; Name: \"{p}\"; Components: {component}"
+            ));
+        }
     }
+    if let Some(p) = user.as_ref() {
+        if matches!(scope, PkgScope::User | PkgScope::Ask) {
+            out.push(format!(
+                "Type: filesandordirs; Name: \"{p}\"; Components: {component}"
+            ));
+        }
+    }
+    out
 }
 
 fn run_iscc(iss_path: &Path) -> Res {
