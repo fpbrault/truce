@@ -159,11 +159,15 @@ Commands:
       re-scans AAX plugins on next launch.
       --yes        Skip confirmation prompt
 
-  remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
+  remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--user|--system] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
       Remove installed plugin bundles for this project.
-      Default: all formats, all plugins. Asks for confirmation.
+      Default: all formats, all plugins, both user + system scopes.
+      Asks for confirmation. AAX and AU v3 are always system-scope —
+      `--user` skips them with the same one-line note as install.
       -p <crate>   Filter by cargo crate name (e.g. -p truce-example-gain)
       -n <name>    Filter by display name (e.g. -n 'Truce Gain')
+      --user       Only remove bundles in the per-user directories
+      --system     Only remove bundles in the system directories
       --stale      Remove vendor bundles NOT in the current project
                    (renamed/deleted plugins still on the system)
       --dry-run    Show what would be removed without deleting

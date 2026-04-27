@@ -454,12 +454,16 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
 
 /// Resolve the install scope from CLI flag, `truce.toml [install]
 /// default_scope`, and OS default — in that precedence order.
-fn resolve_scope(cli: Option<InstallScope>, config: &Config) -> Result<InstallScope, crate::BoxErr> {
+fn resolve_scope(
+    cli: Option<InstallScope>,
+    config: &Config,
+) -> Result<InstallScope, crate::BoxErr> {
     if let Some(s) = cli {
         return Ok(s);
     }
     if let Some(ref raw) = config.install.default_scope {
-        let toml = InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
+        let toml =
+            InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
         return Ok(toml.for_install());
     }
     Ok(InstallScope::os_default())

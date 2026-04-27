@@ -1,6 +1,7 @@
 //! `cargo truce remove` — uninstall plugin bundles for the current project,
 //! or with `--stale` evict vendor-matching bundles no longer in `truce.toml`.
 
+use crate::install_scope::{note_once, InstallScope};
 #[cfg(target_os = "macos")]
 use crate::Config;
 use crate::{confirm_prompt, dirs, load_config, run_sudo, PluginDef, Res};
@@ -65,6 +66,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
     let mut stale = false;
     let mut crate_filter: Option<String> = None;
     let mut name_filter: Option<String> = None;
+    let mut cli_scope: Option<InstallScope> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -78,6 +80,18 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--dry-run" => dry_run = true,
             "--yes" | "-y" => yes = true,
             "--stale" => stale = true,
+            "--user" => {
+                if matches!(cli_scope, Some(InstallScope::System)) {
+                    return Err("--user and --system are mutually exclusive".into());
+                }
+                cli_scope = Some(InstallScope::User);
+            }
+            "--system" => {
+                if matches!(cli_scope, Some(InstallScope::User)) {
+                    return Err("--user and --system are mutually exclusive".into());
+                }
+                cli_scope = Some(InstallScope::System);
+            }
             "-p" => {
                 i += 1;
                 crate_filter = Some(
@@ -95,6 +109,30 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
         i += 1;
     }
 
+    // Without an explicit scope flag, scan both user and system —
+    // a dev who switched scopes mid-iteration may have stale copies
+    // in the other half of the disk.
+    let scopes_to_scan: Vec<InstallScope> = match cli_scope {
+        Some(InstallScope::User) => vec![InstallScope::User],
+        Some(InstallScope::System) => vec![InstallScope::System],
+        None => vec![InstallScope::User, InstallScope::System],
+    };
+    // AAX, AU v3, and (on Windows) VST2 are always system-scope —
+    // surface the same one-line note as `install` when `--user` was
+    // explicitly requested for one of them.
+    let user_explicit = matches!(cli_scope, Some(InstallScope::User));
+    if user_explicit {
+        if aax {
+            note_once("AAX is system-only; ignoring --user");
+        }
+        if au3 && cfg!(target_os = "macos") {
+            note_once("AU v3 is system-only; ignoring --user");
+        }
+        if vst2 && cfg!(target_os = "windows") {
+            note_once("VST2 on Windows is system-only; ignoring --user");
+        }
+    }
+
     // Default: all formats if none specified.
     // `au3 = true` lands in a flag that's read only inside macOS-gated
     // blocks; the assignment-never-read warning on Linux/Windows is
@@ -110,7 +148,6 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
         aax = true;
     }
 
-    let home = dirs::home_dir().unwrap();
     let vendor = &config.vendor.name;
     let known_names: Vec<&str> = config.plugin.iter().map(|p| p.name.as_str()).collect();
 
@@ -144,76 +181,54 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             }
         };
 
+        let scan_system = scopes_to_scan.contains(&InstallScope::System);
         if clap {
-            scan(
-                &home.join("Library/Audio/Plug-Ins/CLAP"),
-                "clap",
-                "CLAP",
-                false,
-                &mut targets,
-            );
-            scan(
-                Path::new("/Library/Audio/Plug-Ins/CLAP"),
-                "clap",
-                "CLAP",
-                true,
-                &mut targets,
-            );
+            for s in &scopes_to_scan {
+                scan(&s.clap_dir(), "clap", "CLAP", s.needs_sudo(), &mut targets);
+            }
         }
         if vst3 {
+            for s in &scopes_to_scan {
+                scan(&s.vst3_dir(), "vst3", "VST3", s.needs_sudo(), &mut targets);
+            }
+        }
+        if vst2 && !cfg!(target_os = "windows") {
+            for s in &scopes_to_scan {
+                scan(&s.vst2_dir(), "vst", "VST2", s.needs_sudo(), &mut targets);
+            }
+        } else if vst2 && scan_system {
+            // Windows VST2 is always system-only — `vst2_dir()` returns
+            // the same path for both scopes.
             scan(
-                Path::new("/Library/Audio/Plug-Ins/VST3"),
-                "vst3",
-                "VST3",
-                true,
-                &mut targets,
-            );
-            scan(
-                &home.join("Library/Audio/Plug-Ins/VST3"),
-                "vst3",
-                "VST3",
-                false,
+                &InstallScope::System.vst2_dir(),
+                "dll",
+                "VST2",
+                InstallScope::System.needs_sudo(),
                 &mut targets,
             );
         }
-        if vst2 {
-            scan(
-                &home.join("Library/Audio/Plug-Ins/VST"),
-                "vst",
-                "VST2",
-                false,
-                &mut targets,
-            );
-            scan(
-                Path::new("/Library/Audio/Plug-Ins/VST"),
-                "vst",
-                "VST2",
-                true,
-                &mut targets,
-            );
-        }
+        #[cfg(target_os = "macos")]
         if au2 {
-            scan(
-                Path::new("/Library/Audio/Plug-Ins/Components"),
-                "component",
-                "AU v2",
-                true,
-                &mut targets,
-            );
-            scan(
-                &home.join("Library/Audio/Plug-Ins/Components"),
-                "component",
-                "AU v2",
-                false,
-                &mut targets,
-            );
+            for s in &scopes_to_scan {
+                scan(
+                    &s.au_v2_dir(),
+                    "component",
+                    "AU v2",
+                    s.needs_sudo(),
+                    &mut targets,
+                );
+            }
         }
         // AU v3 lives in `/Applications/...` only on macOS, so the
         // `--au3` removal scan is macOS-only. The flag is still parsed
         // on every platform so cross-platform CI scripts don't break;
         // it just no-ops on Linux / Windows.
+        //
+        // `--user` skips this scan: AU v3 has no user-scope install
+        // path (the install-side note already explained that to the
+        // user), so there's nothing for `--user` to clean up.
         #[cfg(target_os = "macos")]
-        if au3 {
+        if au3 && scan_system {
             // Scan /Applications for vendor-matching v3 apps not in project.
             // Recognize truce AU v3 containers by bundle-name convention:
             // legacy "<name> v3.app" or the new default "<name> (AUv3).app".
@@ -252,7 +267,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                 }
             }
         }
-        if aax {
+        if aax && scan_system {
             scan(
                 Path::new("/Library/Application Support/Avid/Audio/Plug-Ins"),
                 "aaxplugin",
@@ -331,73 +346,70 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             config.plugin.iter().collect()
         };
 
+        let scan_system = scopes_to_scan.contains(&InstallScope::System);
+        let push_if_exists =
+            |format: &'static str, path: PathBuf, needs_sudo: bool, targets: &mut Vec<_>| {
+                if path.exists() && !targets.iter().any(|t: &RemoveTarget| t.path == path) {
+                    targets.push(RemoveTarget {
+                        format,
+                        path,
+                        needs_sudo,
+                    });
+                }
+            };
         for p in &plugins {
             if clap {
-                let path = home.join(format!("Library/Audio/Plug-Ins/CLAP/{}.clap", p.name));
-                if path.exists() {
-                    targets.push(RemoveTarget {
-                        format: "CLAP",
-                        path,
-                        needs_sudo: false,
-                    });
+                for s in &scopes_to_scan {
+                    let path = s.clap_dir().join(format!("{}.clap", p.name));
+                    push_if_exists("CLAP", path, s.needs_sudo(), &mut targets);
                 }
             }
             if vst3 {
-                let path = PathBuf::from(format!("/Library/Audio/Plug-Ins/VST3/{}.vst3", p.name));
-                if path.exists() {
-                    targets.push(RemoveTarget {
-                        format: "VST3",
-                        path,
-                        needs_sudo: true,
-                    });
+                for s in &scopes_to_scan {
+                    let path = s.vst3_dir().join(format!("{}.vst3", p.name));
+                    push_if_exists("VST3", path, s.needs_sudo(), &mut targets);
                 }
             }
             if vst2 {
-                let path = home.join(format!("Library/Audio/Plug-Ins/VST/{}.vst", p.name));
-                if path.exists() {
-                    targets.push(RemoveTarget {
-                        format: "VST2",
-                        path,
-                        needs_sudo: false,
-                    });
+                #[cfg(target_os = "macos")]
+                {
+                    for s in &scopes_to_scan {
+                        let path = s.vst2_dir().join(format!("{}.vst", p.name));
+                        push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
+                    }
                 }
-            }
-            if au2 {
-                let path = PathBuf::from(format!(
-                    "/Library/Audio/Plug-Ins/Components/{}.component",
-                    p.name
-                ));
-                if path.exists() {
-                    targets.push(RemoveTarget {
-                        format: "AU v2",
-                        path,
-                        needs_sudo: true,
-                    });
+                #[cfg(target_os = "windows")]
+                if scan_system {
+                    let s = InstallScope::System;
+                    let path = s.vst2_dir().join(format!("{}.dll", p.name));
+                    push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    // Linux VST2 is `~/.vst/<name>.so` for both scopes.
+                    let s = InstallScope::User;
+                    let path = s.vst2_dir().join(format!("{}.so", p.name));
+                    push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                 }
             }
             #[cfg(target_os = "macos")]
-            if au3 {
-                let path = PathBuf::from(format!("/Applications/{}.app", p.au3_app_name()));
-                if path.exists() {
-                    targets.push(RemoveTarget {
-                        format: "AU v3",
-                        path,
-                        needs_sudo: true,
-                    });
+            if au2 {
+                for s in &scopes_to_scan {
+                    let path = s.au_v2_dir().join(format!("{}.component", p.name));
+                    push_if_exists("AU v2", path, s.needs_sudo(), &mut targets);
                 }
             }
-            if aax {
+            #[cfg(target_os = "macos")]
+            if au3 && scan_system {
+                let path = PathBuf::from(format!("/Applications/{}.app", p.au3_app_name()));
+                push_if_exists("AU v3", path, true, &mut targets);
+            }
+            if aax && scan_system {
                 let path = PathBuf::from(format!(
                     "/Library/Application Support/Avid/Audio/Plug-Ins/{}.aaxplugin",
                     p.name
                 ));
-                if path.exists() {
-                    targets.push(RemoveTarget {
-                        format: "AAX",
-                        path,
-                        needs_sudo: true,
-                    });
-                }
+                push_if_exists("AAX", path, true, &mut targets);
             }
         }
     }
