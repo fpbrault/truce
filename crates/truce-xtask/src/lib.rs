@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 pub(crate) mod dirs;
+mod install_scope;
 mod templates;
 mod util;
 
@@ -94,7 +95,7 @@ fn print_help() {
 Usage: cargo truce <command> [options]
 
 Commands:
-  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--hot-reload] [--debug] [--no-build] [-p <crate>]
+  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--user|--system] [--hot-reload] [--debug] [--no-build] [-p <crate>]
       Build and install plugins into the host's plug-in directories.
       Defaults to release because installing usually means audio-
       testing in a DAW — release avoids surprise CPU spikes from
@@ -107,12 +108,24 @@ Commands:
       default features (typically clap + vst3). VST2, AU, and AAX are
       opt-in and must be enabled explicitly via these flags or by
       adding them to the plugin's default features.
+
+      Per-format scope is per-user by default on every platform; pass
+      `--system` to install into the shared system directories (sudo
+      / admin required). AAX and AU v3 are always system-scope, and
+      `--user` for these formats falls back silently with a one-line
+      note. Set [install] default_scope = \"user\"|\"system\"|\"ask\" in
+      truce.toml to change the default for a project.
       --clap         CLAP only (no sudo)
       --vst3         VST3 only
       --vst2         VST2 only (legacy format — see truce/Cargo.toml note)
       --au2          AU v2 only (.component, macOS only)
       --au3          AU v3 only (.appex, requires Xcode, macOS only)
       --aax          AAX only (requires pre-built template)
+      --user         Install into the per-user directories (default).
+                     No sudo / admin needed for CLAP, VST3, VST2 (macOS),
+                     LV2, and AU v2.
+      --system       Install into the system-wide directories. Requires
+                     sudo on macOS, admin on Windows.
       --hot-reload   Build hot-reload shells (use with cargo watch for iteration)
       --debug        Compile with the cargo dev profile (faster compile,
                      slower DSP). Don't ship plugins built this way.

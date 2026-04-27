@@ -24,6 +24,18 @@ pub(crate) struct Config {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) packaging: PackagingConfig,
+    /// Per-project install/package scope policy. See
+    /// `docs/internal/install-scope.md` for the precedence table.
+    #[serde(default)]
+    pub(crate) install: InstallConfig,
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct InstallConfig {
+    /// `"user"`, `"system"`, or `"ask"`. Absent = OS default
+    /// (user on every platform). CLI flags (`--user` / `--system`)
+    /// override.
+    pub(crate) default_scope: Option<String>,
 }
 
 // Windows-only config fields. Consumed by `packaging_windows.rs`, which

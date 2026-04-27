@@ -80,10 +80,13 @@ USAGE:
         --no-standalone             Skip the standalone feature + host bin in every plugin
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
-  cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--debug] [-p <crate>]
+  cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
+                      [--user|--system] [--debug] [-p <crate>]
       Build, bundle, sign, and install plugins. Defaults to the cargo
       release profile (avoids DAW CPU spikes from debug-build DSP);
-      pass `--debug` for fast-compile iteration.
+      pass `--debug` for fast-compile iteration. Per-user install is
+      the default — pass `--system` to install for all users (sudo /
+      admin required). AAX and AU v3 are always system-scope.
 
   cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3]
                     [--aax] [-p <crate>] [--hot-reload] [--debug]

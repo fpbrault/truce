@@ -3,6 +3,7 @@
 
 #![allow(unused_imports)]
 
+use crate::install_scope::{effective_scope, note_once, Format, InstallScope, TomlScope};
 use crate::util::fs_ctx;
 use crate::{
     cargo_build, codesign_bundle, deployment_target, detect_default_features, dirs, load_config,
@@ -39,6 +40,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut hot_reload = false;
     let mut debug = false;
     let mut plugin_filter: Option<String> = None;
+    let mut cli_scope: Option<InstallScope> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -53,6 +55,25 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--no-build" => no_build = true,
             "--hot-reload" => hot_reload = true,
             "--debug" => debug = true,
+            "--user" => {
+                if matches!(cli_scope, Some(InstallScope::System)) {
+                    return Err("--user and --system are mutually exclusive".into());
+                }
+                cli_scope = Some(InstallScope::User);
+            }
+            "--system" => {
+                if matches!(cli_scope, Some(InstallScope::User)) {
+                    return Err("--user and --system are mutually exclusive".into());
+                }
+                cli_scope = Some(InstallScope::System);
+            }
+            "--ask" => {
+                return Err(
+                    "--ask is not valid for `cargo truce install` (no end user to prompt). \
+                     Use --user or --system, or set [install] default_scope in truce.toml."
+                        .into(),
+                );
+            }
             "-p" => {
                 i += 1;
                 if i >= args.len() {
@@ -66,6 +87,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
         i += 1;
     }
+
+    // Scope resolution: CLI flag > truce.toml [install] default_scope >
+    // OS default (user on every platform). The doc's precedence table
+    // is the source of truth.
+    let scope = resolve_scope(cli_scope, &config)?;
 
     if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
         // No format flags specified — enable all formats that the project supports.
@@ -342,27 +368,44 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
 
     // --- Install ---
+    //
+    // Per-format scope is resolved through `effective_scope`, which
+    // silently downgrades AAX / AU v3 / Windows-VST2 to system scope
+    // and emits a one-line note (printed at most once per format).
     for p in &plugins {
         if clap {
-            install_clap(&root, p, &config)?;
+            let s = scope_for(Format::Clap, scope);
+            install_clap(&root, p, &config, s)?;
         }
         if vst3 {
-            install_vst3(&root, p, &config)?;
+            let s = scope_for(Format::Vst3, scope);
+            install_vst3(&root, p, &config, s)?;
         }
         if vst2 {
-            install_vst2(&root, p, &config)?;
+            let s = scope_for(Format::Vst2, scope);
+            install_vst2(&root, p, &config, s)?;
         }
         if lv2 {
-            install_lv2(&root, p, &config)?;
+            let s = scope_for(Format::Lv2, scope);
+            install_lv2(&root, p, &config, s)?;
         }
         if au2 {
             #[cfg(target_os = "macos")]
-            install_au(&root, p, &config)?;
+            {
+                let s = scope_for(Format::Au2, scope);
+                install_au(&root, p, &config, s)?;
+            }
             // Non-macOS skip line was already pushed in the build phase.
         }
         if aax {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            install_aax(&root, p, &config)?;
+            {
+                // AAX is always system-scope; the call to `scope_for`
+                // exists for the side-effect (one-line note when the
+                // user passed `--user`).
+                let _ = scope_for(Format::Aax, scope);
+                install_aax(&root, p, &config)?;
+            }
             // Non-macOS/Windows: build phase already pushed the single
             // platform-not-supported skip; nothing per-plugin to do.
         }
@@ -370,7 +413,12 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
 
     if au3 {
         #[cfg(target_os = "macos")]
-        build_and_install_au_v3(&root, &config, &plugins, no_build)?;
+        {
+            // AU v3 is always system-scope on macOS — emit the note
+            // once before delegating to the (system-only) installer.
+            let _ = scope_for(Format::Au3, scope);
+            build_and_install_au_v3(&root, &config, &plugins, no_build)?;
+        }
         #[cfg(not(target_os = "macos"))]
         crate::log_skip(
             "AU v3: not supported on this platform. Audio Unit is macOS-only.".to_string(),
@@ -404,71 +452,73 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     Ok(())
 }
 
+/// Resolve the install scope from CLI flag, `truce.toml [install]
+/// default_scope`, and OS default — in that precedence order.
+fn resolve_scope(cli: Option<InstallScope>, config: &Config) -> Result<InstallScope, crate::BoxErr> {
+    if let Some(s) = cli {
+        return Ok(s);
+    }
+    if let Some(ref raw) = config.install.default_scope {
+        let toml = InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
+        return Ok(toml.for_install());
+    }
+    Ok(InstallScope::os_default())
+}
+
+/// Resolve the per-format effective scope and print the fallback note
+/// (once per `cargo truce` invocation) when `--user` had to be ignored.
+fn scope_for(format: Format, requested: InstallScope) -> InstallScope {
+    let (effective, note) = effective_scope(format, requested);
+    if let Some(msg) = note {
+        note_once(msg);
+    }
+    effective
+}
+
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
+pub(crate) fn install_clap(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    scope: InstallScope,
+) -> Res {
     let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
+    let clap_dir = scope.clap_dir();
+    let dst = clap_dir.join(format!("{}.clap", p.name));
+
+    if scope.needs_sudo() {
+        run_sudo("mkdir", &["-p", clap_dir.to_str().unwrap()])?;
+        run_sudo("cp", &[dylib.to_str().unwrap(), dst.to_str().unwrap()])?;
+    } else {
+        fs_ctx::create_dir_all(&clap_dir)?;
+        fs_ctx::copy(&dylib, &dst)?;
+    }
 
     #[cfg(target_os = "macos")]
-    {
-        let clap_dir = dirs::home_dir()
-            .unwrap()
-            .join("Library/Audio/Plug-Ins/CLAP");
-        fs_ctx::create_dir_all(&clap_dir)?;
-        let dst = clap_dir.join(format!("{}.clap", p.name));
-        fs_ctx::copy(&dylib, &dst)?;
-        codesign_bundle(
-            dst.to_str().unwrap(),
-            config.macos.application_identity(),
-            false,
-        )?;
-        crate::log_output(format!("CLAP: {}", dst.display()));
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let clap_dir = common_program_files().join("CLAP");
-        fs_ctx::create_dir_all(&clap_dir)?;
-        let dst = clap_dir.join(format!("{}.clap", p.name));
-        fs_ctx::copy(&dylib, &dst)?;
-        crate::log_output(format!("CLAP: {}", dst.display()));
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let clap_dir = dirs::home_dir().unwrap().join(".clap");
-        fs_ctx::create_dir_all(&clap_dir)?;
-        let dst = clap_dir.join(format!("{}.clap", p.name));
-        fs_ctx::copy(&dylib, &dst)?;
-        crate::log_output(format!("CLAP: {}", dst.display()));
-    }
-
+    codesign_bundle(
+        dst.to_str().unwrap(),
+        config.macos.application_identity(),
+        scope.needs_sudo(),
+    )?;
+    crate::log_output(format!("CLAP: {}", dst.display()));
     Ok(())
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
+fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
     let dylib = release_lib(root, &format!("{}_vst3", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
+    let bundle = scope.vst3_dir().join(format!("{}.vst3", p.name));
 
     #[cfg(target_os = "macos")]
     {
-        let vst3_bundle = format!("/Library/Audio/Plug-Ins/VST3/{}.vst3", p.name);
-        let contents = format!("{vst3_bundle}/Contents");
-
-        run_sudo("mkdir", &["-p", &format!("{contents}/MacOS")])?;
-        run_sudo(
-            "cp",
-            &[
-                dylib.to_str().unwrap(),
-                &format!("{contents}/MacOS/{}", p.name),
-            ],
-        )?;
-
+        let contents = bundle.join("Contents");
+        let macos_dir = contents.join("MacOS");
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -495,30 +545,49 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
             .to_string_lossy()
             .to_string();
         fs_ctx::write(&plist_tmp, &plist)?;
-        run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
-        codesign_bundle(&vst3_bundle, config.macos.application_identity(), true)?;
-        crate::log_output(format!("VST3: {vst3_bundle}"));
+
+        if scope.needs_sudo() {
+            run_sudo("mkdir", &["-p", macos_dir.to_str().unwrap()])?;
+            run_sudo(
+                "cp",
+                &[
+                    dylib.to_str().unwrap(),
+                    &format!("{}/{}", macos_dir.display(), p.name),
+                ],
+            )?;
+            run_sudo(
+                "cp",
+                &[&plist_tmp, &format!("{}/Info.plist", contents.display())],
+            )?;
+        } else {
+            fs_ctx::create_dir_all(&macos_dir)?;
+            fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+            fs_ctx::copy(&plist_tmp, contents.join("Info.plist"))?;
+        }
+
+        codesign_bundle(
+            bundle.to_str().unwrap(),
+            config.macos.application_identity(),
+            scope.needs_sudo(),
+        )?;
+        crate::log_output(format!("VST3: {}", bundle.display()));
     }
 
     #[cfg(target_os = "windows")]
     {
-        // VST3 on Windows: %COMMONPROGRAMFILES%\VST3\{name}.vst3\Contents\x86_64-win\{name}.vst3
-        let vst3_dir = common_program_files().join("VST3");
-        let bundle = vst3_dir.join(format!("{}.vst3", p.name));
+        // VST3 on Windows: <vst3_dir>\{name}.vst3\Contents\x86_64-win\{name}.vst3
         let arch_dir = bundle.join("Contents").join("x86_64-win");
-        fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.vst3", p.name));
+        fs_ctx::create_dir_all(&arch_dir)?;
         fs_ctx::copy(&dylib, &dst)?;
         crate::log_output(format!("VST3: {}", bundle.display()));
     }
 
     #[cfg(target_os = "linux")]
     {
-        let vst3_dir = dirs::home_dir().unwrap().join(".vst3");
-        let bundle = vst3_dir.join(format!("{}.vst3", p.name));
         let arch_dir = bundle.join("Contents").join("x86_64-linux");
-        fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.so", p.name));
+        fs_ctx::create_dir_all(&arch_dir)?;
         fs_ctx::copy(&dylib, &dst)?;
         crate::log_output(format!("VST3: {}", bundle.display()));
     }
@@ -527,22 +596,17 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
+fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
     let dylib = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
+    let vst_dir = scope.vst2_dir();
 
     #[cfg(target_os = "macos")]
     {
-        let vst_dir = dirs::home_dir().unwrap().join("Library/Audio/Plug-Ins/VST");
         let bundle = vst_dir.join(format!("{}.vst", p.name));
-
-        let _ = fs::remove_dir_all(&bundle);
         let macos_dir = bundle.join("Contents/MacOS");
-        fs_ctx::create_dir_all(&macos_dir)?;
-        fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
-
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -563,22 +627,60 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
             name = p.name,
             bundle_id = p.bundle_id,
         );
-        fs_ctx::write(bundle.join("Contents/Info.plist"), &plist)?;
-        fs_ctx::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
+        let plist_tmp = tmp_dir()
+            .join(format!("{}_vst2.plist", p.bundle_id))
+            .to_string_lossy()
+            .to_string();
+        fs_ctx::write(&plist_tmp, &plist)?;
+
+        if scope.needs_sudo() {
+            run_sudo("rm", &["-rf", bundle.to_str().unwrap()])?;
+            run_sudo("mkdir", &["-p", macos_dir.to_str().unwrap()])?;
+            run_sudo(
+                "cp",
+                &[
+                    dylib.to_str().unwrap(),
+                    &format!("{}/{}", macos_dir.display(), p.name),
+                ],
+            )?;
+            run_sudo(
+                "cp",
+                &[
+                    &plist_tmp,
+                    &format!("{}/Contents/Info.plist", bundle.display()),
+                ],
+            )?;
+            // PkgInfo is small enough that re-emitting via run_sudo
+            // (rather than tee) keeps the helper surface minimal.
+            let pkginfo_tmp = tmp_dir().join(format!("{}_vst2.pkginfo", p.bundle_id));
+            fs_ctx::write(&pkginfo_tmp, "BNDL????")?;
+            run_sudo(
+                "cp",
+                &[
+                    pkginfo_tmp.to_str().unwrap(),
+                    &format!("{}/Contents/PkgInfo", bundle.display()),
+                ],
+            )?;
+        } else {
+            let _ = fs::remove_dir_all(&bundle);
+            fs_ctx::create_dir_all(&macos_dir)?;
+            fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+            fs_ctx::write(bundle.join("Contents/Info.plist"), &plist)?;
+            fs_ctx::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
+        }
 
         codesign_bundle(
             bundle.to_str().unwrap(),
             config.macos.application_identity(),
-            false,
+            scope.needs_sudo(),
         )?;
         crate::log_output(format!("VST2: {}", bundle.display()));
     }
 
     #[cfg(target_os = "windows")]
     {
-        // VST2 on Windows: %PROGRAMFILES%\Steinberg\VstPlugins\{name}.dll
-        // This is the Steinberg default path that Reaper and most hosts scan by default.
-        let vst_dir = program_files().join("Steinberg").join("VstPlugins");
+        // Windows VST2 is system-only (effective_scope guarantees the
+        // fallback note); `vst_dir` resolves to %PROGRAMFILES%\Steinberg\VstPlugins.
         fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.dll", p.name));
         fs_ctx::copy(&dylib, &dst)?;
@@ -587,7 +689,6 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 
     #[cfg(target_os = "linux")]
     {
-        let vst_dir = dirs::home_dir().unwrap().join(".vst");
         fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.so", p.name));
         fs_ctx::copy(&dylib, &dst)?;
@@ -616,66 +717,73 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 /// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
 /// encoding — some LV2 hosts reject bundles whose TTL has spaces or other
 /// non-URI characters in filenames even when the on-disk files are valid.
-fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
-    let lv2_dir = lv2_bundle_root()?;
-    fs_ctx::create_dir_all(&lv2_dir)?;
-    crate::commands::package::stage::stage_lv2(root, p, &lv2_dir)?;
-    let slug = crate::commands::package::stage::lv2_slug(&p.name);
-    crate::log_output(format!(
-        "LV2:  {}",
-        lv2_dir.join(format!("{slug}.lv2")).display()
-    ));
+fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope) -> Res {
+    let lv2_dir = scope.lv2_dir();
+    if scope.needs_sudo() {
+        run_sudo("mkdir", &["-p", lv2_dir.to_str().unwrap()])?;
+    } else {
+        fs_ctx::create_dir_all(&lv2_dir)?;
+    }
+    // `stage_lv2` writes into `lv2_dir/<slug>.lv2/`. The system-scope
+    // path can be root-owned (e.g. /Library/Audio/Plug-Ins/LV2/),
+    // which means each fs::write inside `stage_lv2` would EACCES.
+    // Stage to a temp directory first, then move into place via
+    // `run_sudo` for the system path.
+    if scope.needs_sudo() {
+        let staging = tmp_dir().join(format!("{}_lv2_stage", p.bundle_id));
+        let _ = fs::remove_dir_all(&staging);
+        fs_ctx::create_dir_all(&staging)?;
+        crate::commands::package::stage::stage_lv2(root, p, &staging)?;
+        let slug = crate::commands::package::stage::lv2_slug(&p.name);
+        let staged_bundle = staging.join(format!("{slug}.lv2"));
+        let dst_bundle = lv2_dir.join(format!("{slug}.lv2"));
+        run_sudo("rm", &["-rf", dst_bundle.to_str().unwrap()])?;
+        run_sudo(
+            "cp",
+            &[
+                "-R",
+                staged_bundle.to_str().unwrap(),
+                dst_bundle.to_str().unwrap(),
+            ],
+        )?;
+        crate::log_output(format!("LV2:  {}", dst_bundle.display()));
+    } else {
+        crate::commands::package::stage::stage_lv2(root, p, &lv2_dir)?;
+        let slug = crate::commands::package::stage::lv2_slug(&p.name);
+        crate::log_output(format!(
+            "LV2:  {}",
+            lv2_dir.join(format!("{slug}.lv2")).display()
+        ));
+    }
     Ok(())
 }
 
-/// User-level LV2 bundle root per platform convention.
-fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    #[cfg(target_os = "linux")]
-    {
-        let home = dirs::home_dir().ok_or("cannot locate home directory")?;
-        Ok(home.join(".lv2"))
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // LV2 SDK convention on macOS. Ardour, Carla and jalv all scan
-        // this path by default; system-wide `/Library/Audio/Plug-Ins/LV2`
-        // is also searched when present.
-        let home = dirs::home_dir().ok_or("cannot locate home directory")?;
-        Ok(home.join("Library/Audio/Plug-Ins/LV2"))
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // Per the LV2 spec, the Windows per-user LV2 path is
-        // `%APPDATA%\LV2`. `%COMMONPROGRAMFILES%\LV2` is the system-wide
-        // search path; we target the user location so no admin rights
-        // are needed.
-        let appdata = std::env::var_os("APPDATA").ok_or("APPDATA env var not set")?;
-        Ok(PathBuf::from(appdata).join("LV2"))
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        Err("LV2 install is only supported on Linux, macOS, and Windows".into())
-    }
-}
-
 #[cfg(target_os = "macos")]
-fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
+fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
     let dylib = crate::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = format!("/Library/Audio/Plug-Ins/Components/{}.component", p.name);
-    let contents = format!("{bundle}/Contents");
+    let bundle = scope.au_v2_dir().join(format!("{}.component", p.name));
+    let bundle_str = bundle.to_str().unwrap().to_string();
+    let contents = bundle.join("Contents");
+    let macos_dir = contents.join("MacOS");
 
-    let _ = run_sudo("rm", &["-rf", &bundle]);
-    run_sudo("mkdir", &["-p", &format!("{contents}/MacOS")])?;
-    run_sudo(
-        "cp",
-        &[
-            dylib.to_str().unwrap(),
-            &format!("{contents}/MacOS/{}", p.name),
-        ],
-    )?;
+    if scope.needs_sudo() {
+        let _ = run_sudo("rm", &["-rf", &bundle_str]);
+        run_sudo("mkdir", &["-p", macos_dir.to_str().unwrap()])?;
+        run_sudo(
+            "cp",
+            &[
+                dylib.to_str().unwrap(),
+                &format!("{}/{}", macos_dir.display(), p.name),
+            ],
+        )?;
+    } else {
+        let _ = fs::remove_dir_all(&bundle);
+        fs_ctx::create_dir_all(&macos_dir)?;
+        fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+    }
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -733,8 +841,17 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
         .to_string_lossy()
         .to_string();
     fs_ctx::write(&plist_tmp, &plist)?;
-    run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
-    codesign_bundle(&bundle, config.macos.application_identity(), true)?;
-    crate::log_output(format!("AU:   {bundle}"));
+    let info_plist = contents.join("Info.plist");
+    if scope.needs_sudo() {
+        run_sudo("cp", &[&plist_tmp, info_plist.to_str().unwrap()])?;
+    } else {
+        fs_ctx::copy(&plist_tmp, &info_plist)?;
+    }
+    codesign_bundle(
+        &bundle_str,
+        config.macos.application_identity(),
+        scope.needs_sudo(),
+    )?;
+    crate::log_output(format!("AU:   {}", bundle.display()));
     Ok(())
 }
