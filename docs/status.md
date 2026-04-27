@@ -1,206 +1,81 @@
-# truce — Project Status
+# Status
 
-Updated 2026-04-27. Version 0.14.1.
+Updated 2026-04-27. Version 0.14.1. **Pre-1.0 — active development.**
 
-## Summary
+Plugin authors can build, install, validate, and package across CLAP,
+VST3, VST2, LV2, AU v2, AU v3, and AAX from a single Rust crate, on
+macOS, Windows, and Linux. Standalone host + signed installers (.pkg
+on macOS, .exe on Windows) work today. Hot-reload via `--shell` works
+for every format except AU v3 and AAX, which have known caveats below.
 
-7 format wrappers (CLAP, VST3, VST2, AU v2, AU v3, AAX, LV2) plus a
-standalone host, 9 example plugins, 7 widget types, tested in 7 DAWs.
-All formats have custom GUI. Hot-reload via `--features shell`.
-Single `truce::plugin!` macro for all exports. No `build.rs` edits
-needed by the developer. Four GUI backends: built-in (tiny-skia/wgpu),
-egui, iced, and slint.
+## What works today
 
-Runs on **macOS**, **Windows**, and **Linux**.
+| Format | macOS | Windows | Linux | Hosts smoke-tested |
+|---|---|---|---|---|
+| CLAP | ✅ | ✅ | ✅ | Reaper (all three OSes) |
+| VST3 | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS / Windows) |
+| VST2 | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS / Windows) |
+| LV2  | ✅ | ✅ | ✅ | Reaper (all three); Ardour / Carla pending |
+| AU v2 | ✅ | — | — | Reaper, Logic, GarageBand, Ableton |
+| AU v3 | ✅ | — | — | Reaper, Logic, Ableton |
+| AAX  | ✅ | ✅† | — | Pro Tools Developer |
 
-| Format | macOS | Windows | Linux | Custom GUI | Hosts tested |
-|--------|-------|---------|-------|------------|-------------|
-| CLAP | ✅ | ✅ | ✅ | ✅ | Reaper (macOS, Windows, Linux) |
-| VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
-| VST2 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
-| LV2 | ✅ | ✅ | ✅ | ✅ | Reaper on all three OSes (macOS, Windows, Linux); Ardour / Carla pending |
-| AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
-| AU v3 | ✅ | — | — | ✅ | Reaper, Logic, Ableton |
-| AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
+† Windows AAX builds and loads in Pro Tools Developer; retail Pro
+Tools requires a PACE/iLok signature (untested with a retail
+account — see below).
 
-\* GarageBand ignores custom GUI for all third-party plugins.
-† AAX on Windows builds, installs, and loads in Pro Tools Developer.
-Retail Pro Tools still requires a PACE/iLok signature (dev iLok + Pro
-Tools Developer unblocks local iteration).
-AU is macOS-only by design.
+Hot-reload works on every cell except AAX (untested) and AU v3 (appex
+sandbox blocks `dlopen` of `target/`; tracked in
+`truce-docs/docs/internal/shell-hardening.md`).
 
-## Distribution
+## Immediate backlog
 
-`cargo truce package` produces signed, **dual-arch installers by default** on both platforms:
+Things blocking confidence in the surface, roughly in priority order:
 
-- **macOS** — `.pkg` with Developer ID signing + optional Apple notarization, via `pkgbuild` + `productbuild` + `notarytool`. Plugin bundles contain fat Mach-O binaries (`x86_64-apple-darwin` + `aarch64-apple-darwin`) stitched together with `lipo`, so one install covers both Apple Silicon and Intel Macs.
-- **Windows** — Inno Setup `.exe` with Authenticode (Azure Trusted Signing / SHA1 thumbprint / `.pfx`) + PACE/wraptool for AAX. Single installer carries both x64 and ARM64 slices — bundle formats (VST3, AAX) stage arch-scoped sub-directories; single-file formats (CLAP, VST2) gate DLL copies on Inno Setup's `IsArm64` predicate. AAX stays host-arch (AAX SDK 2.9 Windows libs are x64-only).
+- **Retail iLok / PACE round-trip.** PACE wraptool is wired and
+  exercised against a dev iLok account; we haven't yet round-tripped
+  through a retail iLok + retail Pro Tools install. Needed before
+  documenting AAX as production-ready.
+- **Pro Tools shell-mode smoke test.** Manual: load a `--shell` AAX
+  bundle in Pro Tools Developer, confirm hot-reload fires. Pro
+  Tools' loader vs. dlopen behavior is the open question.
+- **AU v3 + `--shell` sandbox-disable entitlement.** Branch the
+  AUExt entitlements emitter on `shell_mode` and add
+  `com.apple.security.app-sandbox = false` for dev builds only;
+  production paths stay sandboxed. ~10 lines of code in
+  `crates/cargo-truce/src/commands/install/au_v3.rs`. Item 5 in
+  shell-hardening.md.
+- **Authenticode round-trip with a real cert.** The Azure Trusted
+  Signing / SHA1 thumbprint / `.pfx` paths are wired but haven't
+  been exercised with a real EV / OV cert end-to-end.
+- **Linux automation + preset round-trip testing in Bitwig and
+  Ardour.** Reaper is verified; the others are pending.
+- **`cargo truce package` for Linux.** `.deb` / `.rpm` / AppImage
+  are not generated today. Linux distribution is "build the bundles
+  and ship them yourself" until this lands.
+- **Windows hot-reload memory-leak ceiling test.** The
+  leak-don't-close pattern is correct but each rebuild leaks the
+  previous DLL's address space. Need to confirm the upper bound is
+  sane over a multi-hour session.
+- **Cross-scope install collision smoke.** `cargo truce validate`
+  warns when a plugin is in both user and system scopes; manual
+  verification across all formats is open.
 
-Pass `--host-only` to skip the cross-arch build during dev iteration. Output lands in `target/dist/<Plugin>-<version>-<platform>.{pkg,exe}`. See [docs/reference/shipping.md](reference/shipping.md) for the pipeline.
+## Future
 
-## Example plugins
+- WebView GUI backend.
+- ARA support.
+- Distribution-grade dynamic shell (today's `--shell` is dev-loop
+  only; making it a shipping mechanism is a phase-2 question — see
+  `shell-hardening.md` item 8).
+- More example plugins (delay, compressor, reverb).
+- crates.io publication once `baseview` ships a release.
 
-| Plugin | Type | GUI backend | Widgets |
-|--------|------|-------------|---------|
-| Gain | Effect | Built-in | Knob, slider, toggle, meter, XY pad (grid layout) |
-| Gain-egui | Effect | egui | Knob, slider, toggle, meter (immediate-mode) |
-| Gain-iced | Effect | iced | Knob, slider, toggle, meter, XY pad (custom iced UI) |
-| Gain-slint | Effect | slint | Knob, meter, XY pad (declarative .slint markup) |
-| EQ | Effect | Built-in | Knobs with section breaks (low shelf + peaking + high shelf) |
-| Synth | Instrument | Built-in | Selector, knobs with sections |
-| Tremolo | Effect | egui | Tempo-synced LFO; live transport readout in the editor |
-| Transpose | MIDI effect | Built-in | Knobs |
-| Arpeggio | MIDI effect | Built-in | Knobs, selector |
+## See also
 
-## Plugin API
-
-Developer writes:
-```rust
-use truce::prelude::*;
-use GainParamsParamId as P; // typed param IDs generated by #[derive(Params)]
-
-#[derive(Params)]
-pub struct GainParams { ... }
-
-pub struct Gain { params: Arc<GainParams> }
-
-impl PluginLogic for Gain { ... }
-
-truce::plugin! { logic: Gain, params: GainParams }
-```
-
-One import, one trait, one macro. `#[derive(Params)]` generates a
-`{StructName}ParamId` enum with `#[repr(u32)]` and `From<T> for u32`.
-All widget/layout constructors accept `impl Into<u32>`. Meters use
-`#[meter]` fields on `MeterSlot` and their variants (e.g.,
-`P::MeterLeft`) land in the same `ParamId` enum — so widgets bind
-to params and meters uniformly. Format wrappers store `Arc<P>` for
-params, enabling safe sharing between audio and GUI threads without
-raw pointers.
-
-## GUI
-
-Four GUI backends, same 7 widget types:
-
-| Backend | Crate | Mode | Rendering |
-|---------|-------|------|-----------|
-| Built-in | `truce-gui` / `truce-gpu` | Layout-only (zero code) | tiny-skia CPU or wgpu GPU |
-| egui | `truce-egui` | Custom (immediate-mode) | wgpu via egui-wgpu |
-| iced | `truce-iced` | Auto (from GridLayout) or custom (IcedPlugin trait) | wgpu (macOS native NSView; Windows/Linux via baseview) |
-| slint | `truce-slint` | Declarative `.slint` markup + custom Rust glue | software renderer |
-
-7 widget types via `GridLayout::build()` with auto-flow placement:
-
-| Widget | Constructor | Default span |
-|--------|------------|-------------|
-| Knob | `knob(P::Gain, "Gain")` | 1×1 |
-| Slider | `slider(P::Pan, "Pan")` | 1×1 |
-| Toggle | `toggle(P::Bypass, "Bypass")` | 1×1 |
-| Selector | `selector(P::Mode, "Mode")` | 1×1 |
-| Dropdown | `dropdown(P::Mode, "Mode")` | 1×1 |
-| Meter | `meter(&[P::MeterLeft, P::MeterRight], "Level")` | 1×1 |
-| XY Pad | `xy_pad(P::Pan, P::Gain, "XY")` | 2×2 |
-
-Column/row spanning via `.cols(n)` / `.rows(n)`. Sections via
-`section("LABEL", vec![...])` groups.
-
-## Hot-reload
-
-`--features shell` on the same crate. No shell/logic split needed.
-
-```bash
-cargo truce install --shell  # install dynamic shells + debug logic dylibs
-cargo watch -x build         # iterate
-```
-
-Native Rust ABI, ABI canary + vtable probe verification.
-`truce-loader` crate handles dylib loading, file watching,
-CRC32 content check, macOS codesign, leak-don't-close.
-
-**GUI hot-reload (built-in GUI):** Layout changes update seamlessly
-in `--shell` mode. The `HotEditor` wrapper watches for dylib changes
-and swaps the `BuiltinEditor` inside a shared mutex — no window
-flash, no manual close/reopen. DSP changes reload the same way.
-Custom editors (egui, iced, slint) require manually closing and
-reopening the plugin window for layout changes.
-
-## Build system
-
-Build logic and the user-facing CLI both live in `cargo-truce`.
-
-```sh
-cargo truce install              # all default-feature formats
-cargo truce install --shell      # ... with dynamic shells + debug logic dylibs
-cargo truce install -p my-gain   # single plugin (cargo crate name)
-cargo truce install --clap       # CLAP only
-cargo truce build                # bundle into target/bundles/, no system writes
-cargo truce run                  # launch the standalone host (no DAW)
-cargo truce screenshot           # render every plugin's GUI to target/screenshots/
-cargo truce package              # signed .pkg / .exe installer in target/dist/
-cargo truce test                 # run all tests
-cargo truce validate             # auval + pluginval + clap-validator
-cargo truce doctor               # check toolchain, SDKs, signing, ISCC, signtool
-cargo truce reset-au             # macOS: flush AU caches + restart pkd
-cargo truce reset-aax            # macOS: flush Pro Tools AAX cache
-cargo truce log-stream-au        # macOS: live-tail AU v3 appex os_log output
-```
-
-`build` / `install` / `run` accept `--debug` for cargo dev-profile
-iteration; `package` stays release-only since shipped artifacts
-shouldn't be debug.
-
-New projects are scaffolded with `cargo truce new`:
-
-```sh
-cargo truce new my-plugin              # CLAP + VST3 + standalone by default
-cargo truce new my-plugin --no-standalone  # skip the standalone host
-cd my-plugin
-cargo truce run                  # try it standalone, no DAW needed
-cargo truce install --clap       # build + install CLAP
-cargo truce package              # build signed installer
-```
-
-Scaffolding emits a `.cargo/config.toml` stub (gitignored) pre-seeded
-with commented env-var placeholders for signing identities and SDK
-paths, so per-developer config has one obvious home.
-
-## Crate structure
-
-```
-truce             — facade (re-exports everything, plugin! macro)
-truce-core        — Plugin, AudioBuffer, events, state
-truce-params      — FloatParam, BoolParam, EnumParam, smoothing
-truce-derive      — all proc macros (#[derive(Params)] + plugin_info! + helper derives)
-truce-loader      — hot-reload (native ABI, PluginLogic trait)
-truce-gui         — built-in GUI (tiny-skia + fontdue, optional wgpu GPU backend, 7 widget types)
-truce-gpu         — GPU rendering backend (wgpu/Metal, lyon tessellation, glyph atlas)
-truce-egui        — egui GUI backend (immediate-mode, wgpu)
-truce-iced        — iced GUI backend (retained-mode, wgpu; baseview on Windows, native NSView on macOS)
-truce-slint       — slint GUI backend (declarative .slint markup)
-truce-clap        — CLAP format wrapper
-truce-vst3        — VST3 format wrapper
-truce-vst2        — VST2 format wrapper (clean-room)
-truce-lv2         — LV2 format wrapper (Linux, macOS, Windows; hand-written bindings; X11UI / CocoaUI / WindowsUI)
-truce-au          — Audio Unit (v2 + v3)
-truce-aax         — AAX format wrapper
-truce-shim-types  — ABI-stable types shared with C/C++ shims
-truce-standalone  — standalone host (cpal audio)
-truce-build       — build.rs helper
-truce-test        — test utilities + GUI screenshot tests
-cargo-truce       — scaffolding + build/install/package CLI (cargo truce new / install / build / package)
-```
-
-## What's remaining
-
-**Near-term:**
-- Linux: automation + preset round-trip testing; Bitwig + Ardour
-  validation; `cargo truce package` (`.deb`/`.rpm`).
-- Retail Pro Tools / iLok smoke test (PACE wraptool path is wired and
-  exercised against dev iLok; needs a retail-account run).
-- Authenticode round-trip verification with a real signing cert
-  (Azure Trusted Signing path is wired).
-
-**Future:**
-- WebView GUI
-- ARA support
-- More example plugins (delay, compressor, reverb)
+- [`docs/reference/`](reference/) — install, first plugin, params,
+  processing, GUI, hot reload, shipping.
+- [`docs/formats/`](formats/) — per-format reference (CLAP, VST3,
+  VST2, LV2, AU, AAX) with env vars, install paths, gotchas.
+- [`docs/reference/hot-reload.md`](reference/hot-reload.md) — how
+  `--shell` and the dynamic loader work end-to-end.
