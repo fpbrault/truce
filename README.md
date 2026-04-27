@@ -7,6 +7,8 @@ AAX, and standalone from a single Rust codebase.
 [![Windows](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml)
 [![Linux](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml)
 [![Docs](https://img.shields.io/badge/docs-rustdoc-blue?logo=rust&logoColor=white)](https://truce-audio.github.io/truce/)
+[![Getting Started](https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white)](docs/reference/README.md)
+[![Status](https://img.shields.io/badge/status-pre--1.0-orange)](docs/README.md)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
 > Note: Earlier releases have been yanked, stable release coming soon.
