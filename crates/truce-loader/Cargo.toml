@@ -13,7 +13,7 @@ truce-params = { workspace = true }
 truce-gpu = { workspace = true }
 
 [dependencies.libloading]
-version = "0.8"
+version = "0.9"
 optional = true
 
 [dependencies.parking_lot]

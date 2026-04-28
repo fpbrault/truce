@@ -11,7 +11,7 @@ truce-core = { workspace = true }
 truce-params = { workspace = true }
 cpal = "0.15"
 pico-args = "0.5"
-toml = { version = "0.8", default-features = false, features = ["parse"] }
+toml = { version = "1", default-features = false, features = ["parse"] }
 dirs = "5"
 midir = "0.10"
 serde = { version = "1", features = ["derive"] }
