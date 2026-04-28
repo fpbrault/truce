@@ -162,5 +162,5 @@ The existing backends are good examples of real `Editor` implementations:
 | Built-in | `crates/truce-gui/src/editor.rs` | baseview + wgpu + CPU pixel blit |
 | GPU | `crates/truce-gpu/src/editor.rs` | baseview + wgpu + GPU rendering |
 | egui | `crates/truce-egui/src/editor.rs` | baseview + egui-wgpu |
-| Iced | `crates/truce-iced/src/editor.rs` | CAMetalLayer + iced-wgpu |
+| Iced | `crates/truce-iced/src/editor.rs` | baseview + iced-wgpu |
 | Slint | `crates/truce-slint/src/editor.rs` | baseview + software renderer + wgpu blit |
