@@ -1144,15 +1144,16 @@ fn render_iss(
     setup
 }
 
-/// Bytes a component will occupy on disk after install. Used for
+/// Bytes a component will occupy when loaded. Used for
 /// `ExtraDiskSpaceRequired` on `[Components]` so the wizard's component-size
 /// column is populated even for entries gated with `Check:`.
 ///
-/// CLAP/VST2 stage one DLL per arch but only the matching arch installs (gated
-/// on `IsArm64`), so we take the max of the per-arch sizes — close enough, and
-/// the two are usually within a few KB. VST3 ships both arch sub-bundles
-/// side-by-side, so we sum the whole bundle. AAX is host-arch-only and the
-/// staging dir already reflects that.
+/// We report the *effective* install size (one arch's worth), not the on-disk
+/// footprint. VST3 writes both arch sub-bundles side-by-side, but the host
+/// only ever loads one — reporting the sum makes VST3 read 2× larger than its
+/// peers for no reason a user cares about. Max-of-arches keeps the numbers
+/// comparable across CLAP/VST2/VST3. AAX is host-arch-only so its bundle
+/// already reflects a single arch.
 fn component_install_size(
     fmt: &PkgFormat,
     p: &PluginDef,
@@ -1183,7 +1184,15 @@ fn component_install_size(
             .max()
             .unwrap_or(0),
         PkgFormat::Vst3 => {
-            dir_size_recursive(&staging.join("vst3").join(format!("{}.vst3", p.name)))
+            let contents = staging
+                .join("vst3")
+                .join(format!("{}.vst3", p.name))
+                .join("Contents");
+            archs
+                .iter()
+                .map(|a| dir_size_recursive(&contents.join(a.vst3_bundle_subdir())))
+                .max()
+                .unwrap_or(0)
         }
         PkgFormat::Aax => {
             dir_size_recursive(&staging.join("aax").join(format!("{}.aaxplugin", p.name)))
