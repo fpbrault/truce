@@ -14,10 +14,42 @@ The truce workspace pins a toolchain and the desktop targets in
 `rust-toolchain.toml`. Running `rustup show` inside a truce plugin
 project installs the pinned version.
 
+## Install the CLI
+
+```sh
+cargo install --git https://github.com/truce-audio/truce cargo-truce
+```
+
+This installs `cargo-truce`, which Cargo picks up as the
+`cargo truce` subcommand. Re-run it to upgrade; the scaffold
+templates ship with the CLI binary, so upgrading the CLI is how you
+get new scaffold features.
+
 ## Platform deps
 
 Pick one — macOS, Windows, or Linux. All three build CLAP, VST3,
 VST2, and LV2; macOS adds AU v2/v3; macOS and Windows add AAX.
+
+### What each format needs
+
+The table below summarizes the dependencies per format. The
+"always" row covers the toolchain you need regardless. Other rows
+add to that. **CLAP, VST3, VST2, and LV2 don't need anything beyond
+the always-required toolchain** — start with those if you want a
+minimum-friction setup.
+
+| Need                 | macOS                | Windows              | Linux              |
+|----------------------|----------------------|----------------------|--------------------|
+| **always**           | Xcode CLI tools      | VS 2019+ Desktop C++ | `build-essential` + `pkg-config` |
+| any plugin with a GUI | (in OS)             | (in OS)              | + X11 / GL / Vulkan / font dev libs |
+| **standalone host**  | (in OS)              | (in OS)              | + ALSA + JACK or PipeWire-JACK shim |
+| **AU v3** *(plugins)* | + full Xcode (`xcodebuild`) | n/a            | n/a                |
+| **AAX**              | + Avid AAX SDK (`AAX_SDK_PATH`) + PACE/iLok for retail | + Avid AAX SDK + PACE/iLok | n/a |
+| **`cargo truce package` installer signing** | (in OS) | + Inno Setup       | n/a (no signed installer yet) |
+
+CLAP / VST3 / VST2 / LV2 / AU v2 ship without per-format extras.
+Pull in the GUI / standalone / AU v3 / AAX rows only if you'll
+build something that needs them.
 
 ### macOS
 
@@ -25,20 +57,38 @@ VST2, and LV2; macOS adds AU v2/v3; macOS and Windows add AAX.
 xcode-select --install     # Xcode CLI tools (provides clang)
 ```
 
-**Full Xcode** (not just CLI tools) is required if you want to ship
-AU v3 — `xcodebuild` needs to be on `PATH`. You can defer this
-until you're ready to package AU v3. Switch the active developer
-directory with:
+That's it for CLAP / VST3 / VST2 / LV2 / AU v2. The system
+frameworks (Cocoa, AudioToolbox, etc.) come with macOS — no
+package-manager work needed for GUI or standalone-audio support.
+
+**Full Xcode** (not just CLI tools) is required for **AU v3** —
+`xcodebuild` builds the `.appex` bundle. Defer this until you're
+ready to package AU v3. Switch the active developer directory with:
 
 ```sh
 sudo xcode-select -s /Applications/Xcode.app
 ```
+
+**AAX** needs the Avid AAX SDK (point `AAX_SDK_PATH` at it, or set
+`[macos].aax_sdk_path` in `truce.toml`) plus PACE/wraptool for
+retail Pro Tools releases. Skip both if you're not shipping AAX.
 
 ### Windows
 
 Visual Studio 2019+ with the **"Desktop development with C++"**
 workload. Pick ARM64 / C++ / Windows SDK components too if you want
 dual-arch installers.
+
+That covers CLAP / VST3 / VST2 / LV2. The system libraries (Win32,
+Direct3D, etc.) come with Windows — GUI and standalone audio work
+out of the box.
+
+**AAX** needs the Avid AAX SDK + PACE/iLok signing for retail Pro
+Tools (same shape as macOS).
+
+**`cargo truce package`** (signed `.exe` installer) needs
+[Inno Setup](https://jrsoftware.org/isinfo.php). Skip if you're not
+producing installers.
 
 `cargo truce install` defaults to **user-scope**
 (`%LOCALAPPDATA%\Programs\Common\CLAP\`,
@@ -53,31 +103,51 @@ hosts are Windows apps and can't load ELF binaries from WSL paths.
 
 ### Linux
 
-A C/C++ toolchain plus the X11, Vulkan, ALSA/JACK, and font headers
-the GUI backends need.
+A C/C++ toolchain plus optional GUI / audio dev headers. Linux
+breaks into the most rows because none of the GUI / audio plumbing
+is in the OS — every dep is opt-in.
 
-**Ubuntu / Debian:**
+**Always required** (any format, any plugin shape):
 
 ```sh
-sudo apt install build-essential pkg-config \
+sudo apt install build-essential pkg-config        # Ubuntu / Debian
+sudo dnf install @development-tools pkgconf-pkg-config  # Fedora
+```
+
+That's enough for a *headless* CLAP / VST3 / VST2 / LV2 plugin (no
+GUI, no standalone host).
+
+**Add for any plugin with a GUI** — every truce GUI backend
+(built-in widgets, egui, iced, slint) goes through `baseview` and
+needs the X11 + GL + Vulkan + font stack:
+
+```sh
+# Ubuntu / Debian
+sudo apt install \
   libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev \
   libxcb-icccm4-dev libxcursor-dev \
   libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
   libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
-  libasound2-dev libjack-jackd2-dev \
-  libfontconfig1-dev libfreetype-dev \
-  pipewire-jack libspa-0.2-jack
-```
+  libfontconfig1-dev libfreetype-dev
 
-**Fedora:**
-
-```sh
-sudo dnf install @development-tools pkgconf-pkg-config \
+# Fedora
+sudo dnf install \
   libX11-devel libxcb-devel libXcursor-devel \
   libxkbcommon-devel libxkbcommon-x11-devel libXrandr-devel \
   mesa-libGL-devel vulkan-loader-devel mesa-vulkan-drivers \
-  alsa-lib-devel jack-audio-connection-kit-devel \
   fontconfig-devel freetype-devel
+```
+
+**Add for the standalone host** — ALSA backend + JACK headers (or
+the PipeWire JACK shim):
+
+```sh
+# Ubuntu / Debian
+sudo apt install libasound2-dev libjack-jackd2-dev \
+  pipewire-jack libspa-0.2-jack       # PipeWire shim, optional
+
+# Fedora
+sudo dnf install alsa-lib-devel jack-audio-connection-kit-devel
 ```
 
 On modern distros with PipeWire (Ubuntu 24.04+, Fedora 40+), install
@@ -86,19 +156,11 @@ connection-kit`) and **don't** also run `jackd2` — they fight for
 the same socket. The shim replaces `libjack.so.0` so JACK clients
 route through PipeWire.
 
+**No AU / AAX on Linux** — those formats are macOS / macOS+Windows
+only. There's no Linux-specific extra dep beyond the rows above.
+
 Plugin installs are user-scope on Linux (`~/.clap`, `~/.vst3`,
 `~/.vst`, `~/.lv2`) — no `sudo` needed.
-
-## Install the CLI
-
-```sh
-cargo install --git https://github.com/truce-audio/truce cargo-truce
-```
-
-This installs `cargo-truce`, which Cargo picks up as the
-`cargo truce` subcommand. Re-run it to upgrade; the scaffold
-templates ship with the CLI binary, so upgrading the CLI is how you
-get new scaffold features.
 
 ## Sanity check
 
