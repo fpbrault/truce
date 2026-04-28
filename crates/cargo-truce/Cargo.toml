@@ -17,9 +17,9 @@ name = "cargo-truce"
 path = "src/main.rs"
 
 [dependencies]
-toml = "0.8"
+toml = "1"
 serde = { version = "1", features = ["derive"] }
 truce-shim-types = { workspace = true }
 
 [dependencies.libloading]
-version = "0.8"
+version = "0.9"
