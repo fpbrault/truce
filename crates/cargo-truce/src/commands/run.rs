@@ -137,8 +137,10 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
 
 /// Build a `.app` bundle layout around the standalone binary.
 ///
-///     <staged>.app/Contents/MacOS/<binary>
-///     <staged>.app/Contents/Info.plist
+/// ```text
+/// <staged>.app/Contents/MacOS/<binary>
+/// <staged>.app/Contents/Info.plist
+/// ```
 ///
 /// macOS treats the binary at `Contents/MacOS/<exe>` as the app's
 /// principal executable when the parent `.app` directory and
