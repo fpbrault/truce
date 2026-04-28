@@ -1,5 +1,17 @@
 //! Shared cpal audio setup + callback. One implementation used by
 //! both `windowed` and `headless` runners.
+//!
+//! Both the input and output cpal streams are owned by dedicated
+//! worker threads (cpal `Stream` is `!Send` on macOS, so it can't
+//! cross threads). UI / menu / CLI callers manipulate them through
+//! `Send + Sync` controllers (`InputController`, `OutputController`)
+//! that talk to the workers via `mpsc` channels:
+//!
+//! - **Toggle / enable** for input.
+//! - **Switch device** for either side. Worker drops the old stream
+//!   and opens a new one against the requested device name; on
+//!   failure the previous device's name remains in place and the
+//!   audio callback keeps running unchanged.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -23,14 +35,11 @@ pub struct MidiEvent {
 
 /// Shared audio-thread resources handed back from `start_audio`.
 ///
-/// The output stream is `!Send` (cpal Streams hold thread-bound
-/// CoreAudio handles on macOS), so `AudioHandles` is also `!Send`.
-/// The outer thread owns the struct directly; cross-thread
-/// communication for input-toggle requests goes through the
-/// `InputController` handle below, which IS `Send + Sync`.
+/// The output stream is owned by a worker thread, not by this
+/// struct, so `AudioHandles` is fully `Send`. The worker exits
+/// when the controller channel closes (all `OutputController`
+/// clones dropped).
 pub struct AudioHandles<P: PluginExport> {
-    /// The live output stream. Hold on to it — dropping it stops audio.
-    pub _stream: cpal::Stream,
     /// Event queue the caller pushes MIDI into; drained by the audio
     /// callback each block.
     pub pending: Arc<Mutex<Vec<MidiEvent>>>,
@@ -40,46 +49,56 @@ pub struct AudioHandles<P: PluginExport> {
     pub sample_rate: f64,
     pub channels: usize,
     pub is_effect: bool,
-    /// `Send + Sync` handle for toggling mic input from the UI
-    /// thread. The actual cpal input stream lives on a worker
-    /// thread that owns it.
+    /// `Send + Sync` handle for toggling mic input and switching
+    /// the input device. Backed by a worker thread that owns the
+    /// (`!Send`) cpal input stream.
     pub input: InputController,
+    /// `Send + Sync` handle for switching the output device.
+    /// Backed by a worker thread that owns the (`!Send`) cpal
+    /// output stream.
+    pub output: OutputController,
     /// Shared transport state; UI thread toggles play/stop, audio
     /// thread advances position each block.
     pub transport: Transport,
 }
 
+// ---------------------------------------------------------------------------
+// InputController
+// ---------------------------------------------------------------------------
+
 /// `Send + Sync` handle for managing mic input from the UI thread.
 ///
-/// Cloneable; multiple holders can request toggles. The actual
-/// `cpal::Stream` (`!Send` on macOS) lives on a dedicated worker
-/// thread spawned by `start_audio`; the worker receives toggle
-/// requests via the channel and opens/closes the stream.
+/// Cloneable; multiple holders can request toggles or device
+/// switches. The actual `cpal::Stream` (`!Send` on macOS) lives on
+/// a dedicated worker thread spawned by `start_audio`.
 #[derive(Clone)]
 pub struct InputController {
     /// Audio callback reads this every block to decide whether to
     /// drain the input ring or zero-fill. Worker thread updates it
     /// when a toggle completes (or fails).
     pub enabled: Arc<AtomicBool>,
-    /// True if the resolved input device exists at launch. When
-    /// false, toggling on is a no-op (toggle returns instantly,
-    /// `enabled` stays false).
+    /// True if an input device is configured (default or
+    /// CLI-named). When false, toggling on is a no-op.
     pub has_device: bool,
-    /// Sender for toggle requests. Worker thread blocks on the
-    /// matching receiver. Drop the worker by dropping the sender
-    /// (channel closes; worker exits its recv loop).
-    toggle_tx: mpsc::Sender<bool>,
+    /// Sender for input commands. Worker blocks on the matching
+    /// receiver. Closing the channel exits the worker.
+    cmd_tx: mpsc::Sender<InputCmd>,
+    /// Worker mirrors the resolved device name here after each
+    /// open so the menu can render a checkmark on the active
+    /// device. `None` = default device or no device available.
+    current_name: Arc<Mutex<Option<String>>>,
+}
+
+enum InputCmd {
+    SetEnabled(bool),
+    SetDevice(Option<String>),
 }
 
 impl InputController {
     /// Toggle the input. Returns immediately; the worker thread
-    /// processes the request asynchronously. Inspect `enabled`
-    /// after a brief delay (or on the next audio callback) to see
-    /// whether the toggle succeeded.
+    /// processes the request asynchronously.
     pub fn set_enabled(&self, on: bool) {
-        // If the channel is closed (worker exited), the send is a
-        // no-op; the standalone is shutting down anyway.
-        let _ = self.toggle_tx.send(on);
+        let _ = self.cmd_tx.send(InputCmd::SetEnabled(on));
     }
 
     /// Read the current state. Source of truth for the audio
@@ -87,55 +106,128 @@ impl InputController {
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
+
+    /// Switch the input device by name. Pass `None` to fall back
+    /// to the system default. If the input is currently enabled,
+    /// the worker re-opens the stream against the new device; if
+    /// disabled, the change takes effect on the next enable.
+    pub fn set_device(&self, name: Option<String>) {
+        let _ = self.cmd_tx.send(InputCmd::SetDevice(name));
+    }
+
+    /// Currently-resolved input device name, or `None` if no
+    /// device has been opened (or the worker resolved to the
+    /// system default with no nameable device).
+    pub fn current_name(&self) -> Option<String> {
+        self.current_name.lock().ok().and_then(|g| g.clone())
+    }
 }
+
+// ---------------------------------------------------------------------------
+// OutputController
+// ---------------------------------------------------------------------------
+
+/// `Send + Sync` handle for managing the output device from the
+/// UI thread. Cloneable; clones share the worker.
+#[derive(Clone)]
+pub struct OutputController {
+    cmd_tx: mpsc::Sender<OutputCmd>,
+    current_name: Arc<Mutex<Option<String>>>,
+}
+
+enum OutputCmd {
+    SetDevice(Option<String>),
+}
+
+impl OutputController {
+    /// Switch the output device by name. Pass `None` to fall back
+    /// to the system default. Failure to open is logged but
+    /// non-fatal — the previous stream remains running.
+    pub fn set_device(&self, name: Option<String>) {
+        let _ = self.cmd_tx.send(OutputCmd::SetDevice(name));
+    }
+
+    /// Currently-resolved output device name, or `None` if not
+    /// resolvable.
+    pub fn current_name(&self) -> Option<String> {
+        self.current_name.lock().ok().and_then(|g| g.clone())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Device enumeration helpers (used by `--list-devices` + menus).
+// ---------------------------------------------------------------------------
 
 /// Print available audio devices and return. Used by `--list-devices`.
 pub fn list_devices() {
-    let host = cpal::default_host();
     println!("=== Audio devices ===");
     println!("Output:");
-    if let Ok(devices) = host.output_devices() {
-        let default_name = host
-            .default_output_device()
-            .and_then(|d| d.name().ok())
-            .unwrap_or_default();
-        for d in devices {
-            let name = d.name().unwrap_or_default();
-            let marker = if name == default_name {
-                " (default)"
-            } else {
-                ""
-            };
-            println!("  {name}{marker}");
-        }
+    let (default_out, outs) = enumerate_devices(true);
+    for name in outs {
+        let marker = if Some(&name) == default_out.as_ref() {
+            " (default)"
+        } else {
+            ""
+        };
+        println!("  {name}{marker}");
     }
     println!("Input:");
-    if let Ok(devices) = host.input_devices() {
-        let default_name = host
-            .default_input_device()
-            .and_then(|d| d.name().ok())
-            .unwrap_or_default();
-        for d in devices {
-            let name = d.name().unwrap_or_default();
-            let marker = if name == default_name {
-                " (default)"
-            } else {
-                ""
-            };
-            println!("  {name}{marker}");
-        }
+    let (default_in, ins) = enumerate_devices(false);
+    for name in ins {
+        let marker = if Some(&name) == default_in.as_ref() {
+            " (default)"
+        } else {
+            ""
+        };
+        println!("  {name}{marker}");
     }
 }
 
-/// Open the requested output device, instantiate the plugin, start
-/// the stream. Returns the handles the caller needs to keep the
-/// stream alive and push MIDI.
+/// Snapshot of available output devices (`(default_name, all_names)`).
+pub fn list_output_devices() -> (Option<String>, Vec<String>) {
+    enumerate_devices(true)
+}
+
+/// Snapshot of available input devices (`(default_name, all_names)`).
+pub fn list_input_devices() -> (Option<String>, Vec<String>) {
+    enumerate_devices(false)
+}
+
+fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
+    let host = cpal::default_host();
+    let default_name = if output {
+        host.default_output_device().and_then(|d| d.name().ok())
+    } else {
+        host.default_input_device().and_then(|d| d.name().ok())
+    };
+    let names = if output {
+        host.output_devices()
+            .map(|it| it.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default()
+    } else {
+        host.input_devices()
+            .map(|it| it.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default()
+    };
+    (default_name, names)
+}
+
+// ---------------------------------------------------------------------------
+// start_audio
+// ---------------------------------------------------------------------------
+
+/// Resolve devices, instantiate the plugin, spawn input + output
+/// worker threads, return the handles the caller needs to push MIDI
+/// and reach the workers.
 pub fn start_audio<P: PluginExport>(
     opts: &Options,
 ) -> Result<AudioHandles<P>, Box<dyn std::error::Error>> {
     let audio_host = cpal::default_host();
 
-    let output_device = match &opts.output_device {
+    // Resolve initial output device synchronously so we can pull
+    // its default config (sample rate, channels) before spawning
+    // the worker. The worker re-resolves by name on each switch.
+    let initial_output = match &opts.output_device {
         Some(name) => find_device(&audio_host, name, true).ok_or_else(|| {
             format!(
                 "no output device matching '{name}'. \
@@ -148,13 +240,11 @@ pub fn start_audio<P: PluginExport>(
         )?,
     };
 
-    let default_config = output_device
+    let default_config = initial_output
         .default_output_config()
         .map_err(|e| format!("could not query default config for the audio output: {e}"))?;
 
-    // If the caller requested a specific sample rate / buffer size,
-    // ask cpal for a matching config; fall through to default on miss.
-    let config: cpal::StreamConfig = resolve_config(&output_device, &default_config, opts);
+    let config: cpal::StreamConfig = resolve_config(&initial_output, &default_config, opts);
     let sample_format = default_config.sample_format();
     let sample_rate = config.sample_rate.0 as f64;
     let channels = config.channels as usize;
@@ -172,11 +262,10 @@ pub fn start_audio<P: PluginExport>(
 
     let input_ring: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Resolve the input device lazily on the worker thread (cpal
-    // Device is also !Send). The worker thread receives toggle
-    // requests and opens/closes the stream against the
-    // resolved-by-name device on each enable.
-    let input_device_name: Option<String> = if is_effect {
+    // Resolve the initial input device name so the menu can show
+    // the currently-active device on first open. Worker re-resolves
+    // on each open against this name (or whatever the user picks).
+    let initial_input_name: Option<String> = if is_effect {
         let device = match &opts.input_device {
             Some(name) => find_device(&audio_host, name, false),
             None => audio_host.default_input_device(),
@@ -191,35 +280,40 @@ pub fn start_audio<P: PluginExport>(
     };
 
     let input_enabled = Arc::new(AtomicBool::new(false));
-    let has_device = input_device_name.is_some();
-    let (toggle_tx, toggle_rx) = mpsc::channel::<bool>();
+    let has_input_device = initial_input_name.is_some();
+    let (input_cmd_tx, input_cmd_rx) = mpsc::channel::<InputCmd>();
+    let input_current_name = Arc::new(Mutex::new(initial_input_name.clone()));
 
     let input_controller = InputController {
         enabled: Arc::clone(&input_enabled),
-        has_device,
-        toggle_tx: toggle_tx.clone(),
+        has_device: has_input_device,
+        cmd_tx: input_cmd_tx,
+        current_name: Arc::clone(&input_current_name),
     };
 
-    // Spawn the input-stream worker thread. It owns the cpal
-    // input stream (!Send), receives toggle requests via the
-    // channel, and updates `input_enabled` to reflect the actual
-    // open/closed state. Exits when the channel sender drops.
     if is_effect {
-        let device_name = input_device_name.clone();
+        let device_name = initial_input_name.clone();
         let ring = Arc::clone(&input_ring);
         let enabled_flag = Arc::clone(&input_enabled);
+        let current = Arc::clone(&input_current_name);
         let chans = channels;
         let sr = sample_rate;
         std::thread::Builder::new()
             .name("truce-standalone-input".into())
             .spawn(move || {
-                input_worker(toggle_rx, device_name, chans, sr, ring, enabled_flag);
+                input_worker(
+                    input_cmd_rx,
+                    device_name,
+                    chans,
+                    sr,
+                    ring,
+                    enabled_flag,
+                    current,
+                );
             })
             .ok();
     }
 
-    // CLI / env / config can override the privacy default to launch
-    // with mic on. Default is off when unspecified.
     let want_input_enabled = is_effect && opts.input_enabled.unwrap_or(false);
     if want_input_enabled {
         input_controller.set_enabled(true);
@@ -228,7 +322,7 @@ pub fn start_audio<P: PluginExport>(
     if is_effect {
         eprintln!(
             "Input:  {} ({})",
-            input_device_name.as_deref().unwrap_or("(none)"),
+            initial_input_name.as_deref().unwrap_or("(none)"),
             if want_input_enabled {
                 "enabled"
             } else {
@@ -239,27 +333,177 @@ pub fn start_audio<P: PluginExport>(
 
     let transport = Transport::new(opts.bpm.unwrap_or(120.0), sample_rate);
 
-    let plugin_audio = Arc::clone(&plugin);
-    let pending_audio = Arc::clone(&pending);
-    let ring_audio = Arc::clone(&input_ring);
-    let transport_audio = transport.clone();
-    let input_enabled_audio = Arc::clone(&input_enabled);
+    // Initial output device name (may differ from the resolver's
+    // requested name if it matched by substring).
+    let initial_output_name = initial_output.name().ok();
+    let output_current_name = Arc::new(Mutex::new(initial_output_name.clone()));
+    let (output_cmd_tx, output_cmd_rx) = mpsc::channel::<OutputCmd>();
+    let (open_result_tx, open_result_rx) = mpsc::channel::<Result<(), String>>();
+
+    let output_controller = OutputController {
+        cmd_tx: output_cmd_tx,
+        current_name: Arc::clone(&output_current_name),
+    };
+
+    let res = OutputResources {
+        plugin: Arc::clone(&plugin),
+        pending: Arc::clone(&pending),
+        input_ring: Arc::clone(&input_ring),
+        input_enabled: Arc::clone(&input_enabled),
+        transport: transport.clone(),
+        current_name: Arc::clone(&output_current_name),
+    };
+
+    let initial_output_name_for_worker = initial_output_name.clone();
+    std::thread::Builder::new()
+        .name("truce-standalone-output".into())
+        .spawn(move || {
+            output_worker::<P>(
+                output_cmd_rx,
+                open_result_tx,
+                initial_output_name_for_worker,
+                config,
+                sample_format,
+                sample_rate,
+                channels,
+                is_effect,
+                res,
+            );
+        })
+        .map_err(|e| format!("could not spawn output worker: {e}"))?;
+
+    // Wait for the worker to confirm initial open, so any error
+    // propagates back to start_audio's caller (matches the
+    // pre-refactor synchronous behavior).
+    match open_result_rx.recv() {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(e.into()),
+        Err(e) => return Err(format!("output worker exited before reporting: {e}").into()),
+    }
+
+    Ok(AudioHandles {
+        pending,
+        plugin,
+        sample_rate,
+        channels,
+        is_effect,
+        input: input_controller,
+        output: output_controller,
+        transport,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Output worker
+// ---------------------------------------------------------------------------
+
+/// Resources the output callback needs. Held by the worker; new
+/// streams clone the inner Arcs so `process()` keeps seeing the
+/// same plugin / pending / transport state across device switches.
+struct OutputResources<P: PluginExport> {
+    plugin: Arc<Mutex<P>>,
+    pending: Arc<Mutex<Vec<MidiEvent>>>,
+    input_ring: Arc<Mutex<Vec<f32>>>,
+    input_enabled: Arc<AtomicBool>,
+    transport: Transport,
+    current_name: Arc<Mutex<Option<String>>>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn output_worker<P: PluginExport>(
+    cmd_rx: mpsc::Receiver<OutputCmd>,
+    open_result: mpsc::Sender<Result<(), String>>,
+    initial_device_name: Option<String>,
+    config: cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    sample_rate: f64,
+    channels: usize,
+    is_effect: bool,
+    res: OutputResources<P>,
+) {
+    let mut stream: Option<cpal::Stream> = None;
+
+    let initial = open_output_stream::<P>(
+        &initial_device_name,
+        &config,
+        sample_format,
+        sample_rate,
+        channels,
+        is_effect,
+        &res,
+        &mut stream,
+    );
+    let _ = open_result.send(initial);
+
+    while let Ok(cmd) = cmd_rx.recv() {
+        match cmd {
+            OutputCmd::SetDevice(name) => {
+                // Drop the old stream BEFORE building the new one
+                // — some backends won't open a second exclusive
+                // stream against the same device.
+                stream = None;
+                if let Err(e) = open_output_stream::<P>(
+                    &name,
+                    &config,
+                    sample_format,
+                    sample_rate,
+                    channels,
+                    is_effect,
+                    &res,
+                    &mut stream,
+                ) {
+                    eprintln!("[truce-standalone] output device switch failed: {e}");
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_output_stream<P: PluginExport>(
+    name: &Option<String>,
+    config: &cpal::StreamConfig,
+    sample_format: cpal::SampleFormat,
+    sample_rate: f64,
+    channels: usize,
+    is_effect: bool,
+    res: &OutputResources<P>,
+    stream_slot: &mut Option<cpal::Stream>,
+) -> Result<(), String> {
+    // Resolve fresh each open — hot-plug may have changed the
+    // device list since the last switch.
+    let host = cpal::default_host();
+    let device = match name {
+        Some(n) => {
+            find_device(&host, n, true).ok_or_else(|| format!("no output device matching '{n}'"))?
+        }
+        None => host
+            .default_output_device()
+            .ok_or_else(|| "no default audio output device".to_string())?,
+    };
+    let resolved_name = device.name().ok();
+
+    let plugin_a = Arc::clone(&res.plugin);
+    let pending_a = Arc::clone(&res.pending);
+    let ring_a = Arc::clone(&res.input_ring);
+    let enabled_a = Arc::clone(&res.input_enabled);
+    let transport_a = res.transport.clone();
 
     let stream = match sample_format {
-        cpal::SampleFormat::F32 => output_device
+        cpal::SampleFormat::F32 => device
             .build_output_stream(
-                &config,
+                config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     audio_callback::<P>(
                         data,
                         channels,
                         sample_rate,
                         is_effect,
-                        &plugin_audio,
-                        &pending_audio,
-                        &ring_audio,
-                        &input_enabled_audio,
-                        &transport_audio,
+                        &plugin_a,
+                        &pending_a,
+                        &ring_a,
+                        &enabled_a,
+                        &transport_a,
                     );
                 },
                 |err| eprintln!("Audio error: {err}"),
@@ -268,10 +512,9 @@ pub fn start_audio<P: PluginExport>(
             .map_err(|e| format!("could not build output stream: {e}"))?,
         format => {
             return Err(format!(
-                "audio output format {format:?} is not supported (truce standalone \
-                 currently only handles f32). Try a different output device."
-            )
-            .into())
+                "audio output format {format:?} is not supported \
+                 (truce standalone currently only handles f32)"
+            ))
         }
     };
 
@@ -279,85 +522,132 @@ pub fn start_audio<P: PluginExport>(
         .play()
         .map_err(|e| format!("could not start output stream: {e}"))?;
 
+    *stream_slot = Some(stream);
+    if let Ok(mut g) = res.current_name.lock() {
+        *g = resolved_name.clone();
+    }
+
     eprintln!(
         "Output: {} @ {} Hz, {} ch",
-        output_device.name().unwrap_or_default(),
-        sample_rate,
-        channels
-    );
-
-    Ok(AudioHandles {
-        _stream: stream,
-        pending,
-        plugin,
+        resolved_name.as_deref().unwrap_or("(unnamed)"),
         sample_rate,
         channels,
-        is_effect,
-        input: input_controller,
-        transport,
-    })
+    );
+    Ok(())
 }
 
-/// Worker that owns the (`!Send`) cpal input stream + responds to
-/// toggle requests on its channel. Lives for the duration of the
-/// standalone process; exits when the sender side of the channel
-/// is dropped (which happens when `AudioHandles` is dropped at
-/// shutdown).
+// ---------------------------------------------------------------------------
+// Input worker
+// ---------------------------------------------------------------------------
+
 fn input_worker(
-    toggle_rx: mpsc::Receiver<bool>,
-    device_name: Option<String>,
+    cmd_rx: mpsc::Receiver<InputCmd>,
+    initial_device_name: Option<String>,
     channels: usize,
     sample_rate: f64,
     ring: Arc<Mutex<Vec<f32>>>,
     enabled_flag: Arc<AtomicBool>,
+    current_name: Arc<Mutex<Option<String>>>,
 ) {
     let mut stream: Option<cpal::Stream> = None;
+    let mut device_name = initial_device_name;
+    let mut want_enabled = false;
 
-    while let Ok(want) = toggle_rx.recv() {
-        let currently = stream.is_some();
-        if want == currently {
-            continue;
-        }
-        if want {
-            // Resolve device fresh each time — the user may have
-            // plugged/unplugged hardware between toggles.
-            let host = cpal::default_host();
-            let device = match device_name.as_ref() {
-                Some(name) => find_device(&host, name, false),
-                None => host.default_input_device(),
-            };
-            match device {
-                Some(dev) => match build_and_play_input_stream(
-                    &dev,
+    while let Ok(cmd) = cmd_rx.recv() {
+        match cmd {
+            InputCmd::SetEnabled(on) => {
+                want_enabled = on;
+                apply_input_state(
+                    &mut stream,
+                    want_enabled,
+                    &device_name,
                     channels,
                     sample_rate,
-                    Arc::clone(&ring),
-                ) {
+                    &ring,
+                    &enabled_flag,
+                    &current_name,
+                );
+            }
+            InputCmd::SetDevice(name) => {
+                device_name = name;
+                if want_enabled {
+                    // Drop old before opening new — some backends
+                    // won't open a second exclusive stream against
+                    // the same device.
+                    stream = None;
+                    enabled_flag.store(false, Ordering::Relaxed);
+                    apply_input_state(
+                        &mut stream,
+                        true,
+                        &device_name,
+                        channels,
+                        sample_rate,
+                        &ring,
+                        &enabled_flag,
+                        &current_name,
+                    );
+                } else if let Ok(mut g) = current_name.lock() {
+                    // Reflect the chosen device immediately even
+                    // though we haven't opened a stream — the menu
+                    // checkmark should match the user's pick.
+                    *g = device_name.clone();
+                }
+            }
+        }
+    }
+    drop(stream);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_input_state(
+    stream: &mut Option<cpal::Stream>,
+    want: bool,
+    device_name: &Option<String>,
+    channels: usize,
+    sample_rate: f64,
+    ring: &Arc<Mutex<Vec<f32>>>,
+    enabled_flag: &Arc<AtomicBool>,
+    current_name: &Arc<Mutex<Option<String>>>,
+) {
+    let currently = stream.is_some();
+    if want == currently {
+        return;
+    }
+    if want {
+        let host = cpal::default_host();
+        let device = match device_name {
+            Some(name) => find_device(&host, name, false),
+            None => host.default_input_device(),
+        };
+        match device {
+            Some(dev) => {
+                let resolved = dev.name().ok();
+                match build_and_play_input_stream(&dev, channels, sample_rate, Arc::clone(ring)) {
                     Ok(s) => {
-                        stream = Some(s);
+                        *stream = Some(s);
                         enabled_flag.store(true, Ordering::Relaxed);
+                        if let Ok(mut g) = current_name.lock() {
+                            *g = resolved;
+                        }
                     }
                     Err(e) => {
                         eprintln!("[truce-standalone] mic enable failed: {e}");
                         enabled_flag.store(false, Ordering::Relaxed);
                     }
-                },
-                None => {
-                    eprintln!("[truce-standalone] mic enable failed: no input device available");
-                    enabled_flag.store(false, Ordering::Relaxed);
                 }
             }
-        } else {
-            // Dropping the stream stops capture cleanly.
-            stream = None;
-            enabled_flag.store(false, Ordering::Relaxed);
-            if let Ok(mut r) = ring.lock() {
-                r.clear();
+            None => {
+                eprintln!("[truce-standalone] mic enable failed: no input device available");
+                enabled_flag.store(false, Ordering::Relaxed);
             }
         }
+    } else {
+        *stream = None;
+        enabled_flag.store(false, Ordering::Relaxed);
+        if let Ok(mut r) = ring.lock() {
+            r.clear();
+        }
     }
-    // Channel closed → drop the stream and exit.
-    drop(stream);
 }
 
 /// Build an input stream against the given device that drains

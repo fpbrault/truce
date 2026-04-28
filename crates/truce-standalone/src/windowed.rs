@@ -22,7 +22,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_params::Params;
 
-use crate::audio::{self, InputController, MidiEvent};
+use crate::audio::{self, InputController, MidiEvent, OutputController};
 use crate::cli::Options;
 use crate::keyboard;
 use crate::midi::MidiInputThread;
@@ -98,11 +98,10 @@ where
     let pending = Arc::clone(&audio_handles.pending);
     let transport = audio_handles.transport.clone();
 
-    // InputController is Send + Sync (it's Clone, holds an Arc +
-    // mpsc::Sender). The full AudioHandles is !Send because of
-    // cpal::Stream, so we keep the handles in this outer scope and
-    // only pass the Send-able pieces into the window's closure.
+    // Both controllers are `Send + Sync` — the cpal streams they
+    // wrap live on dedicated worker threads, not on `audio_handles`.
     let input_ctrl = audio_handles.input.clone();
+    let output_ctrl = audio_handles.output.clone();
     let is_effect = audio_handles.is_effect;
 
     Window::open_blocking(window_opts, move |window| {
@@ -122,9 +121,16 @@ where
         // has initialized NSApp, which it does as part of opening
         // the window. The closure builder runs on the main thread
         // before the event loop starts, so this is the right hook.
+        // The mic-input menu only makes sense for effects (input
+        // is silent for instruments / analyzers without input
+        // routing). Device pickers, however, apply universally —
+        // every plugin can switch its output, and instruments can
+        // still want to pick a specific input if the host ever
+        // routes one. Effect-only gating keeps the simpler case
+        // until we have a use for it.
         #[cfg(target_os = "macos")]
         if is_effect {
-            crate::menu_macos::install(P::info().name, input_ctrl.clone());
+            crate::menu_macos::install(P::info().name, input_ctrl.clone(), output_ctrl.clone());
         }
 
         // Windows: same idea, but the menu bar lives inside the
@@ -135,7 +141,12 @@ where
         #[cfg(target_os = "windows")]
         if is_effect {
             if let RwhHandle::Win32(h) = window.raw_window_handle() {
-                crate::menu_windows::install(h.hwnd, P::info().name, input_ctrl.clone());
+                crate::menu_windows::install(
+                    h.hwnd,
+                    P::info().name,
+                    input_ctrl.clone(),
+                    output_ctrl.clone(),
+                );
             }
         }
 
@@ -148,6 +159,7 @@ where
             pending,
             transport,
             input_ctrl,
+            _output_ctrl: output_ctrl,
             is_effect,
             octave_offset: 0,
             _midi_thread: midi_thread,
@@ -169,6 +181,10 @@ where
     /// Toggle handle for mic input (sends to the worker thread
     /// owning the cpal input stream).
     input_ctrl: InputController,
+    /// Output device handle. Held only for lifetime — the menu
+    /// owns runtime switching; no keyboard shortcuts dispatch
+    /// through it today.
+    _output_ctrl: OutputController,
     /// True only for effect plugins; gates the `I` keyboard
     /// shortcut.
     is_effect: bool,
