@@ -1,18 +1,20 @@
-//! CLI parser + config-file loader with strict precedence.
+//! CLI parser with strict precedence.
 //!
 //! Resolution order, first match wins:
 //!
 //! 1. CLI flag (`--output "…"`)
 //! 2. Environment variable (`TRUCE_STANDALONE_OUTPUT`)
-//! 3. Config file (`~/Library/Application Support/truce/standalone.toml` on
-//!    macOS, `$XDG_CONFIG_HOME/truce/standalone.toml` on Linux,
-//!    `%APPDATA%\truce\standalone.toml` on Windows)
-//! 4. Compiled default (usually: whatever cpal picks)
+//! 3. Project-baked default (from `[plugin.standalone]` in
+//!    `truce.toml`, captured at compile time by `truce-build` and
+//!    passed in via [`crate::Defaults`])
+//! 4. Compiled runtime default (input off, output on, cpal-picked
+//!    devices)
 
-use serde::Deserialize;
 use std::path::PathBuf;
 
-/// Resolved CLI + config-file + environment + defaults.
+use crate::Defaults;
+
+/// Resolved CLI + env + project-baked + runtime defaults.
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     pub headless: bool,
@@ -22,12 +24,14 @@ pub struct Options {
     pub input_device: Option<String>,
     /// Whether the mic input is enabled at launch. `None` →
     /// privacy default (off). Set explicitly via `--input-enabled
-    /// on|off` or `default_input_enabled` in the config file.
+    /// on|off`, the env var, or `[plugin.standalone].input_enabled`
+    /// in `truce.toml`.
     pub input_enabled: Option<bool>,
     /// Whether the speaker output is enabled at launch. `None` →
     /// runtime default (on — the user launched standalone to hear
-    /// the plugin). Set explicitly via `--output-enabled on|off` or
-    /// `default_output_enabled` in the config file.
+    /// the plugin). Set explicitly via `--output-enabled on|off`,
+    /// the env var, or `[plugin.standalone].output_enabled` in
+    /// `truce.toml`.
     pub output_enabled: Option<bool>,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
@@ -60,19 +64,30 @@ OPTIONS:
   --state <path>            Load plugin state from this file on launch
   -h, --help                Show this message
 
-CONFIG FILE:
-  macOS   ~/Library/Application Support/truce/standalone.toml
-  Linux   $XDG_CONFIG_HOME/truce/standalone.toml (or ~/.config/...)
-  Windows %APPDATA%\\truce\\standalone.toml
+PROJECT DEFAULTS:
+  Per-plugin launch defaults can be set in `truce.toml`:
+
+    [[plugin]]
+    name = \"…\"
+    # …
+    [plugin.standalone]
+    input_enabled  = true
+    output_enabled = true
+
+  Baked at build time by `truce-build` and threaded into the
+  binary via the `truce_standalone::baked_defaults!()` macro
+  (the scaffolded `main.rs` calls it for you).
 
 PRECEDENCE (first match wins):
-  CLI flag > TRUCE_STANDALONE_* env var > config file > cpal default
+  CLI flag > TRUCE_STANDALONE_* env var > truce.toml baked default
+   > runtime default (input off, output on, cpal-picked devices)
 ";
 
-/// Parse argv + env + config file and return resolved options.
-/// Prints help and exits if `--help` / `-h` seen; prints error and
-/// returns `Err` on parse failure.
-pub fn parse() -> Result<Options, String> {
+/// Parse argv + env, layered on top of `baked` (compile-time-baked
+/// defaults from `truce.toml` — see [`crate::Defaults`]). Returns
+/// resolved options. Prints help and exits if `--help` / `-h` seen;
+/// prints error and returns `Err` on parse failure.
+pub fn parse(baked: Defaults) -> Result<Options, String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut args = pico_args::Arguments::from_vec(args);
 
@@ -125,21 +140,30 @@ pub fn parse() -> Result<Options, String> {
         return Err(format!("unknown arguments: {leftover:?}"));
     }
 
-    // Layer env variables beneath CLI.
-    let mut opts = Options {
+    // Layer env variables beneath CLI, then the baked-at-build-time
+    // defaults the caller passed in (resolved from
+    // `[plugin.standalone]` in `truce.toml` via the
+    // `truce_standalone::baked_defaults!` macro at the consumer's
+    // compile site). `Defaults::default()` disables that tier and
+    // we fall through to the runtime default in `audio.rs`.
+    let opts = Options {
         headless,
         list_devices,
         list_midi,
         output_device: output_device.or_else(|| env("OUTPUT")),
         input_device: input_device.or_else(|| env("INPUT")),
-        input_enabled: input_enabled.or_else(|| {
-            env("INPUT_ENABLED")
-                .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
-        }),
-        output_enabled: output_enabled.or_else(|| {
-            env("OUTPUT_ENABLED")
-                .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_OUTPUT_ENABLED").ok())
-        }),
+        input_enabled: input_enabled
+            .or_else(|| {
+                env("INPUT_ENABLED")
+                    .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
+            })
+            .or(baked.input_enabled),
+        output_enabled: output_enabled
+            .or_else(|| {
+                env("OUTPUT_ENABLED")
+                    .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_OUTPUT_ENABLED").ok())
+            })
+            .or(baked.output_enabled),
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
@@ -147,18 +171,6 @@ pub fn parse() -> Result<Options, String> {
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
         help: false,
     };
-
-    // Config file — anything CLI+env left as None gets filled here.
-    if let Some(config) = load_config() {
-        opts.output_device = opts.output_device.or(config.default_output);
-        opts.input_device = opts.input_device.or(config.default_input);
-        opts.input_enabled = opts.input_enabled.or(config.default_input_enabled);
-        opts.output_enabled = opts.output_enabled.or(config.default_output_enabled);
-        opts.sample_rate = opts.sample_rate.or(config.default_sample_rate);
-        opts.buffer_size = opts.buffer_size.or(config.default_buffer);
-        opts.midi_input = opts.midi_input.or(config.default_midi_input);
-        opts.bpm = opts.bpm.or(config.default_bpm);
-    }
 
     Ok(opts)
 }
@@ -173,52 +185,4 @@ fn parse_on_off(s: &str, flag: &str) -> Result<bool, String> {
 
 fn env(name: &str) -> Option<String> {
     std::env::var(format!("TRUCE_STANDALONE_{name}")).ok()
-}
-
-#[derive(Deserialize, Default)]
-struct Config {
-    #[serde(default)]
-    default_output: Option<String>,
-    #[serde(default)]
-    default_input: Option<String>,
-    /// Privacy default: `None` (unset in config) means the runtime
-    /// default takes effect (off). Set to `true` / `false` in config
-    /// to override at launch.
-    #[serde(default)]
-    default_input_enabled: Option<bool>,
-    /// `None` (unset in config) means the runtime default takes
-    /// effect (on). Set `false` to launch muted.
-    #[serde(default)]
-    default_output_enabled: Option<bool>,
-    #[serde(default)]
-    default_sample_rate: Option<u32>,
-    #[serde(default)]
-    default_buffer: Option<u32>,
-    #[serde(default)]
-    default_midi_input: Option<String>,
-    #[serde(default)]
-    default_bpm: Option<f64>,
-}
-
-fn load_config() -> Option<Config> {
-    let path = config_path()?;
-    if !path.exists() {
-        return None;
-    }
-    let contents = std::fs::read_to_string(&path).ok()?;
-    match toml::from_str::<Config>(&contents) {
-        Ok(cfg) => Some(cfg),
-        Err(e) => {
-            eprintln!("[truce-standalone] {} parse error: {e}", path.display());
-            None
-        }
-    }
-}
-
-fn config_path() -> Option<PathBuf> {
-    // dirs::config_dir() gives the platform-correct base:
-    //   macOS   ~/Library/Application Support
-    //   Linux   $XDG_CONFIG_HOME or ~/.config
-    //   Windows %APPDATA% (roaming)
-    Some(dirs::config_dir()?.join("truce").join("standalone.toml"))
 }

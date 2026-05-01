@@ -6375,8 +6375,6 @@ dependencies = [
  "objc",
  "pico-args",
  "raw-window-handle 0.5.2",
- "serde",
- "toml 1.1.2+spec-1.1.0",
  "truce-core",
  "truce-gpu",
  "truce-gui",
