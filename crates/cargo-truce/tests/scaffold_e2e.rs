@@ -264,7 +264,12 @@ impl Scaffold {
                 String::from_utf8_lossy(&out.stderr),
             ));
         }
-        let bin_path = shared_target().join("debug").join(bin);
+        // Cargo writes to `<target>/debug/<bin>` on Unix and
+        // `<target>\debug\<bin>.exe` on Windows. Use std::env::consts
+        // so we don't have to gate on `cfg!(windows)`.
+        let bin_path = shared_target()
+            .join("debug")
+            .join(format!("{bin}{}", std::env::consts::EXE_SUFFIX));
         if !bin_path.is_file() {
             return Err(format!(
                 "[{}] cargo build --bin {bin} succeeded but {} is missing",
