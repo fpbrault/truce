@@ -51,11 +51,9 @@ where
 
     let is_effect = P::info().category == PluginCategory::Effect;
     if !is_effect {
-        return Err(
-            "offline render currently only supports effect plugins \
+        return Err("offline render currently only supports effect plugins \
              (instruments need a --midi-file driver, not yet implemented)"
-                .into(),
-        );
+            .into());
     }
 
     // Resolve sample rate: CLI override wins; else inherit the
@@ -124,9 +122,8 @@ where
         let input_slices: Vec<&[f32]> = input_bufs.iter().map(|b| b.as_slice()).collect();
         let mut output_slices: Vec<&mut [f32]> =
             channel_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
-        let mut audio = unsafe {
-            AudioBuffer::from_slices(&input_slices, &mut output_slices, block_size)
-        };
+        let mut audio =
+            unsafe { AudioBuffer::from_slices(&input_slices, &mut output_slices, block_size) };
 
         let transport_info = transport.tick_audio(block_size);
         let event_list = EventList::new();
@@ -159,7 +156,9 @@ where
     let speedup = render_secs / elapsed.as_secs_f64().max(1e-9);
     eprintln!(
         "Offline render: wrote {} frames in {:.2}s ({:.1}× real-time)",
-        total_frames, elapsed.as_secs_f32(), speedup
+        total_frames,
+        elapsed.as_secs_f32(),
+        speedup
     );
 
     Ok(())
