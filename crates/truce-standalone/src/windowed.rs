@@ -303,48 +303,36 @@ where
     }
 
     /// Snapshot the plugin (params + custom state) and write it to a
-    /// user-picked path via the native save dialog. Same envelope
-    /// every other host format produces, so the resulting `.state`
-    /// file round-trips into CLAP / VST3 / AU / a future
-    /// `--state foo.state` standalone launch.
+    /// user-picked path. Same envelope every other host format
+    /// produces, so the resulting `.state` file round-trips into
+    /// CLAP / VST3 / AU / a future `--state foo.state` standalone
+    /// launch.
     ///
-    /// On macOS the dialog runs on the main thread (the AppKit
-    /// run loop baseview is already driving). Audio stays on the
-    /// cpal thread; only the editor's main-thread frame loop
-    /// pauses while the picker is up.
+    /// On macOS / Windows the path comes from a native save
+    /// dialog; on Linux we fall back to a default
+    /// `<data_local_dir>/truce/<slug>/quicksave-<ts>.state` path
+    /// because `rfd`'s Linux backend (xdg-portal) drags
+    /// `wayland-sys` into the dep tree, which would force every
+    /// truce-using project on a typical Linux dev machine to
+    /// install Wayland system headers just to `cargo check`.
+    /// Linux gets a real picker once we find a wayland-free
+    /// backend (or once that dep tree thins out).
     fn save_state_via_picker(&self) {
         let Ok(plugin) = self.plugin.lock() else {
             eprintln!("[truce-standalone] could not lock plugin to save state");
             return;
         };
         let blob = truce_core::state::snapshot_plugin(&*plugin);
+        let param_count = plugin.params().param_infos().len();
         // Drop the plugin lock before we open the dialog — the
         // audio thread acquires this mutex on every block, and a
         // few-second dialog wait is enough to glitch playback.
-        let param_count = plugin.params().param_infos().len();
         drop(plugin);
 
-        // Default to <data_local_dir>/truce/<slug>/ if it exists,
-        // otherwise the home directory. Either way the user can
-        // navigate elsewhere from the dialog. `<plugin>.state` is
-        // the suggested filename; user can rename in the picker.
         let plugin_slug = slugify(P::info().name);
-        let initial_dir = dirs::data_local_dir()
-            .map(|d| d.join("truce").join(&plugin_slug))
-            .filter(|p| p.exists())
-            .or_else(dirs::home_dir);
-        let mut dialog = rfd::FileDialog::new()
-            .set_title(format!("Save state for {}", P::info().name))
-            .add_filter("Truce state", &["state"])
-            .set_file_name(format!("{plugin_slug}.state"));
-        if let Some(dir) = initial_dir {
-            dialog = dialog.set_directory(dir);
-        }
-        let Some(path) = dialog.save_file() else {
-            // User cancelled — nothing to log.
-            return;
+        let Some(path) = pick_save_path::<P>(&plugin_slug) else {
+            return; // user cancelled, or no fallback dir on Linux
         };
-
         match std::fs::write(&path, &blob) {
             Ok(()) => eprintln!(
                 "[truce-standalone] state saved: {} ({param_count} params, {} bytes)",
@@ -363,6 +351,49 @@ fn slugify(name: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
+}
+
+/// Resolve a destination path for Cmd-S. Native dialog on macOS /
+/// Windows; default-path fallback on Linux. Returns `None` if the
+/// user cancels (native picker) or if `data_local_dir` /
+/// `mkdir -p` fails (Linux fallback).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathBuf> {
+    // Default to <data_local_dir>/truce/<slug>/ if it exists,
+    // otherwise the home dir. User can navigate elsewhere from the
+    // dialog. `<plugin>.state` is the suggested filename.
+    let initial_dir = dirs::data_local_dir()
+        .map(|d| d.join("truce").join(plugin_slug))
+        .filter(|p| p.exists())
+        .or_else(dirs::home_dir);
+    let mut dialog = rfd::FileDialog::new()
+        .set_title(format!("Save state for {}", P::info().name))
+        .add_filter("Truce state", &["state"])
+        .set_file_name(format!("{plugin_slug}.state"));
+    if let Some(dir) = initial_dir {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.save_file()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathBuf> {
+    let dir = dirs::data_local_dir()?.join("truce").join(plugin_slug);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("[truce-standalone] mkdir {}: {e}", dir.display());
+        return None;
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let path = dir.join(format!("quicksave-{ts}.state"));
+    eprintln!(
+        "[truce-standalone] native save dialog not yet wired on Linux — \
+         saving to {}",
+        path.display()
+    );
+    Some(path)
 }
 
 /// macOS uses Cmd (`meta`); Linux/Windows use Ctrl.
