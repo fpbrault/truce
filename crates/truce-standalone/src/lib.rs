@@ -34,6 +34,8 @@ pub mod cli;
 pub mod in_process;
 pub mod keyboard;
 pub mod midi;
+#[cfg(feature = "playback")]
+pub mod playback;
 pub mod transport;
 
 #[cfg(feature = "gui")]

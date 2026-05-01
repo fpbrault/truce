@@ -22,6 +22,7 @@ lv2 = ["dep:truce-lv2"]
 aax = ["dep:truce-aax"]
 au = ["dep:truce-au"]
 standalone = ["dep:truce-standalone"]
+standalone-playback = ["standalone", "truce-standalone/playback"]
 shell = ["truce/shell"]
 
 [dependencies]

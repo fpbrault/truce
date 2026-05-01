@@ -36,10 +36,15 @@ pub struct Options {
     pub midi_input: Option<String>,
     pub bpm: Option<f64>,
     pub state_path: Option<PathBuf>,
+    /// `.wav` file to feed into the plugin's input bus, summed
+    /// with mic input when both are active. Only populated when
+    /// the `playback` feature is enabled.
+    #[cfg(feature = "playback")]
+    pub input_file: Option<PathBuf>,
     pub help: bool,
 }
 
-const HELP: &str = "\
+const HELP_HEAD: &str = "\
 truce standalone
 
 USAGE:
@@ -60,6 +65,20 @@ OPTIONS:
   --midi-input <name>       MIDI input device (substring match)
   --bpm <n>                 Transport BPM (default 120)
   --state <path>            Load plugin state from this file on launch
+";
+
+#[cfg(feature = "playback")]
+const HELP_PLAYBACK: &str = "\
+  --input-file <path>       Decode <path>.wav and feed it into the
+                            plugin's input bus. One-shot — plays once,
+                            then plugin sees silence on the file
+                            channel. Mic + file sum when both are
+                            enabled. Linear-interp resample if file SR
+                            doesn't match device SR; channel-count
+                            mismatches are soft-warned and adapted.
+";
+
+const HELP_TAIL: &str = "\
   -h, --help                Show this message
 
 PRECEDENCE (first match wins):
@@ -70,6 +89,13 @@ PRECEDENCE (first match wins):
   `truce_standalone::run_with::<Plugin>(Defaults { … })` instead
   of `truce_standalone::run::<Plugin>()`.
 ";
+
+fn print_help() {
+    print!("{HELP_HEAD}");
+    #[cfg(feature = "playback")]
+    print!("{HELP_PLAYBACK}");
+    print!("{HELP_TAIL}");
+}
 
 /// Parse argv + env and return resolved options. Plugin-author
 /// defaults are not handled here — [`crate::run_with`] applies them
@@ -82,7 +108,7 @@ pub fn parse() -> Result<Options, String> {
     // Presence flags first (affect the rest of parsing).
     let help = args.contains(["-h", "--help"]);
     if help {
-        print!("{HELP}");
+        print_help();
         std::process::exit(0);
     }
 
@@ -122,6 +148,10 @@ pub fn parse() -> Result<Options, String> {
     let state_path = args
         .opt_value_from_str::<_, PathBuf>("--state")
         .map_err(|e| format!("--state: {e}"))?;
+    #[cfg(feature = "playback")]
+    let input_file = args
+        .opt_value_from_str::<_, PathBuf>("--input-file")
+        .map_err(|e| format!("--input-file: {e}"))?;
 
     let leftover = args.finish();
     if !leftover.is_empty() {
@@ -150,6 +180,8 @@ pub fn parse() -> Result<Options, String> {
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
         bpm: bpm.or_else(|| env("BPM").and_then(|s| s.parse().ok())),
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
+        #[cfg(feature = "playback")]
+        input_file: input_file.or_else(|| env("INPUT_FILE").map(PathBuf::from)),
         help: false,
     };
 

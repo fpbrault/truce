@@ -372,6 +372,30 @@ pub fn start_audio<P: PluginExport>(
         current_name: Arc::clone(&output_current_name),
     };
 
+    // Decode `--input-file` (if set) once at startup against the
+    // resolved device sample-rate / channel-count. Hard error on
+    // unreadable / unparseable file — we fail noisily here rather
+    // than letting the audio worker silently emit zeros.
+    #[cfg(feature = "playback")]
+    let playback = match &opts.input_file {
+        Some(path) if is_effect => {
+            let src = crate::playback::PlaybackSource::from_wav(path, sample_rate, channels)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            eprintln!(
+                "Playback: {} → input bus (one-shot, sums with mic when enabled)",
+                path.display()
+            );
+            Some(Arc::new(src))
+        }
+        Some(_) => {
+            // Instrument plugins have no input bus to feed; warn
+            // and ignore rather than failing.
+            eprintln!("[truce-standalone] --input-file ignored: plugin is not an effect");
+            None
+        }
+        None => None,
+    };
+
     let res = OutputResources {
         plugin: Arc::clone(&plugin),
         pending: Arc::clone(&pending),
@@ -380,6 +404,8 @@ pub fn start_audio<P: PluginExport>(
         output_enabled: Arc::clone(&output_enabled),
         transport: transport.clone(),
         current_name: Arc::clone(&output_current_name),
+        #[cfg(feature = "playback")]
+        playback,
     };
 
     let initial_output_name_for_worker = initial_output_name.clone();
@@ -445,6 +471,11 @@ struct OutputResources<P: PluginExport> {
     output_enabled: Arc<AtomicBool>,
     transport: Transport,
     current_name: Arc<Mutex<Option<String>>>,
+    /// Optional `.wav` playback source (gated on the `playback`
+    /// feature). When present, summed into the input bus alongside
+    /// the mic ring — see the matrix in `cli.rs::HELP`.
+    #[cfg(feature = "playback")]
+    playback: Option<Arc<crate::playback::PlaybackSource>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -527,6 +558,8 @@ fn open_output_stream<P: PluginExport>(
     let enabled_a = Arc::clone(&res.input_enabled);
     let out_enabled_a = Arc::clone(&res.output_enabled);
     let transport_a = res.transport.clone();
+    #[cfg(feature = "playback")]
+    let playback_a = res.playback.clone();
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -544,6 +577,8 @@ fn open_output_stream<P: PluginExport>(
                         &enabled_a,
                         &out_enabled_a,
                         &transport_a,
+                        #[cfg(feature = "playback")]
+                        playback_a.as_ref(),
                     );
                 },
                 |err| eprintln!("Audio error: {err}"),
@@ -806,6 +841,7 @@ fn audio_callback<P: PluginExport>(
     input_enabled: &Arc<AtomicBool>,
     output_enabled: &Arc<AtomicBool>,
     transport: &Transport,
+    #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
 ) {
     let num_frames = data.len() / channels;
 
@@ -826,9 +862,9 @@ fn audio_callback<P: PluginExport>(
 
     let mut channel_bufs: Vec<Vec<f32>> = (0..channels).map(|_| vec![0.0f32; num_frames]).collect();
 
-    // Drain the input ring only when the user has explicitly
-    // enabled input. When disabled (the default), channel_bufs
-    // stays zeroed → plugin sees silence.
+    // Mic + file are independent input sources that *sum* into the
+    // plugin's bus. Each path starts from a zero-init `channel_bufs`
+    // and adds its contribution; single-source cases are unchanged.
     if is_effect && input_enabled.load(Ordering::Relaxed) {
         if let Ok(mut ring) = input_ring.try_lock() {
             let needed = num_frames * channels;
@@ -836,13 +872,20 @@ fn audio_callback<P: PluginExport>(
             for i in 0..available / channels {
                 for ch in 0..channels {
                     if i < num_frames {
-                        channel_bufs[ch][i] = ring[i * channels + ch];
+                        channel_bufs[ch][i] += ring[i * channels + ch];
                     }
                 }
             }
             if available > 0 {
                 ring.drain(..available);
             }
+        }
+    }
+
+    #[cfg(feature = "playback")]
+    if is_effect {
+        if let Some(src) = playback {
+            src.mix_into(&mut channel_bufs, num_frames);
         }
     }
 

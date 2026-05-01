@@ -13,6 +13,7 @@ cpal = "0.15"
 pico-args = "0.5"
 dirs = "5"
 midir = "0.10"
+hound = { version = "3", optional = true }
 
 truce-gui = { workspace = true, optional = true }
 truce-gpu = { workspace = true, optional = true }
@@ -47,6 +48,7 @@ gui = [
     "dep:objc",
     "dep:windows-sys",
 ]
+playback = ["dep:hound"]
 
 [lints]
 workspace = true
