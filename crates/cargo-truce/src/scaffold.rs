@@ -250,7 +250,11 @@ pub fn plugin_main_rs(crate_name: &str) -> String {
 use {crate_lib}::Plugin;
 
 fn main() {{
-    truce_standalone::run::<Plugin>();
+    // `baked_defaults!()` reads `[plugin.standalone]` from
+    // `truce.toml` at compile time (via `truce-build` in `build.rs`).
+    // Returns empty defaults if the section is absent, so this is
+    // safe even without any standalone-specific config.
+    truce_standalone::run::<Plugin>(truce_standalone::baked_defaults!());
 }}
 "#
     )
@@ -489,6 +493,16 @@ name = "{vendor_name}"
 id = "{vendor_id}"
 url = "https://example.com"
 au_manufacturer = "{au_mfr}"
+
+# Standalone-binary launch defaults (optional, per plugin):
+#
+#   [plugin.standalone]
+#   input_enabled  = true   # mic on at launch (effects only — silly on instruments)
+#   output_enabled = true   # speakers on at launch (default; set false to launch muted)
+#
+# Baked into the standalone binary at compile time by `truce-build`.
+# CLI flags (`--input-enabled`, `--output-enabled`) and the
+# `TRUCE_STANDALONE_*` env vars override these at run time.
 "#,
         au_mfr = to_fourcc(vendor_name),
     );

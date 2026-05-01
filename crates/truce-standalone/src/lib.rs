@@ -52,16 +52,54 @@ pub use truce_core::export::PluginExport;
 /// Re-export for backward compatibility.
 pub use truce_core::export::PluginExport as StandaloneExport;
 
+/// Compile-time-baked launch defaults from `[plugin.standalone]` in
+/// the consumer's `truce.toml`. Constructed by the
+/// [`baked_defaults!`] macro and threaded through CLI resolution as
+/// the lowest tier (above the runtime default, below env / CLI).
+///
+/// Constructing this directly with `Defaults::default()` is fine —
+/// it disables the bake tier entirely.
+#[derive(Default, Clone, Copy, Debug)]
+pub struct Defaults {
+    pub input_enabled: Option<bool>,
+    pub output_enabled: Option<bool>,
+}
+
+/// Read launch defaults baked by `truce-build` from
+/// `[plugin.standalone]` in the consumer's `truce.toml`. The
+/// `option_env!` reads must happen in the consumer's compile context
+/// (build-script env vars don't reach dependencies), so this is a
+/// macro the consumer expands inside its own `main.rs`.
+///
+/// ```ignore
+/// fn main() {
+///     truce_standalone::run::<Plugin>(truce_standalone::baked_defaults!());
+/// }
+/// ```
+#[macro_export]
+macro_rules! baked_defaults {
+    () => {
+        $crate::Defaults {
+            input_enabled: option_env!("TRUCE_STANDALONE_BAKED_INPUT_ENABLED")
+                .and_then(|s| s.parse().ok()),
+            output_enabled: option_env!("TRUCE_STANDALONE_BAKED_OUTPUT_ENABLED")
+                .and_then(|s| s.parse().ok()),
+        }
+    };
+}
+
 /// Run the plugin standalone.
 ///
-/// Parses CLI flags, loads config + environment overrides, then
-/// dispatches to the windowed or headless runner. Returns when the
-/// user closes the window or sends SIGINT.
-pub fn run<P: PluginExport>()
+/// Parses CLI flags + env vars on top of the supplied baked defaults
+/// (use [`baked_defaults!`] to read them from `truce.toml`, or pass
+/// `Defaults::default()` to skip the bake tier). Dispatches to the
+/// windowed or headless runner. Returns when the user closes the
+/// window or sends SIGINT.
+pub fn run<P: PluginExport>(defaults: Defaults)
 where
     P::Params: 'static,
 {
-    let opts = match cli::parse() {
+    let opts = match cli::parse(defaults) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("Error: {e}");
