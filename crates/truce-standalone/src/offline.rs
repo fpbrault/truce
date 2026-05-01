@@ -97,6 +97,13 @@ where
     plugin.init();
     plugin.reset(sample_rate, block_size);
     plugin.params().set_sample_rate(sample_rate);
+    // Apply `--state <path>` BEFORE snapping smoothers so the
+    // restored param values are what the smoothers latch onto on
+    // the first block — otherwise the render starts at defaults
+    // and ramps to the loaded values over the smoother's window.
+    if let Some(path) = opts.state_path.as_deref() {
+        crate::state::load_into(&mut plugin, path);
+    }
     plugin.params().snap_smoothers();
 
     let transport = Transport::new(opts.bpm.unwrap_or(120.0), sample_rate);

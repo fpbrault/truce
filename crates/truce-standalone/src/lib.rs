@@ -34,6 +34,7 @@ pub mod cli;
 pub mod in_process;
 pub mod keyboard;
 pub mod midi;
+pub mod state;
 #[cfg(feature = "playback")]
 pub mod offline;
 #[cfg(feature = "playback")]

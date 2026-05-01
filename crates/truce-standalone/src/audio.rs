@@ -288,6 +288,12 @@ pub fn start_audio<P: PluginExport>(
         p.init();
         p.reset(sample_rate, config.buffer_size_max_frames());
         p.params().set_sample_rate(sample_rate);
+        // Apply `--state <path>` BEFORE snapping smoothers so the
+        // first audio block sees the restored values, not defaults
+        // ramping toward them.
+        if let Some(path) = opts.state_path.as_deref() {
+            crate::state::load_into(&mut p, path);
+        }
         p.params().snap_smoothers();
         p
     }));

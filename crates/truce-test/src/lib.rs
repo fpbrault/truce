@@ -196,22 +196,11 @@ pub fn assert_no_nans(output: &[Vec<f32>]) {
 /// all parameter values match.
 pub fn assert_state_round_trip<P: PluginExport>() {
     let plugin = P::create();
-    let info = P::info();
-    let hash = state::hash_plugin_id(info.clap_id);
+    let blob = state::snapshot_plugin(&plugin);
 
-    // Save state
-    let (ids, values) = plugin.params().collect_values();
-    let blob = state::serialize_state(hash, &ids, &values, None);
+    let mut plugin2 = P::create();
+    state::restore_plugin(&mut plugin2, &blob).expect("restore_plugin failed");
 
-    // Create new instance and load
-    let plugin2 = P::create();
-    let result = state::deserialize_state(&blob, hash);
-    assert!(result.is_some(), "Failed to deserialize state");
-
-    let deserialized = result.unwrap();
-    plugin2.params().restore_values(&deserialized.params);
-
-    // Verify all params match
     let param_infos = plugin.params().param_infos();
     for pi in &param_infos {
         let v1 = plugin.params().get_plain(pi.id).unwrap();

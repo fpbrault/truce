@@ -10,7 +10,6 @@
 //! `Z` / `X` hotkeys drive transport / state / octave-shift.
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use keyboard_types::{Code, KeyState, Modifiers};
@@ -54,22 +53,9 @@ where
         }
     };
 
-    // --state <path>: restore plugin state before opening the editor
-    // so the editor reflects the loaded values on first paint.
-    if let Some(path) = opts.state_path.as_ref() {
-        match std::fs::read(path) {
-            Ok(bytes) => {
-                if let Ok(mut p) = audio_handles.plugin.lock() {
-                    p.load_state(&bytes);
-                    eprintln!("[truce-standalone] loaded state from {}", path.display());
-                }
-            }
-            Err(e) => eprintln!(
-                "[truce-standalone] failed to read state {}: {e}",
-                path.display()
-            ),
-        }
-    }
+    // `--state <path>` was already applied inside `audio::start_audio`
+    // — it loads BEFORE `snap_smoothers` so the editor + first audio
+    // block see the restored values, not defaults ramping toward them.
 
     let midi_thread = MidiInputThread::start(opts, Arc::clone(&audio_handles.pending));
 
@@ -221,7 +207,7 @@ where
     fn handle_keyboard(&mut self, kb: keyboard_types::KeyboardEvent) -> EventStatus {
         // Ctrl-S / Cmd-S → save state
         if kb.state == KeyState::Down && kb.code == Code::KeyS && is_mod_pressed(&kb.modifiers) {
-            self.save_state_to_default_path();
+            self.save_state_via_picker();
             return EventStatus::Captured;
         }
 
@@ -316,36 +302,70 @@ where
         EventStatus::Ignored
     }
 
-    fn save_state_to_default_path(&self) {
+    /// Snapshot the plugin (params + custom state) and write it to a
+    /// user-picked path via the native save dialog. Same envelope
+    /// every other host format produces, so the resulting `.state`
+    /// file round-trips into CLAP / VST3 / AU / a future
+    /// `--state foo.state` standalone launch.
+    ///
+    /// On macOS the dialog runs on the main thread (the AppKit
+    /// run loop baseview is already driving). Audio stays on the
+    /// cpal thread; only the editor's main-thread frame loop
+    /// pauses while the picker is up.
+    fn save_state_via_picker(&self) {
         let Ok(plugin) = self.plugin.lock() else {
+            eprintln!("[truce-standalone] could not lock plugin to save state");
             return;
         };
-        let Some(bytes) = plugin.save_state() else {
-            eprintln!("[truce-standalone] plugin has no state to save");
-            return;
-        };
-        let Some(dir) = dirs::data_local_dir() else {
-            eprintln!("[truce-standalone] could not resolve local data dir");
-            return;
-        };
-        let plugin_slug = P::info()
-            .name
-            .to_lowercase()
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect::<String>();
-        let dir = dir.join("truce").join(&plugin_slug);
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("[truce-standalone] mkdir {}: {e}", dir.display());
-            return;
+        let blob = truce_core::state::snapshot_plugin(&*plugin);
+        // Drop the plugin lock before we open the dialog — the
+        // audio thread acquires this mutex on every block, and a
+        // few-second dialog wait is enough to glitch playback.
+        let param_count = plugin.params().param_infos().len();
+        drop(plugin);
+
+        // Default to <data_local_dir>/truce/<slug>/ if it exists,
+        // otherwise the home directory. Either way the user can
+        // navigate elsewhere from the dialog. `<plugin>.state` is
+        // the suggested filename; user can rename in the picker.
+        let plugin_slug = slugify(P::info().name);
+        let initial_dir = dirs::data_local_dir()
+            .map(|d| d.join("truce").join(&plugin_slug))
+            .filter(|p| p.exists())
+            .or_else(dirs::home_dir);
+        let mut dialog = rfd::FileDialog::new()
+            .set_title(format!("Save state for {}", P::info().name))
+            .add_filter("Truce state", &["state"])
+            .set_file_name(format!("{plugin_slug}.state"));
+        if let Some(dir) = initial_dir {
+            dialog = dialog.set_directory(dir);
         }
-        let ts = Instant::now().elapsed().as_secs();
-        let path = dir.join(format!("quicksave-{ts}.state"));
-        match std::fs::write(&path, &bytes) {
-            Ok(()) => eprintln!("[truce-standalone] state saved: {}", path.display()),
-            Err(e) => eprintln!("[truce-standalone] write {}: {e}", path.display()),
+        let Some(path) = dialog.save_file() else {
+            // User cancelled — nothing to log.
+            return;
+        };
+
+        match std::fs::write(&path, &blob) {
+            Ok(()) => eprintln!(
+                "[truce-standalone] state saved: {} ({param_count} params, {} bytes)",
+                path.display(),
+                blob.len(),
+            ),
+            Err(e) => eprintln!(
+                "[truce-standalone] write {}: {e}",
+                path.display()
+            ),
         }
     }
+}
+
+/// Plugin-name → filesystem-friendly slug. Lowercase, ASCII
+/// alphanumerics passed through, everything else collapsed to `-`.
+fn slugify(name: &str) -> String {
+    name.to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
 }
 
 /// macOS uses Cmd (`meta`); Linux/Windows use Ctrl.

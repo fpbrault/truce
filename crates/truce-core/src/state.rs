@@ -103,6 +103,58 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
     Some(DeserializedState { params, extra })
 }
 
+// ---------------------------------------------------------------------------
+// `snapshot_plugin` / `restore_plugin` — high-level helpers wrapping
+// `serialize_state` + `deserialize_state` with the params-collect /
+// restore + custom-state plumbing every host needs to do anyway.
+// ---------------------------------------------------------------------------
+
+use crate::export::PluginExport;
+use truce_params::Params;
+
+/// Errors `restore_plugin` can return. `Invalid` covers all
+/// envelope-level failures the user might care to distinguish:
+/// missing / wrong magic, version mismatch, plugin-ID mismatch,
+/// truncated body. The caller typically just prints a diagnostic
+/// and proceeds with default params.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreError {
+    /// The bytes don't parse as a state envelope for this plugin.
+    Invalid,
+}
+
+/// Serialize a plugin instance into the canonical state envelope —
+/// parameter values + optional `Plugin::save_state()` payload, with
+/// the magic / version / plugin-ID header `serialize_state` writes.
+///
+/// Same shape every format wrapper produces, so a `.state` file
+/// written by one host loads in any other (subject to the
+/// plugin-ID match `deserialize_state` enforces).
+pub fn snapshot_plugin<P: PluginExport>(plugin: &P) -> Vec<u8> {
+    let (ids, values) = plugin.params().collect_values();
+    let extra = plugin.save_state();
+    serialize_state(
+        hash_plugin_id(P::info().clap_id),
+        &ids,
+        &values,
+        extra.as_deref(),
+    )
+}
+
+/// Inverse of [`snapshot_plugin`]. Validates the envelope's magic,
+/// version, and plugin-ID hash; on success restores parameter
+/// values via `Params::restore_values` and forwards the optional
+/// extra payload to `Plugin::load_state`.
+pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(), RestoreError> {
+    let id = hash_plugin_id(P::info().clap_id);
+    let s = deserialize_state(bytes, id).ok_or(RestoreError::Invalid)?;
+    plugin.params().restore_values(&s.params);
+    if let Some(extra) = s.extra {
+        plugin.load_state(&extra);
+    }
+    Ok(())
+}
+
 /// Compute a simple hash of the plugin ID string for state identification.
 pub fn hash_plugin_id(id: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
