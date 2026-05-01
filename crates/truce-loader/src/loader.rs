@@ -16,6 +16,9 @@ use libloading::{Library, Symbol};
 use crate::canary::{verify_probe, AbiCanary};
 use crate::traits::PluginLogic;
 
+type ProbeFn = fn() -> Box<dyn PluginLogic>;
+type CreateFn = fn(*const ()) -> Box<dyn PluginLogic>;
+
 /// Manages a hot-reloadable plugin dylib.
 pub struct NativeLoader {
     dylib_path: PathBuf,
@@ -127,14 +130,13 @@ impl NativeLoader {
         }
 
         // Vtable probe.
-        let probe_fn: Symbol<fn() -> Box<dyn PluginLogic>> =
-            match unsafe { lib.get(b"truce_vtable_probe") } {
-                Ok(f) => f,
-                Err(e) => {
-                    log::warn!("missing truce_vtable_probe export: {e}");
-                    return false;
-                }
-            };
+        let probe_fn: Symbol<ProbeFn> = match unsafe { lib.get(b"truce_vtable_probe") } {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("missing truce_vtable_probe export: {e}");
+                return false;
+            }
+        };
         let probe = probe_fn();
         if let Err(msg) = verify_probe(probe.as_ref()) {
             log::error!("vtable probe failed: {msg}");
@@ -143,14 +145,13 @@ impl NativeLoader {
         drop(probe);
 
         // Load the real plugin.
-        let create_fn: Symbol<fn(*const ()) -> Box<dyn PluginLogic>> =
-            match unsafe { lib.get(b"truce_create") } {
-                Ok(f) => f,
-                Err(e) => {
-                    log::warn!("missing truce_create export: {e}");
-                    return false;
-                }
-            };
+        let create_fn: Symbol<CreateFn> = match unsafe { lib.get(b"truce_create") } {
+            Ok(f) => f,
+            Err(e) => {
+                log::warn!("missing truce_create export: {e}");
+                return false;
+            }
+        };
         let plugin = create_fn(self.params_ptr);
 
         self.library = Some(lib);

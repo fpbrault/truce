@@ -220,20 +220,15 @@ impl CaptureSink {
     /// drains `chunk_rx` until the shutdown flag is set. Errors
     /// only on filesystem / hound problems (path unwritable,
     /// parent missing, etc).
-    pub fn create(
-        path: &Path,
-        sample_rate: f64,
-        channels: usize,
-    ) -> Result<Self, String> {
+    pub fn create(path: &Path, sample_rate: f64, channels: usize) -> Result<Self, String> {
         let spec = hound::WavSpec {
             channels: channels as u16,
             sample_rate: sample_rate as u32,
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         };
-        let mut writer = hound::WavWriter::create(path, spec).map_err(|e| {
-            format!("could not create '{}': {e}", path.display())
-        })?;
+        let mut writer = hound::WavWriter::create(path, spec)
+            .map_err(|e| format!("could not create '{}': {e}", path.display()))?;
 
         let (chunk_tx, chunk_rx) = mpsc::sync_channel::<Vec<f32>>(CAPTURE_CHANNEL_DEPTH);
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -339,10 +334,7 @@ impl CapturePusher {
         match self.chunk_tx.try_send(interleaved) {
             Ok(()) => {}
             Err(mpsc::TrySendError::Full(samples)) => {
-                if !self
-                    .blocked_at_least_once
-                    .swap(true, Ordering::Relaxed)
-                {
+                if !self.blocked_at_least_once.swap(true, Ordering::Relaxed) {
                     eprintln!(
                         "[truce-standalone] capture: audio thread blocking on \
                          disk write — output may glitch (this warning fires once)"
