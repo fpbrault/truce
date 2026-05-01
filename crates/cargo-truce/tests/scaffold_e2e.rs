@@ -232,6 +232,49 @@ impl Scaffold {
         Ok(())
     }
 
+    /// `cargo build --package <pkg> --bin <bin> --features <features>`
+    /// against the scaffolded project, returning the binary's path on
+    /// success. Used by tests that need to build a specific bin with
+    /// a non-default feature set (e.g. the standalone runner with the
+    /// optional `playback` feature) — `run_cargo` uses `--workspace`
+    /// which can't target per-package features.
+    fn cargo_build_bin(
+        &self,
+        package: &str,
+        bin: &str,
+        features: &[&str],
+    ) -> Result<PathBuf, String> {
+        let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let mut cmd = Command::new("cargo");
+        cmd.arg("build").args(["--package", package, "--bin", bin]);
+        if !features.is_empty() {
+            cmd.args(["--no-default-features", "--features", &features.join(",")]);
+        }
+        let out = cmd
+            .env("CARGO_TARGET_DIR", shared_target())
+            .current_dir(&self.generated)
+            .output()
+            .map_err(|e| format!("[{}] exec cargo build --bin {bin}: {e}", self.label))?;
+        if !out.status.success() {
+            return Err(format!(
+                "[{}] cargo build --bin {bin} failed: {}\nstdout:\n{}\nstderr:\n{}",
+                self.label,
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+            ));
+        }
+        let bin_path = shared_target().join("debug").join(bin);
+        if !bin_path.is_file() {
+            return Err(format!(
+                "[{}] cargo build --bin {bin} succeeded but {} is missing",
+                self.label,
+                bin_path.display(),
+            ));
+        }
+        Ok(bin_path)
+    }
+
     /// Shared body for `cargo check` / `cargo build` / `cargo test`.
     /// All hold `build_lock` (cache safety) and share the target dir.
     fn run_cargo(&self, subcommand: &str) -> Result<(), String> {
@@ -747,6 +790,186 @@ fn scaffold_cargo_truce_screenshot() {
          workspace_screenshot_dir reverted to compile-time CARGO_MANIFEST_DIR?",
         truce_pic.display()
     );
+}
+
+// Offline WAV-render workflow on a freshly-scaffolded effect plugin:
+// turn on the `playback` feature, generate an exponential sweep,
+// run the standalone with `--no-playback --input-file --output-file`,
+// then bit-exact diff input vs output. The scaffolded effect template
+// is a unity-gain passthrough at default settings (the gain param's
+// default plain value is 0 dB — see `truce-derive`'s
+// `default_plain = a.default.unwrap_or(0.0)`), so input and output
+// must agree to within i16 quantization noise. Catches regressions
+// in: the `playback` feature wiring, `--no-playback` offline-render
+// path, WAV decode/encode, and the scaffolded plugin's process loop.
+#[test]
+fn scaffold_standalone_offline_render() {
+    let s = Scaffold::new("offline-render", "demo_render");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+
+    // The scaffold doesn't ship a `standalone-playback` feature
+    // (most users don't need it), so add one as a real plugin
+    // author would: a tiny passthrough that turns on the optional
+    // `playback` feature on truce-standalone.
+    let plugin_toml = s.generated.join("Cargo.toml");
+    let mut content = std::fs::read_to_string(&plugin_toml).unwrap();
+    let injection = "standalone-playback = [\"standalone\", \"truce-standalone/playback\"]\n";
+    let anchor = "standalone = [\"dep:truce-standalone\"]\n";
+    let pos = content.find(anchor).unwrap_or_else(|| {
+        panic!(
+            "[offline-render] couldn't find `standalone = ...` in {}",
+            plugin_toml.display()
+        )
+    });
+    content.insert_str(pos + anchor.len(), injection);
+    std::fs::write(&plugin_toml, content).unwrap();
+
+    // Build the standalone bin with the playback feature on.
+    let bin_path = s
+        .cargo_build_bin(
+            "demo_render",
+            "demo_render-standalone",
+            &["standalone-playback"],
+        )
+        .unwrap();
+
+    // 1-second exponential sweep, 20 Hz → 20 kHz, stereo i16 PCM
+    // @ 48 kHz. Short enough to keep the test fast; long enough
+    // that the offline runner exercises multiple blocks (1024-frame
+    // default → ~47 blocks per second).
+    let sweep_path = s.run_dir.join("sweep.wav");
+    let out_path = s.run_dir.join("rendered.wav");
+    write_sweep_wav(&sweep_path);
+
+    // Run the offline renderer.
+    let out = Command::new(&bin_path)
+        .args([
+            "--no-playback",
+            "--input-file",
+            sweep_path.to_str().unwrap(),
+            "--output-file",
+            out_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap_or_else(|e| panic!("[offline-render] exec {}: {e}", bin_path.display()));
+    assert!(
+        out.status.success(),
+        "[offline-render] standalone failed: {}\nstdout:\n{}\nstderr:\n{}",
+        out.status,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        out_path.exists(),
+        "[offline-render] standalone exited 0 but {} is missing",
+        out_path.display()
+    );
+
+    // Decode and diff. Default scaffold: stereo gain at 0 dB
+    // (unity), so output must equal input modulo the i16→f32
+    // dequant floor.
+    let in_samples = decode_to_f32(&sweep_path);
+    let out_samples = decode_to_f32(&out_path);
+    let cmp_len = in_samples.len().min(out_samples.len());
+    assert!(
+        cmp_len > 0,
+        "[offline-render] zero-length comparison — input/output decoded empty"
+    );
+    let (max_idx, max_diff) = in_samples
+        .iter()
+        .zip(out_samples.iter())
+        .take(cmp_len)
+        .enumerate()
+        .map(|(i, (a, b))| (i, (a - b).abs()))
+        .fold(
+            (0_usize, 0.0_f32),
+            |(bi, bd), (i, d)| {
+                if d > bd {
+                    (i, d)
+                } else {
+                    (bi, bd)
+                }
+            },
+        );
+    // 1 / 32768 ≈ 3.05e-5 is the i16 quant floor. Unity-gain
+    // passthrough should match exactly when the input was f32
+    // and round to within 1 LSB when it was i16. Sweep is i16,
+    // so allow 1 LSB of slop.
+    let i16_lsb = 1.0 / 32768.0;
+    assert!(
+        max_diff <= i16_lsb,
+        "[offline-render] passthrough diverged: max diff = {max_diff:.3e} \
+         at sample {max_idx} (i16 LSB = {i16_lsb:.3e})\n\
+         in[{max_idx}] = {:.6}, out[{max_idx}] = {:.6}",
+        in_samples[max_idx],
+        out_samples[max_idx],
+    );
+
+    // Tail past input EOF should be silence (gain has no tail
+    // and `mix_into` saturates after the file is consumed).
+    let tail = &out_samples[cmp_len..];
+    let tail_peak = tail.iter().fold(0.0_f32, |a, &b| a.max(b.abs()));
+    assert_eq!(
+        tail_peak,
+        0.0,
+        "[offline-render] post-EOF tail not silent: peak = {tail_peak:.3e} \
+         over {} samples",
+        tail.len(),
+    );
+}
+
+/// Generate a 1-second 20 Hz → 20 kHz exponential sweep as
+/// stereo i16 PCM @ 48 kHz at the given path. Exponential
+/// rather than linear so the test signal exercises the full
+/// audible band evenly on a log frequency axis — same shape
+/// most measurement tools use.
+fn write_sweep_wav(path: &Path) {
+    let sr: u32 = 48_000;
+    let duration_secs = 1.0_f64;
+    let f0 = 20.0_f64;
+    let f1 = 20_000.0_f64;
+    let n = (sr as f64 * duration_secs) as usize;
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: sr,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(path, spec)
+        .unwrap_or_else(|e| panic!("create sweep at {}: {e}", path.display()));
+    let k = duration_secs / (f1 / f0).ln();
+    for i in 0..n {
+        let t = i as f64 / sr as f64;
+        // Phase for an exp sweep: ∫₀ᵗ 2π f₀ (f₁/f₀)^(τ/T) dτ
+        //                       = 2π f₀ K (e^(t/K) − 1)   where K = T / ln(f₁/f₀).
+        let phase = 2.0 * std::f64::consts::PI * f0 * k * ((t / k).exp() - 1.0);
+        let s = (0.5 * phase.sin() * i16::MAX as f64) as i16;
+        w.write_sample(s).unwrap();
+        w.write_sample(s).unwrap();
+    }
+    w.finalize().unwrap();
+}
+
+/// Read a WAV at `path` and return interleaved samples as `f32`
+/// in `[-1.0, 1.0]`. Handles the two formats the offline render
+/// loop actually emits / consumes: i16 PCM (typical input) and
+/// 32-bit float (the standalone's output format).
+fn decode_to_f32(path: &Path) -> Vec<f32> {
+    let mut r =
+        hound::WavReader::open(path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+    let spec = r.spec();
+    match (spec.sample_format, spec.bits_per_sample) {
+        (hound::SampleFormat::Int, 16) => r
+            .samples::<i16>()
+            .map(|s| s.unwrap() as f32 / 32768.0)
+            .collect(),
+        (hound::SampleFormat::Float, 32) => r.samples::<f32>().map(|s| s.unwrap()).collect(),
+        (fmt, bits) => panic!(
+            "decode_to_f32: unexpected format {fmt:?} {bits}-bit at {}",
+            path.display()
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------

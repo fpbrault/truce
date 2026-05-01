@@ -23,3 +23,6 @@ truce-shim-types = { workspace = true }
 
 [dependencies.libloading]
 version = "0.9"
+
+[dev-dependencies]
+hound = "3"
