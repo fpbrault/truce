@@ -120,7 +120,11 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let state_bytes: Option<Vec<u8>> = state_path
         .as_ref()
         .map(|p| {
-            let resolved = if p.is_absolute() { p.clone() } else { cwd.join(p) };
+            let resolved = if p.is_absolute() {
+                p.clone()
+            } else {
+                cwd.join(p)
+            };
             std::fs::read(&resolved)
                 .map_err(|e| format!("--state: failed to read {}: {e}", resolved.display()))
         })
@@ -232,7 +236,11 @@ fn resolve_out_path(
     name: Option<&str>,
 ) -> PathBuf {
     if let Some(p) = out {
-        return if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
+        return if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            cwd.join(p)
+        };
     }
     let stem = name.unwrap_or(crate_name);
     crate_dir.join("screenshots").join(format!("{stem}.png"))

@@ -536,6 +536,11 @@ pub use truce_core::screenshot::save_png;
 
 use std::path::PathBuf;
 
+/// Boxed closure handed to [`ScreenshotTest::setup`]. Aliased so the
+/// `setup` field type stays readable instead of tripping clippy's
+/// `type_complexity` lint.
+type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
+
 /// Builder for a screenshot regression test.
 ///
 /// Construct via the [`screenshot!`] macro (which fills in the
@@ -585,7 +590,7 @@ pub struct ScreenshotTest<P: PluginExport> {
     /// Max allowed differing-pixel count. `0` = strict.
     tolerance: usize,
     /// Optional plugin mutation between `P::create()` and render.
-    setup: Option<Box<dyn FnOnce(&mut P)>>,
+    setup: Option<SetupFn<P>>,
     _marker: std::marker::PhantomData<P>,
 }
 
@@ -818,4 +823,3 @@ fn workspace_target_screenshots_dir() -> PathBuf {
         }
     }
 }
-

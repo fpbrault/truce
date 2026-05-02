@@ -325,7 +325,9 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::screenshot!(Plugin).name("arpeggio_default").run();
+        truce_test::screenshot!(Plugin)
+            .name("arpeggio_default")
+            .run();
     }
 
     /// Regression guard for the 2026-04-23 LV2 MIDI bug: the

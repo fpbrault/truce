@@ -199,6 +199,8 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::screenshot!(Plugin).name("gain_iced_default").run();
+        truce_test::screenshot!(Plugin)
+            .name("gain_iced_default")
+            .run();
     }
 }
