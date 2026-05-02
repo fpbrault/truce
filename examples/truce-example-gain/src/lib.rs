@@ -186,19 +186,25 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {
-        truce_test::screenshot!(Plugin).name("gain_default_macos").run();
+        truce_test::screenshot!(Plugin)
+            .name("gain_default_macos")
+            .run();
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn gui_screenshot_linux() {
-        truce_test::screenshot!(Plugin).name("gain_default_linux").run();
+        truce_test::screenshot!(Plugin)
+            .name("gain_default_linux")
+            .run();
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn gui_screenshot_windows() {
-        truce_test::screenshot!(Plugin).name("gain_default_windows").run();
+        truce_test::screenshot!(Plugin)
+            .name("gain_default_windows")
+            .run();
     }
 
     /// End-to-end check of `truce_test::in_process` on an effect:
