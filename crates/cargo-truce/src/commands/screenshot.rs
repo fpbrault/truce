@@ -9,8 +9,8 @@
 //!
 //! Flags:
 //! - `-p <crate>` — pick one plugin from a multi-plugin truce.toml.
-//! - `--out <path>` — explicit output path (CWD-relative, or absolute).
-//! - `--name <name>` — `<crate>/screenshots/<name>.png` shortcut.
+//! - `--out <path>` — output path (CWD-relative, or absolute).
+//!   Required. The CLI never picks a path on the author's behalf.
 //! - `--state <path>` — load a `.pluginstate` blob before rendering.
 //!   Path is CWD-relative or absolute.
 //! - `--check` — diff against the existing baseline; exit non-zero
@@ -29,8 +29,7 @@ type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize) -> 
 
 pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
-    let mut name_override: Option<String> = None;
-    let mut out_override: Option<PathBuf> = None;
+    let mut out_path: Option<PathBuf> = None;
     let mut state_path: Option<PathBuf> = None;
     let mut check_mode = false;
     let mut debug = false;
@@ -46,13 +45,9 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
                         .ok_or("-p requires a plugin crate name")?,
                 );
             }
-            "--name" => {
-                i += 1;
-                name_override = Some(args.get(i).cloned().ok_or("--name requires a value")?);
-            }
             "--out" => {
                 i += 1;
-                out_override = Some(PathBuf::from(
+                out_path = Some(PathBuf::from(
                     args.get(i).cloned().ok_or("--out requires a path")?,
                 ));
             }
@@ -73,9 +68,10 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
         i += 1;
     }
 
-    if name_override.is_some() && out_override.is_some() {
-        return Err("--name and --out are mutually exclusive (both pick the output path)".into());
-    }
+    let out_path = out_path.ok_or(
+        "--out <path> is required. The screenshot CLI doesn't pick \
+         an output path on your behalf; supply one explicitly.",
+    )?;
 
     let config = load_config()?;
     let plugins: Vec<_> = match &plugin_filter {
@@ -104,9 +100,10 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
         return Err("no plugins in truce.toml".into());
     }
 
-    if (out_override.is_some() || name_override.is_some()) && plugins.len() > 1 {
+    if plugins.len() > 1 {
         return Err(
-            "--name / --out only make sense with a single plugin; pass -p <crate> to pick one"
+            "multi-plugin truce.toml: pass -p <crate> to pick which plugin to screenshot \
+             (each plugin needs its own --out path; the CLI doesn't guess)"
                 .into(),
         );
     }
@@ -115,8 +112,12 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let root = project_root();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-    // Read state bytes once if --state was passed; same blob feeds
-    // every plugin in a multi-plugin invocation.
+    // Resolve --out / --state now that we know they're set.
+    let resolved_out = if out_path.is_absolute() {
+        out_path.clone()
+    } else {
+        cwd.join(&out_path)
+    };
     let state_bytes: Option<Vec<u8>> = state_path
         .as_ref()
         .map(|p| {
@@ -130,120 +131,45 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
         })
         .transpose()?;
 
-    for plugin in plugins {
-        let crate_dir = plugin_crate_dir(&root, &plugin.crate_name)?;
-        let out_path = resolve_out_path(
-            &crate_dir,
-            &cwd,
-            &plugin.crate_name,
-            out_override.as_deref(),
-            name_override.as_deref(),
+    let plugin = plugins[0];
+
+    crate::vprintln!("Building {} cdylib...", plugin.name);
+    let build_args = ["-p", &plugin.crate_name, "--no-default-features", "--lib"];
+    if debug {
+        cargo_build_debug(&[], &build_args, dt)?;
+    } else {
+        cargo_build(&[], &build_args, dt)?;
+    }
+
+    let lib_path = cdylib_path(&root, &plugin.crate_name, debug);
+    if !lib_path.exists() {
+        return Err(format!(
+            "cdylib not found at {}. Plugin must declare \
+             `crate-type = [\"cdylib\", \"rlib\"]` in its [lib] section.",
+            lib_path.display()
+        )
+        .into());
+    }
+
+    if check_mode {
+        // Render to target/screenshots/ for diffing; never overwrite
+        // the committed baseline in --check mode. Use the basename
+        // of the supplied --out so multiple `--check` invocations
+        // don't trample each other in the workspace target dir.
+        let render_dir = root.join("target").join("screenshots");
+        let fallback_name = format!("{}.png", plugin.crate_name);
+        let render_path = render_dir.join(
+            resolved_out
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new(&fallback_name)),
         );
-
-        crate::vprintln!("Building {} cdylib...", plugin.name);
-        let build_args = ["-p", &plugin.crate_name, "--no-default-features", "--lib"];
-        if debug {
-            cargo_build_debug(&[], &build_args, dt)?;
-        } else {
-            cargo_build(&[], &build_args, dt)?;
-        }
-
-        let lib_path = cdylib_path(&root, &plugin.crate_name, debug);
-        if !lib_path.exists() {
-            return Err(format!(
-                "cdylib not found at {}. Plugin must declare \
-                 `crate-type = [\"cdylib\", \"rlib\"]` in its [lib] section.",
-                lib_path.display()
-            )
-            .into());
-        }
-
-        if check_mode {
-            // Render to target/screenshots/ for diffing; never overwrite
-            // the committed baseline in --check mode.
-            let render_path = root
-                .join("target")
-                .join("screenshots")
-                .join(format!("{}.png", plugin.crate_name));
-            unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &render_path)? };
-            check_against_reference(&render_path, &out_path, &plugin.crate_name)?;
-        } else {
-            unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &out_path)? };
-            eprintln!("Wrote {}", out_path.display());
-        }
+        unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &render_path)? };
+        check_against_reference(&render_path, &resolved_out, &plugin.crate_name)?;
+    } else {
+        unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &resolved_out)? };
+        eprintln!("Wrote {}", resolved_out.display());
     }
     Ok(())
-}
-
-/// Resolve the plugin crate's manifest dir from `truce.toml`. The
-/// scaffold-shipped `truce.toml` carries each plugin's `crate =
-/// "<crate_name>"`, but not the path — we resolve via cargo metadata
-/// (cheap; the `project_root()` walk already runs).
-fn plugin_crate_dir(root: &Path, crate_name: &str) -> Result<PathBuf, crate::BoxErr> {
-    // Workspace projects: plugins live at <root>/plugins/<bundle_id>/.
-    // Single-plugin projects: <root>/ IS the plugin crate.
-    // Try both shapes by reading the candidate Cargo.toml for the
-    // matching `name = "<crate_name>"`.
-    let candidates = vec![
-        root.to_path_buf(),
-        root.join("plugins").join(crate_name),
-        root.join(crate_name),
-    ];
-    for cand in &candidates {
-        let toml = cand.join("Cargo.toml");
-        if let Ok(s) = std::fs::read_to_string(&toml)
-            && s.lines().any(|l| {
-                l.trim_start().starts_with("name") && l.contains(&format!("\"{crate_name}\""))
-            })
-        {
-            return Ok(cand.clone());
-        }
-    }
-    // Workspace mode: scan plugins/* by reading each Cargo.toml.
-    let plugins_dir = root.join("plugins");
-    if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            let toml = p.join("Cargo.toml");
-            if let Ok(s) = std::fs::read_to_string(&toml)
-                && s.lines().any(|l| {
-                    l.trim_start().starts_with("name") && l.contains(&format!("\"{crate_name}\""))
-                })
-            {
-                return Ok(p);
-            }
-        }
-    }
-    Err(format!(
-        "could not locate the manifest dir for crate '{crate_name}'. \
-         Tried {} and plugins/*. Use `--out <path>` to set the output \
-         path explicitly.",
-        candidates
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-    .into())
-}
-
-/// Path resolution table for `--out` / `--name` / default.
-fn resolve_out_path(
-    crate_dir: &Path,
-    cwd: &Path,
-    crate_name: &str,
-    out: Option<&Path>,
-    name: Option<&str>,
-) -> PathBuf {
-    if let Some(p) = out {
-        return if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            cwd.join(p)
-        };
-    }
-    let stem = name.unwrap_or(crate_name);
-    crate_dir.join("screenshots").join(format!("{stem}.png"))
 }
 
 /// Resolve `target/{release,debug}/lib<crate>.<ext>` for the host
@@ -366,27 +292,26 @@ fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce screenshot [-p <crate>] [--out <path> | --name <name>]
+Usage: cargo truce screenshot --out <path> [-p <crate>]
                               [--state <path.pluginstate>] [--check] [--debug]
 
 Render a plugin's editor headlessly and save a PNG. The CLI is
 self-contained — works on any crate built with `truce::plugin!`,
 no test code required.
 
-Output path:
-  --out <path>     Explicit (CWD-relative or absolute).
-  --name <name>    Shortcut for <crate>/screenshots/<name>.png.
-  default          <crate>/screenshots/<crate>.png.
+Required:
+  --out <path>     Output path (CWD-relative or absolute). The CLI
+                   never picks a path on your behalf.
 
 Options:
-  -p <crate>       Plugin crate name (default: every plugin in truce.toml).
-                   --out / --name require -p when a project has multiple plugins.
+  -p <crate>       Plugin crate name. Required for multi-plugin
+                   projects (each plugin gets its own --out path).
   --state <path>   Load a `.pluginstate` blob (the file format the
                    standalone host's Cmd+S / Ctrl+S writes) before
                    rendering. CWD-relative or absolute.
-  --check          Diff against the existing baseline; exit non-zero
-                   on regression. Strict pixel match — bake the
-                   baseline on the host you gate from.
+  --check          Diff against the existing baseline at <path>;
+                   exit non-zero on regression. Strict pixel match —
+                   bake the baseline on the host you gate from.
   --debug          Cargo dev profile (faster compile). Default is release."
     );
 }

@@ -753,14 +753,11 @@ fn scaffold_cargo_truce_build_workspace_multi_format() {
     s.assert_bundle_count_by_ext(".vst3", 2);
 }
 
-// `cargo truce screenshot --name <name>` on a fresh scaffold. The
-// PNG must land in the scaffolded project's `screenshots/` dir,
-// not the truce repo's. Catches a regression class where the
-// CLI's path resolution mixes up the truce checkout with the
-// scaffolded project (the original instance involved
-// compile-time `CARGO_MANIFEST_DIR` in the FFI-side resolver;
-// the new CLI takes the path from the cargo-truce process's
-// view of the scaffold root).
+// `cargo truce screenshot --out <path>` on a fresh scaffold. The
+// PNG must land at the explicitly-supplied path inside the
+// scaffolded project, not in the truce repo. Catches the regression
+// class where the CLI's path resolution mixes up the truce checkout
+// with the scaffolded project.
 #[test]
 fn scaffold_cargo_truce_screenshot() {
     let s = Scaffold::new("truce-screenshot", "demo_effect");
@@ -771,15 +768,16 @@ fn scaffold_cargo_truce_screenshot() {
     let truce_leak = truce_root().join("target/screenshots/scaffold_smoke.png");
     let _ = std::fs::remove_file(&truce_leak);
 
-    s.truce_subcommand(&["screenshot", "--name", "scaffold_smoke"])
+    // --out is required and resolved relative to the cargo-truce
+    // process's CWD (which is the scaffolded project for this run).
+    s.truce_subcommand(&["screenshot", "--out", "screenshots/scaffold_smoke.png"])
         .unwrap();
 
-    // The CLI default emits to <crate>/screenshots/<name>.png.
     let project_pic = s.generated.join("screenshots/scaffold_smoke.png");
     assert!(
         project_pic.exists(),
         "[truce-screenshot] expected PNG at {} but it's missing — \
-         did `cargo truce screenshot --name` resolve elsewhere?",
+         did `--out` resolve elsewhere?",
         project_pic.display()
     );
     assert!(

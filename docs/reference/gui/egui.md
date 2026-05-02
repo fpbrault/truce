@@ -220,7 +220,7 @@ parameters sync automatically every frame.
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot!(Plugin).run();
+    truce_test::screenshot!(Plugin, "screenshots/default.png").run();
 }
 ```
 

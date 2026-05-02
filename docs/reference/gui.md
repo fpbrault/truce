@@ -150,16 +150,15 @@ across every backend:
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot!(Plugin).run();
+    truce_test::screenshot!(Plugin, "screenshots/default.png").run();
 }
 ```
 
-The `screenshot!` macro reads `CARGO_PKG_NAME` +
-`CARGO_MANIFEST_DIR` from the calling crate, so the test
-renders your plugin's editor and compares against
-`<crate>/screenshots/<crate>.png`. The current render lands in
-`target/screenshots/` (gitignored). The first time you run the
-test the reference doesn't exist yet — the test fails and
+The `screenshot!` macro takes the plugin type plus an explicit
+path to the committed reference PNG (relative to the crate's
+`Cargo.toml` directory, or absolute). The current render lands
+in `target/screenshots/` (gitignored). The first time you run
+the test the reference doesn't exist yet — the test fails and
 points at `cargo truce screenshot --out <ref-path>` to create
 the baseline. Works for every backend (built-in GUI, egui,
 iced, slint).

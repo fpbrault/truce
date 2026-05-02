@@ -6,20 +6,20 @@ changes unexpectedly — a widget moves, a color shifts, a label
 disappears — the test fails and points at the freshly-rendered PNG so
 you can compare visually.
 
-The API is a builder you construct via the `screenshot!` macro:
+The test API is a builder constructed by the `screenshot!` macro,
+which takes the plugin type and the explicit reference-PNG path:
 
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot!(Plugin).run();
+    truce_test::screenshot!(Plugin, "screenshots/default.png").run();
 }
 ```
 
-That's it. The macro reads `CARGO_PKG_NAME` + `CARGO_MANIFEST_DIR`
-from the calling crate at compile time, so the test renders your
-plugin's editor and compares against `screenshots/<crate>.png`
-(relative to your `Cargo.toml`). No paths to coordinate, no
-filename to invent.
+The path is resolved relative to your crate's `Cargo.toml` directory
+(or used as-is if absolute). The macro never picks a path on your
+behalf — every test names its own reference, in whatever directory
+layout suits the project.
 
 ## Quick start
 
@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::screenshot!(Plugin).run();
+        truce_test::screenshot!(Plugin, "screenshots/default.png").run();
     }
 }
 ```
@@ -48,17 +48,17 @@ If the reference doesn't exist, the test fails and points at the
 CLI command that creates one:
 
 ```
-No screenshot baseline at /path/to/your-plugin/screenshots/your-plugin.png.
-Create one with: cargo truce screenshot --out /path/to/.../screenshots/your-plugin.png
+No screenshot baseline at /path/to/your-plugin/screenshots/default.png.
+Create one with: cargo truce screenshot --out /path/to/.../screenshots/default.png
 then inspect the rendered PNG and commit it.
 ```
 
 The standard flow:
 
 ```sh
-cargo truce screenshot          # writes <crate>/screenshots/<crate>.png
-git add screenshots/            # eyeball the PNG, then commit
-cargo test                      # the gate
+cargo truce screenshot --out screenshots/default.png   # writes the PNG
+git add screenshots/                                   # eyeball + commit
+cargo test                                             # the gate
 ```
 
 `cargo truce screenshot` is decoupled from the test surface — it
@@ -67,20 +67,19 @@ the codebase has a `gui_screenshot` test.
 
 ## How it works
 
-1. `truce_test::screenshot!(Plugin)` constructs a
-   `ScreenshotTest<Plugin>` builder anchored to the calling
-   crate's manifest dir.
+1. `truce_test::screenshot!(Plugin, "<path>")` constructs a
+   `ScreenshotTest<Plugin>` with the reference path resolved
+   against the calling crate's `CARGO_MANIFEST_DIR` (when
+   relative) or used as-is (when absolute).
 2. `.run()` calls `Plugin::create()` (plus `init()` and any
    `setup` closure you supplied), then asks the editor for
    `(pixels, width, height)` via `Editor::screenshot()`.
 3. The current render is always written to
-   `<workspace>/target/screenshots/<crate>.png` — gitignored, so
-   it never accidentally gets committed.
-4. The committed reference is loaded from
-   `<crate>/screenshots/<crate>.png` (or whatever path you set
-   via `.name()` / `.path()`).
-5. If the reference doesn't exist yet, the test logs the `cp`
-   hint and passes.
+   `<workspace>/target/screenshots/<basename>.png` —
+   gitignored, so it never accidentally gets committed.
+4. The committed reference is loaded from the path you passed.
+5. If the reference doesn't exist, the test panics with a
+   `cargo truce screenshot --out <path>` hint.
 6. If the reference exists and the diff exceeds tolerance, the
    test fails with both PNG paths and the exact `cp` command to
    accept the new render as the new baseline.
@@ -99,8 +98,7 @@ open, a meter reading a particular level — the builder's
 ```rust
 #[test]
 fn gui_screenshot_max_gain() {
-    truce_test::screenshot!(Plugin)
-        .name("max_gain")
+    truce_test::screenshot!(Plugin, "screenshots/max_gain.png")
         .setup(|p| p.params().gain.set_normalized(1.0))
         .run();
 }
@@ -119,8 +117,7 @@ code, the standalone host's `Cmd+S` / `Ctrl+S` saves a
 ```rust
 #[test]
 fn gui_screenshot_evening() {
-    truce_test::screenshot!(Plugin)
-        .name("evening")
+    truce_test::screenshot!(Plugin, "screenshots/evening.png")
         .state_file("test_states/evening.pluginstate")
         .run();
 }
@@ -132,29 +129,28 @@ the same path CLAP / VST3 / AU hosts use to restore session state.
 
 ## Promoting a render
 
-The test's failure / "no reference" log line includes the exact
-`cp` command. A typical flow:
+The test's failure log includes the exact `cp` command. A typical
+flow:
 
 ```sh
-# 1. Run the test. Either it fails (regression) or logs a promote
-#    hint (new test or accepted change).
+# 1. Run the test. Either it fails (regression) or panics with the
+#    "no baseline" message (test added but not yet baselined).
 cargo test -p my-plugin gui_screenshot
 
-# 2. Inspect target/screenshots/my-plugin.png. If it looks correct,
-#    promote it (the cp command from the log line):
-cp target/screenshots/my-plugin.png screenshots/my-plugin.png
+# 2. Inspect target/screenshots/default.png. If it looks correct,
+#    promote it (the cp command from the failure message):
+cp target/screenshots/default.png screenshots/default.png
 
 # 3. Commit the updated reference.
-git add screenshots/my-plugin.png
+git add screenshots/default.png
 ```
 
-`cargo truce screenshot` is the faster path when you just want
-fresh PNGs. It writes directly to the baseline path, skipping the
-`cp`:
+`cargo truce screenshot --out <path>` is the faster path when
+you want to write directly to the baseline location:
 
 ```sh
-cargo truce screenshot                # → <crate>/screenshots/<crate>.png
-git diff screenshots/                 # eyeball the visual change
+cargo truce screenshot --out screenshots/default.png
+git diff screenshots/                # eyeball the visual change
 git add screenshots/ && git commit
 ```
 
@@ -162,7 +158,9 @@ For state-dependent baselines, `--state` lets the CLI feed a
 `.pluginstate` blob to the renderer:
 
 ```sh
-cargo truce screenshot --state cool.pluginstate --out screenshots/cool.png
+cargo truce screenshot \
+    --state cool.pluginstate \
+    --out screenshots/cool.png
 ```
 
 (The CLI can't run setup *closures* — those live in the test
@@ -176,7 +174,9 @@ The default tolerance is 0 (strict pixel match). Bump it via
 flake:
 
 ```rust
-truce_test::screenshot!(Plugin).tolerance(200).run();
+truce_test::screenshot!(Plugin, "screenshots/default.png")
+    .tolerance(200)
+    .run();
 ```
 
 Typical bumps are 50–500 pixels for cross-machine antialiasing
@@ -202,7 +202,7 @@ your CI host); only run the test there. Skip it elsewhere with a
 #[cfg(target_os = "macos")]
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot!(Plugin).run();
+    truce_test::screenshot!(Plugin, "screenshots/default.png").run();
 }
 ```
 
@@ -214,25 +214,24 @@ reference:
 #[cfg(target_os = "macos")]
 #[test]
 fn gui_screenshot_macos() {
-    truce_test::screenshot!(Plugin).name("default_macos").run();
+    truce_test::screenshot!(Plugin, "screenshots/default_macos.png").run();
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 fn gui_screenshot_linux() {
-    truce_test::screenshot!(Plugin).name("default_linux").run();
+    truce_test::screenshot!(Plugin, "screenshots/default_linux.png").run();
 }
 
 #[cfg(target_os = "windows")]
 #[test]
 fn gui_screenshot_windows() {
-    truce_test::screenshot!(Plugin).name("default_windows").run();
+    truce_test::screenshot!(Plugin, "screenshots/default_windows.png").run();
 }
 ```
 
-Each commits to `screenshots/default_<os>.png`. `cargo test` on
-each platform compiles only its variant; cross-OS rasterizer
-drift can't fail the wrong test. The in-tree examples
+`cargo test` on each platform compiles only its variant; cross-OS
+rasterizer drift can't fail the wrong test. The in-tree examples
 (`examples/truce-example-*`) use this pattern.
 
 ## API reference
@@ -240,13 +239,13 @@ drift can't fail the wrong test. The in-tree examples
 ### `screenshot!` macro
 
 ```rust
-truce_test::screenshot!(Plugin)
+truce_test::screenshot!($plugin:ty, $path:expr)
 ```
 
-Constructs a `ScreenshotTest<Plugin>` anchored to the calling
-crate's manifest dir + `CARGO_PKG_NAME`. The plugin type is the
-one `truce::plugin!` emits (`crate::Plugin`); pass an alternate
-type if you need to.
+Constructs a `ScreenshotTest<$plugin>`. `$path` is the reference
+PNG path; resolved against `CARGO_MANIFEST_DIR` when relative.
+Both args are required — there's no zero-arg form, no
+auto-derived path, no implicit directory.
 
 ### `ScreenshotTest<P>` builder
 
@@ -254,8 +253,6 @@ type if you need to.
 impl<P: PluginExport> ScreenshotTest<P> {
     pub fn setup<F: FnOnce(&mut P) + 'static>(self, f: F) -> Self;
     pub fn state_file<S: Into<PathBuf>>(self, path: S) -> Self;
-    pub fn name<S: Into<String>>(self, name: S) -> Self;
-    pub fn path<S: Into<PathBuf>>(self, path: S) -> Self;
     pub fn tolerance(self, t: usize) -> Self;
     pub fn run(self);
 }
@@ -265,19 +262,8 @@ impl<P: PluginExport> ScreenshotTest<P> {
 |---|---|
 | `setup(\|p\| …)` | Mutate the plugin between `P::create()` and the render. Set params, drive `process()`, load arbitrary state. |
 | `state_file("path")` | Sugar for `setup(\|p\| p.load_state(&fs::read(path)?))`. Loads a `.pluginstate` blob written by the standalone host's `Cmd+S` / `Ctrl+S`. |
-| `name("foo")` | Use the conventional `screenshots/` dir but a different filename: `<crate>/screenshots/foo.png`. |
-| `path("dir/foo.png")` | Explicit path (crate-manifest-relative or absolute). |
 | `tolerance(n)` | Max allowed differing-pixel count. `0` = strict. |
 | `run()` | Build, render, compare. |
-
-Path resolution:
-
-| Form | Resolves to |
-|---|---|
-| (default) | `<crate>/screenshots/<CARGO_PKG_NAME>.png` |
-| `.name("foo")` | `<crate>/screenshots/foo.png` |
-| `.path("dir/foo.png")` (relative) | `<crate>/dir/foo.png` |
-| `.path("/abs/path.png")` (absolute) | `/abs/path.png` |
 
 ### `Editor::screenshot` trait method
 
@@ -299,32 +285,19 @@ Fully self-contained — works on any crate built with
 `truce::plugin!`.
 
 ```sh
-cargo truce screenshot                                # default-state, default path
-cargo truce screenshot -p my-plugin                   # workspace mode: pick a plugin
-cargo truce screenshot --out shots/hero.png           # explicit output (CWD-relative)
-cargo truce screenshot --name dark                    # → <crate>/screenshots/dark.png
-cargo truce screenshot --state s.pluginstate          # load state before rendering
+cargo truce screenshot --out shots/hero.png            # one-off render
+cargo truce screenshot -p my-plugin --out shots/a.png  # workspace mode
 cargo truce screenshot --state s.pluginstate --out shots/cool.png
-cargo truce screenshot --check                        # CI gate (no cargo test needed)
+cargo truce screenshot --check --out screenshots/default.png   # CI gate
 ```
 
-Output path:
-
-| Flag | Resolves to |
+| Flag | Meaning |
 |---|---|
-| (default) | `<crate>/screenshots/<crate>.png` |
-| `--name foo` | `<crate>/screenshots/foo.png` |
-| `--out <path>` | `<path>` (CWD-relative or absolute) |
-
-Other flags:
-
-- `-p <crate>` — pick one plugin in workspace mode.
-- `--state <path>` — load a `.pluginstate` blob (the file the
-  standalone host's `Cmd+S` saves) before rendering.
-  CWD-relative or absolute.
-- `--check` — diff against the existing baseline; exit non-zero
-  on regression. Strict pixel match.
-- `--debug` — cargo dev profile (faster compile).
+| `--out <path>` (required) | Output path. CWD-relative or absolute. The CLI never picks a path for you. |
+| `-p <crate>` | Plugin crate. Required when the project has multiple plugins (each gets its own `--out`). |
+| `--state <path>` | Load a `.pluginstate` blob (the standalone host's `Cmd+S` save format) before rendering. CWD-relative or absolute. |
+| `--check` | Diff against the existing baseline at `--out`; exit non-zero on regression. Strict pixel match. |
+| `--debug` | Cargo dev profile (faster compile). Default is release. |
 
 The CLI dlopens the plugin's cdylib and calls a hidden
 `__truce_screenshot` symbol that `truce::plugin!` exports. No

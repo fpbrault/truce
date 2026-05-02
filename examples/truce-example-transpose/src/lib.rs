@@ -169,25 +169,19 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {
-        truce_test::screenshot!(Plugin)
-            .name("transpose_default_macos")
-            .run();
+        truce_test::screenshot!(Plugin, "screenshots/transpose_default_macos.png").run();
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn gui_screenshot_linux() {
-        truce_test::screenshot!(Plugin)
-            .name("transpose_default_linux")
-            .run();
+        truce_test::screenshot!(Plugin, "screenshots/transpose_default_linux.png").run();
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn gui_screenshot_windows() {
-        truce_test::screenshot!(Plugin)
-            .name("transpose_default_windows")
-            .run();
+        truce_test::screenshot!(Plugin, "screenshots/transpose_default_windows.png").run();
     }
 
     /// Regression guard: see `arpeggio/src/lib.rs::tests::category_is_note_effect`.

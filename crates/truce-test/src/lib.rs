@@ -543,27 +543,25 @@ type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
 
 /// Builder for a screenshot regression test.
 ///
-/// Construct via the [`screenshot!`] macro (which fills in the
-/// calling crate's manifest dir + crate name from `env!`). Configure
-/// with `setup` / `state_file` / `name` / `path` / `tolerance`,
-/// then call `run()` inside a `#[test]` fn.
+/// Construct via the [`screenshot!`] macro:
+/// `screenshot!(Plugin, "screenshots/main.png")`. The path is the
+/// committed reference PNG location — relative to the calling
+/// crate's `Cargo.toml` directory, or absolute. There's no implicit
+/// directory and no auto-derived filename; every test names its
+/// own reference.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// // Simplest: render the editor with default params and compare
-/// // against `<crate>/screenshots/<crate>.png`.
 /// #[test]
 /// fn screenshot() {
-///     truce_test::screenshot!(Plugin).run();
+///     truce_test::screenshot!(Plugin, "screenshots/default.png").run();
 /// }
 ///
-/// // State-dependent: tweak params before rendering, compare against
-/// // `<crate>/screenshots/max_gain.png`.
+/// // State-dependent: tweak params before rendering.
 /// #[test]
 /// fn screenshot_max_gain() {
-///     truce_test::screenshot!(Plugin)
-///         .name("max_gain")
+///     truce_test::screenshot!(Plugin, "screenshots/max_gain.png")
 ///         .setup(|p| p.params().gain.set_normalized(1.0))
 ///         .run();
 /// }
@@ -571,22 +569,19 @@ type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
 /// // Pre-saved state from the standalone host's Cmd+S.
 /// #[test]
 /// fn screenshot_evening() {
-///     truce_test::screenshot!(Plugin)
-///         .name("evening")
+///     truce_test::screenshot!(Plugin, "screenshots/evening.png")
 ///         .state_file("test_states/evening.pluginstate")
 ///         .run();
 /// }
 /// ```
 pub struct ScreenshotTest<P: PluginExport> {
-    /// Crate's manifest dir, captured from the macro's `env!`.
-    /// Anchors all relative paths.
+    /// Reference PNG path, resolved at `new`-time. Absolute, or
+    /// joined to `CARGO_MANIFEST_DIR` if the caller passed a
+    /// relative path.
+    ref_path: PathBuf,
+    /// Manifest dir of the calling crate. Used to resolve the
+    /// `state_file` path; not used after `ref_path` is built.
     manifest_dir: PathBuf,
-    /// Crate name, captured from the macro's `env!`. Default
-    /// filename stem.
-    crate_name: &'static str,
-    /// Where the reference PNG lives. Default:
-    /// `<manifest_dir>/screenshots/<crate>.png`.
-    path: PathSpec,
     /// Max allowed differing-pixel count. `0` = strict.
     tolerance: usize,
     /// Optional plugin mutation between `P::create()` and render.
@@ -594,26 +589,23 @@ pub struct ScreenshotTest<P: PluginExport> {
     _marker: std::marker::PhantomData<P>,
 }
 
-enum PathSpec {
-    /// `<manifest_dir>/screenshots/<crate_name>.png`
-    Default,
-    /// `<manifest_dir>/screenshots/<name>.png`
-    Named(String),
-    /// Caller-supplied. Absolute, or relative to `manifest_dir`.
-    Explicit(PathBuf),
-}
-
 impl<P: PluginExport> ScreenshotTest<P> {
     /// Internal constructor used by [`screenshot!`]. Plugin authors
-    /// should not call this directly — the macro fills in
-    /// `manifest_dir` / `crate_name` from the calling crate's
-    /// compile-time `env!` values.
+    /// should not call this directly — the macro fills
+    /// `manifest_dir` from the calling crate's compile-time
+    /// `CARGO_MANIFEST_DIR`.
     #[doc(hidden)]
-    pub fn __from_env(manifest_dir: &str, crate_name: &'static str) -> Self {
+    pub fn __new(manifest_dir: &str, ref_path: impl Into<PathBuf>) -> Self {
+        let manifest_dir = PathBuf::from(manifest_dir);
+        let raw = ref_path.into();
+        let ref_path = if raw.is_absolute() {
+            raw
+        } else {
+            manifest_dir.join(raw)
+        };
         Self {
-            manifest_dir: PathBuf::from(manifest_dir),
-            crate_name,
-            path: PathSpec::Default,
+            ref_path,
+            manifest_dir,
             tolerance: 0,
             setup: None,
             _marker: std::marker::PhantomData,
@@ -648,22 +640,6 @@ impl<P: PluginExport> ScreenshotTest<P> {
         })
     }
 
-    /// Use the conventional `screenshots/` directory but a different
-    /// filename stem. Useful for multiple screenshots per plugin
-    /// (`"main"`, `"panel_open"`, …).
-    pub fn name<S: Into<String>>(mut self, name: S) -> Self {
-        self.path = PathSpec::Named(name.into());
-        self
-    }
-
-    /// Explicit reference-PNG path. Absolute paths are used as-is;
-    /// relative paths are resolved against the calling crate's
-    /// manifest dir.
-    pub fn path<S: Into<PathBuf>>(mut self, path: S) -> Self {
-        self.path = PathSpec::Explicit(path.into());
-        self
-    }
-
     /// Max allowed differing-pixel count. `0` is strict equality;
     /// bump for cross-machine antialiasing tolerance.
     pub fn tolerance(mut self, t: usize) -> Self {
@@ -671,29 +647,8 @@ impl<P: PluginExport> ScreenshotTest<P> {
         self
     }
 
-    fn resolve_path(&self) -> PathBuf {
-        match &self.path {
-            PathSpec::Default => self
-                .manifest_dir
-                .join("screenshots")
-                .join(format!("{}.png", self.crate_name)),
-            PathSpec::Named(n) => self
-                .manifest_dir
-                .join("screenshots")
-                .join(format!("{n}.png")),
-            PathSpec::Explicit(p) => {
-                if p.is_absolute() {
-                    p.clone()
-                } else {
-                    self.manifest_dir.join(p)
-                }
-            }
-        }
-    }
-
     /// Build the plugin (with `setup` applied if present), render,
-    /// and compare against the reference. Same comparator semantics
-    /// as the lower-level `assert_screenshot_pixels`:
+    /// and compare against the reference at the supplied path:
     ///
     /// - No reference → panic, pointing at
     ///   `cargo truce screenshot --out <ref_path>` to create one.
@@ -701,7 +656,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// - Mismatch → panic with both PNG paths and the `cp` command
     ///   to accept the new render as the baseline.
     pub fn run(self) {
-        let ref_path = self.resolve_path();
+        let ref_path = self.ref_path;
         let tolerance = self.tolerance;
         let setup = self.setup;
         let mut plugin = P::create();
@@ -714,22 +669,21 @@ impl<P: PluginExport> ScreenshotTest<P> {
     }
 }
 
-/// Construct a [`ScreenshotTest`] for the given plugin type, anchored
-/// to the calling crate's manifest dir + crate name.
+/// Construct a [`ScreenshotTest`] for the given plugin type, with
+/// the reference-PNG path required as the second argument. The
+/// path is anchored to the calling crate's `CARGO_MANIFEST_DIR`
+/// when relative, or used as-is when absolute.
 ///
 /// ```ignore
 /// #[test]
 /// fn screenshot() {
-///     truce_test::screenshot!(Plugin).run();
+///     truce_test::screenshot!(Plugin, "screenshots/default.png").run();
 /// }
 /// ```
 #[macro_export]
 macro_rules! screenshot {
-    ($plugin:ty) => {
-        $crate::ScreenshotTest::<$plugin>::__from_env(
-            env!("CARGO_MANIFEST_DIR"),
-            env!("CARGO_PKG_NAME"),
-        )
+    ($plugin:ty, $path:expr $(,)?) => {
+        $crate::ScreenshotTest::<$plugin>::__new(env!("CARGO_MANIFEST_DIR"), $path)
     };
 }
 

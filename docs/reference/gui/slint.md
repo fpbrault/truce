@@ -236,7 +236,7 @@ Slint screenshots use the software renderer — no GPU needed:
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot!(Plugin).run();
+    truce_test::screenshot!(Plugin, "screenshots/default.png").run();
 }
 ```
 
