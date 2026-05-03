@@ -74,12 +74,18 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
             channel,
             note,
             velocity,
-        } => Some((3, [0x90 | channel, *note, (*velocity * 127.0).round() as u8])),
+        } => Some((
+            3,
+            [0x90 | channel, *note, (*velocity * 127.0).round() as u8],
+        )),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
-        } => Some((3, [0x80 | channel, *note, (*velocity * 127.0).round() as u8])),
+        } => Some((
+            3,
+            [0x80 | channel, *note, (*velocity * 127.0).round() as u8],
+        )),
         EventBody::ControlChange { channel, cc, value } => {
             Some((3, [0xB0 | channel, *cc, (*value * 127.0).round() as u8]))
         }
@@ -98,9 +104,7 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
         EventBody::ChannelPressure { channel, pressure } => {
             Some((2, [0xD0 | channel, (*pressure * 127.0).round() as u8, 0]))
         }
-        EventBody::ProgramChange { channel, program } => {
-            Some((2, [0xC0 | channel, *program, 0]))
-        }
+        EventBody::ProgramChange { channel, program } => Some((2, [0xC0 | channel, *program, 0])),
         _ => None,
     }
 }

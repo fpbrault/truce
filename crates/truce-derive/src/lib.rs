@@ -504,7 +504,10 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         .and_then(|s| s.strip_suffix(')'))
     {
         let Ok(count) = inner.trim().parse::<usize>() else {
-            return bad(format!("enum count `{}` is not a non-negative integer", inner.trim()));
+            return bad(format!(
+                "enum count `{}` is not a non-negative integer",
+                inner.trim()
+            ));
         };
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
@@ -530,9 +533,8 @@ fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
         // until a user complained their plugin rendered "0.5" instead
         // of "0.5 Hz" in the host.
         other => {
-            let msg = format!(
-                "unknown unit `{other}` — supported: dB, Hz, ms, s, %, st, pan, none"
-            );
+            let msg =
+                format!("unknown unit `{other}` — supported: dB, Hz, ms, s, %, st, pan, none");
             quote! { compile_error!(#msg) }
         }
     }

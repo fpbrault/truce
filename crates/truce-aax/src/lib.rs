@@ -714,7 +714,9 @@ pub unsafe fn _save_state<P: PluginExport>(
     // where the audio thread could re-set the flag between the
     // swap and the read, then have its update overwritten when we
     // wrote the cache; this counter scheme detects that case.
-    let revision_before = inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
+    let revision_before = inst
+        .state_revision
+        .load(std::sync::atomic::Ordering::Acquire);
 
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
         let (ids, values) = inst.plugin.params().collect_values();
@@ -737,8 +739,9 @@ pub unsafe fn _save_state<P: PluginExport>(
             Some((rev, blob)) if *rev == revision_before => std::sync::Arc::clone(blob),
             _ => {
                 let fresh = std::sync::Arc::new(serialize_now(inst));
-                let revision_after =
-                    inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
+                let revision_after = inst
+                    .state_revision
+                    .load(std::sync::atomic::Ordering::Acquire);
                 if revision_after == revision_before {
                     // No audio update during serialization — safe to cache.
                     *guard = Some((revision_before, std::sync::Arc::clone(&fresh)));
