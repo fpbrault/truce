@@ -54,9 +54,7 @@ fn clear_au_caches() {
             home.join(
                 "Library/Containers/com.apple.garageband10/Data/Library/Caches/AudioUnitCache",
             ),
-            home.join(
-                "Library/Containers/com.apple.logicpro10/Data/Library/Caches/AudioUnitCache",
-            ),
+            home.join("Library/Containers/com.apple.logicpro10/Data/Library/Caches/AudioUnitCache"),
             home.join("Library/Caches/com.apple.logic10/AudioUnitCache"),
         ] {
             let _ = fs::remove_dir_all(&dir);

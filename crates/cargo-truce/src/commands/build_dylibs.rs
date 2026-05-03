@@ -136,8 +136,7 @@ pub(crate) fn build_format_dylibs(
             #[cfg(not(target_os = "macos"))]
             {
                 crate::log_skip(
-                    "AU v2: not supported on this platform. Audio Unit is macOS-only."
-                        .to_string(),
+                    "AU v2: not supported on this platform. Audio Unit is macOS-only.".to_string(),
                 );
                 return Ok(());
             }
@@ -206,7 +205,10 @@ pub(crate) fn build_format_dylibs(
         )?;
 
         let src = release_lib(root, &p.dylib_stem());
-        let dst = release_lib(root, &format!("{}{}", p.dylib_stem(), format.dylib_suffix()));
+        let dst = release_lib(
+            root,
+            &format!("{}{}", p.dylib_stem(), format.dylib_suffix()),
+        );
         // CLAP / VST3 historically guarded the copy with `if src.exists()`
         // because a feature-flagged plugin can legitimately produce no
         // output for a format it doesn't support; preserve that for

@@ -31,11 +31,7 @@ pub(crate) fn pick_plugins<'a>(
 ) -> Result<Vec<&'a PluginDef>, crate::BoxErr> {
     match filter {
         Some(f) => {
-            let matched: Vec<_> = config
-                .plugin
-                .iter()
-                .filter(|p| p.crate_name == f)
-                .collect();
+            let matched: Vec<_> = config.plugin.iter().filter(|p| p.crate_name == f).collect();
             if matched.is_empty() {
                 return Err(format!(
                     "No plugin with crate name '{f}'. Available: {}",

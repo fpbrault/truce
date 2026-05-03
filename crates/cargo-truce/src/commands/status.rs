@@ -9,11 +9,13 @@ use crate::Res;
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn cmd_status() -> Res {
-    Err("`cargo truce status` is macOS-only — every directory it scans \
+    Err(
+        "`cargo truce status` is macOS-only — every directory it scans \
          (`/Library/Audio/Plug-Ins/...`, `auval -a`) is Apple-specific. \
          For Linux / Windows, list bundles directly under your DAW's \
          configured plug-in path."
-        .into())
+            .into(),
+    )
 }
 
 #[cfg(target_os = "macos")]

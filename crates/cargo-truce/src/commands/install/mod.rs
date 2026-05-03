@@ -3,7 +3,9 @@
 
 #![allow(unused_imports)]
 
-use crate::install_scope::{Format, InstallScope, effective_scope, note_once, set_cli_install_scope};
+use crate::install_scope::{
+    Format, InstallScope, effective_scope, note_once, set_cli_install_scope,
+};
 use crate::util::fs_ctx;
 use crate::{
     Config, PluginDef, Res, cargo_build, codesign_bundle, deployment_target,
@@ -256,9 +258,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
 
     #[cfg(target_os = "macos")]
-    if au2
-        && let Some(home) = dirs::home_dir()
-    {
+    if au2 && let Some(home) = dirs::home_dir() {
         let cache = home.join("Library/Caches/AudioUnitCache");
         let _ = fs::remove_dir_all(&cache);
         crate::vprintln!("Cleared AU cache.");

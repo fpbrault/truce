@@ -90,9 +90,7 @@ pub fn assert_no_nans<P: PluginExport>(result: &DriverResult<P>) {
         .output
         .iter()
         .enumerate()
-        .flat_map(|(ch, data)| {
-            data.iter().enumerate().map(move |(i, &s)| (ch, i, s))
-        })
+        .flat_map(|(ch, data)| data.iter().enumerate().map(move |(i, &s)| (ch, i, s)))
         .find(|&(_, _, s)| !s.is_finite());
     if let Some((ch, i, s)) = bad {
         panic!(

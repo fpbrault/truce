@@ -157,4 +157,3 @@ pub fn render_to_rgba(
         rgba_buf.extend_from_slice(&bytes);
     }
 }
-
