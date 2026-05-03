@@ -653,6 +653,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
 // ---------------------------------------------------------------------------
 // Bridge baseview's raw-window-handle 0.5 to a wgpu 0.6 SurfaceTargetUnsafe
 // ---------------------------------------------------------------------------
+//
+// truce-iced keeps its own surface bridge (instead of re-using
+// `truce_gui::platform::create_wgpu_surface`) because `iced_wgpu` is
+// pinned to wgpu 0.19 and `truce-gui` is on wgpu 24 — the two crates
+// resolve to different `wgpu::Surface` types in this workspace's
+// dep graph, so the canonical helper produces a surface `iced_wgpu`
+// can't ingest. This is the only call site that has to stay
+// duplicated; the other GUI crates (gpu / egui / slint) all share
+// truce-gui's wgpu version.
 
 unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,

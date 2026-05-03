@@ -1642,6 +1642,15 @@ impl WgpuBackend {
             ..Default::default()
         });
 
+        // Headless: there is no `wgpu::Surface` to constrain the adapter
+        // pick against, so `compatible_surface` is `None`. On a multi-GPU
+        // host (e.g. discrete + integrated, or NVIDIA Optimus) wgpu may
+        // pick a different physical adapter than the live render path's
+        // `compatible_surface: Some(&surface)`, which can produce subtle
+        // rasterization differences (driver-specific shader compile, MSAA
+        // resolve, sRGB rounding). Bake screenshot baselines on the host
+        // you gate from — this is the same constraint already documented
+        // in `cargo truce screenshot --check`.
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,

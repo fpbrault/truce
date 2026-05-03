@@ -56,6 +56,13 @@ pub(crate) fn render_with_state(
     // your reference PNGs on whichever host you intend to gate
     // screenshots from, and bump the `tolerance` if you need
     // cross-machine antialiasing slack.
+    //
+    // `compatible_surface: None` (vs the live render path's
+    // `Some(&surface)`) is unavoidable here — there's no `wgpu::Surface`
+    // in a screenshot run. On multi-GPU hosts wgpu may consequently
+    // pick a different physical adapter than the editor's live path,
+    // so the same caveat applies: bake baselines on the host you gate
+    // from.
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
