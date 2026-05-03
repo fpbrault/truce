@@ -39,3 +39,12 @@ jobs:
 
       - name: test
         run: cargo test --workspace
+
+      - name: upload failing screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failing-screenshots-macos
+          path: target/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
