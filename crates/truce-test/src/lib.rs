@@ -799,11 +799,13 @@ fn compare_against_reference(
     }
 }
 
-/// `<workspace_or_package_root>/target/screenshots/`. Walks up from
-/// CWD looking for the topmost `Cargo.toml` (preferring one with
-/// `[workspace]`). Used only for the failing-render artifact path —
-/// committed reference paths come from the builder's
-/// manifest-dir-anchored resolution.
+/// `<cargo-target-dir>/screenshots/`. Walks up from CWD looking for
+/// the topmost `Cargo.toml` (preferring one with `[workspace]`) to
+/// anchor the resolution, then routes through `truce_build::target_dir`
+/// so `CARGO_TARGET_DIR` and `<root>/.cargo/config.toml`'s
+/// `[build].target-dir` both override the literal `target/`. Used
+/// only for the failing-render artifact path — committed reference
+/// paths come from the builder's manifest-dir-anchored resolution.
 fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>) -> PathBuf {
     // Prefer the calling crate's `CARGO_MANIFEST_DIR` (captured at
     // compile time and threaded through the `screenshot!` macro). It's
@@ -821,12 +823,13 @@ fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>)
             && let Ok(s) = std::fs::read_to_string(&toml)
         {
             if s.contains("[workspace]") {
-                return dir.join("target/screenshots");
+                return truce_build::target_dir(&dir).join("screenshots");
             }
             topmost_package = Some(dir.clone());
         }
         if !dir.pop() {
-            return topmost_package.unwrap_or(start).join("target/screenshots");
+            let anchor = topmost_package.unwrap_or(start);
+            return truce_build::target_dir(&anchor).join("screenshots");
         }
     }
 }

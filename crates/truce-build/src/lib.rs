@@ -236,10 +236,93 @@ fn resolve_target_dir() -> Option<PathBuf> {
         }
     }
     let out_dir = std::env::var("OUT_DIR").ok()?;
-    std::path::Path::new(&out_dir)
+    let out_path = std::path::Path::new(&out_dir);
+    // Cargo writes a `CACHEDIR.TAG` at the root of every target
+    // directory it manages — the canonical marker that survives
+    // `[build].target-dir` overrides, `[unstable.target-dir-per-package]`,
+    // and Bazel-style splits where the conventional layout shifts.
+    if let Some(p) = out_path
+        .ancestors()
+        .find(|a| a.join("CACHEDIR.TAG").is_file())
+    {
+        return Some(p.to_path_buf());
+    }
+    // Fallback: the literal name. Covers cases where the marker
+    // hasn't been written yet (a fresh checkout's first build) but
+    // the directory is still conventionally named.
+    out_path
         .ancestors()
         .find(|a| a.file_name().is_some_and(|n| n == "target"))
         .map(PathBuf::from)
+}
+
+/// Resolve cargo's effective target directory for a given workspace root.
+///
+/// Honoured in priority order:
+/// 1. `CARGO_TARGET_DIR` env var (cargo's documented override; absolute
+///    paths used as-is, relative paths anchored at `root`).
+/// 2. `[build].target-dir` in `<root>/.cargo/config.toml` (the
+///    per-workspace equivalent of the env var; same anchoring rule).
+/// 3. Fall back to `<root>/target`.
+///
+/// Used by runtime callers (cargo-truce, truce-test) to anchor
+/// artifact paths against cargo's actual target dir instead of a
+/// hardcoded `target/`. Build-script callers that already have
+/// `OUT_DIR` should keep using the private `resolve_target_dir()`
+/// fallback chain — it can detect the dir from `OUT_DIR` itself
+/// without needing a workspace-root anchor.
+pub fn target_dir(root: &Path) -> PathBuf {
+    if let Ok(d) = std::env::var("CARGO_TARGET_DIR")
+        && !d.is_empty()
+    {
+        let p = PathBuf::from(&d);
+        return if p.is_absolute() {
+            p
+        } else {
+            root.join(p)
+        };
+    }
+    if let Some(custom) = read_cargo_config_target_dir(root) {
+        return if custom.is_absolute() {
+            custom
+        } else {
+            root.join(custom)
+        };
+    }
+    root.join("target")
+}
+
+/// Look for `[build].target-dir = "..."` in `<root>/.cargo/config.toml`.
+/// Tiny inline parser — we only care about a single key under one
+/// section header. Pulling in the `toml` crate's full parser for two
+/// strings is technically free here (already a dep) but the inline
+/// match is simpler to audit and matches cargo's own forgiveness
+/// about commented-out / blank lines.
+fn read_cargo_config_target_dir(root: &Path) -> Option<PathBuf> {
+    let cfg = root.join(".cargo").join("config.toml");
+    let contents = std::fs::read_to_string(&cfg).ok()?;
+    let mut in_build = false;
+    for raw in contents.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            in_build = rest.trim() == "build";
+            continue;
+        }
+        if in_build && let Some(value) = line.strip_prefix("target-dir") {
+            let v = value.trim_start().strip_prefix('=')?.trim();
+            let v = v
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(v);
+            if !v.is_empty() {
+                return Some(PathBuf::from(v));
+            }
+        }
+    }
+    None
 }
 
 /// Walk up from `CARGO_MANIFEST_DIR` looking for `truce.toml`.

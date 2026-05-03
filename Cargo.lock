@@ -689,6 +689,7 @@ dependencies = [
  "serde",
  "tinytemplate",
  "toml 1.1.2+spec-1.1.0",
+ "truce-build",
  "truce-shim-types",
 ]
 
@@ -6443,6 +6444,7 @@ name = "truce-test"
 version = "0.22.2"
 dependencies = [
  "png 0.18.1",
+ "truce-build",
  "truce-core",
  "truce-driver",
  "truce-params",
