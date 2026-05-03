@@ -176,6 +176,7 @@ impl<'a> AtomSequenceReader<'a> {
             let mut bar: Option<f64> = None;
             let mut bar_beat: Option<f64> = None;
             let mut beats_per_bar: Option<f64> = None;
+            let mut beat_direct: Option<f64> = None;
 
             let mut offset = header_size;
             while offset + core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>()
@@ -204,8 +205,9 @@ impl<'a> AtomSequenceReader<'a> {
                         info.time_sig_num = v.round().clamp(0.0, u8::MAX as f64) as u8;
                     } else if key == self.urid.time_beat {
                         // Non-standard but some hosts still emit it — treat
-                        // it as the absolute beat position directly.
-                        info.position_beats = v;
+                        // it as the absolute beat position directly. Stash
+                        // here and only apply if bar/barBeat aren't given.
+                        beat_direct = Some(v);
                     } else if key == self.urid.time_frame {
                         info.position_samples = v as i64;
                     } else if key == self.urid.time_speed {
@@ -234,11 +236,20 @@ impl<'a> AtomSequenceReader<'a> {
                     }
                 })
                 .unwrap_or(4.0);
+            // Precedence: spec-canonical `bar` + `barBeat` wins, then
+            // `bar` alone, then non-standard `time:beat`, then `barBeat`
+            // alone (legacy fallback).
             if let Some(b) = bar {
                 info.bar_start_beats = b * bpb;
                 if let Some(bb) = bar_beat {
                     info.position_beats = info.bar_start_beats + bb;
+                } else if let Some(bd) = beat_direct {
+                    info.position_beats = bd;
+                } else {
+                    info.position_beats = info.bar_start_beats;
                 }
+            } else if let Some(bd) = beat_direct {
+                info.position_beats = bd;
             } else if let Some(bb) = bar_beat {
                 // No bar field — best we can do is surface the intra-bar
                 // offset as the position, matching our previous behavior

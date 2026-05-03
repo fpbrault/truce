@@ -28,6 +28,7 @@ use truce_params::Params;
 // ---------------------------------------------------------------------------
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct TruceAaxDescriptor {
     pub name: *const c_char,
     pub vendor: *const c_char,
@@ -75,6 +76,7 @@ pub const AAX_CAT_SW_GENERATORS: u32 = 0x00000800;
 pub const AAX_CAT_EFFECT: u32 = 0x00002000;
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct TruceAaxParamInfo {
     pub id: u32,
     pub name: *const c_char,
@@ -137,8 +139,10 @@ struct AaxInstance<P: PluginExport> {
     /// captured at. Pro Tools calls `GetChunkSize` + `GetChunk` as a
     /// pair, and for undo-checkpointing may call the pair repeatedly
     /// without any intervening state change. Caching avoids re-running
-    /// `collect_values` + `serialize_state` on every call.
-    state_cache: std::sync::Mutex<Option<(u64, Vec<u8>)>>,
+    /// `collect_values` + `serialize_state` on every call. The blob
+    /// is `Arc`-wrapped so cache hits hand back a refcount bump
+    /// instead of copying multi-KB Vec contents per call.
+    state_cache: std::sync::Mutex<Option<(u64, std::sync::Arc<Vec<u8>>)>>,
     /// Monotonically-incrementing counter bumped by `_set_param` (audio
     /// thread) and `_load_state` (main thread). `_save_state` snapshots
     /// it before reading params and re-checks after serialization; if
@@ -190,8 +194,12 @@ pub fn register_aax<P: PluginExport>() {
         let info = P::info();
         let layout = truce_core::wrapper::first_bus_layout::<P>();
 
-        let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
-        let vendor = CString::new(info.vendor).unwrap_or_default();
+        // Leak the name/vendor CStrings via `into_raw()` — they live for
+        // the process lifetime and are owned by the static `INFO`.
+        let name = CString::new(resolved_plugin_name(&info))
+            .unwrap_or_default()
+            .into_raw();
+        let vendor = CString::new(info.vendor).unwrap_or_default().into_raw();
 
         let is_instrument = info.au_type == *b"aumu";
         let category = if info.category == PluginCategory::Instrument {
@@ -231,8 +239,8 @@ pub fn register_aax<P: PluginExport>() {
         };
 
         let descriptor = TruceAaxDescriptor {
-            name: name.as_ptr(),
-            vendor: vendor.as_ptr(),
+            name,
+            vendor,
             version: 1,
             num_inputs: aax_inputs,
             num_outputs: aax_outputs,
@@ -272,12 +280,6 @@ pub fn register_aax<P: PluginExport>() {
         let mut desc = descriptor;
         desc.num_params = params.len() as u32;
         desc.has_editor = has_editor as i32;
-        // Fix name/vendor pointers — need to leak the CStrings
-        let info = P::info();
-        let name_leaked = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
-        let vendor_leaked = CString::new(info.vendor).unwrap_or_default();
-        desc.name = name_leaked.into_raw();
-        desc.vendor = vendor_leaked.into_raw();
 
         StaticInfo {
             descriptor: desc,
@@ -484,7 +486,7 @@ macro_rules! export_aax {
 
 pub unsafe fn _get_descriptor(out: *mut TruceAaxDescriptor) {
     if let Some(info) = INFO.get() {
-        unsafe { *out = std::ptr::read(&info.descriptor) };
+        unsafe { *out = info.descriptor };
     }
 }
 
@@ -492,7 +494,7 @@ pub unsafe fn _get_param_info(index: u32, out: *mut TruceAaxParamInfo) {
     if let Some(info) = INFO.get()
         && let Some(p) = info.params.get(index as usize)
     {
-        unsafe { *out = std::ptr::read(&p.info) };
+        unsafe { *out = p.info };
     }
 }
 
@@ -574,6 +576,11 @@ pub unsafe fn _process<P: PluginExport>(
                     channel,
                     note: ev.data1,
                     velocity: ev.data2 as f32 / 127.0,
+                }),
+                0xA0 => Some(EventBody::Aftertouch {
+                    channel,
+                    note: ev.data1,
+                    pressure: ev.data2 as f32 / 127.0,
                 }),
                 0xB0 => Some(EventBody::ControlChange {
                     channel,
@@ -686,71 +693,73 @@ pub unsafe fn _save_state<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
 ) -> u32 {
-    unsafe {
-        let inst = &*(ctx as *mut AaxInstance<P>);
-        // Hot-path optimization for Pro Tools undo/snapshot flows,
-        // which call the `GetChunkSize` + `GetChunk` pair repeatedly.
-        // We use a seqlock-style protocol against the audio thread:
-        //
-        //   1. Snapshot `state_revision` *before* reading params.
-        //   2. If the cache exists and was captured at this revision,
-        //      hand back a clone — no audio update has happened since.
-        //   3. Otherwise serialize the current param snapshot.
-        //   4. Re-read `state_revision` *after* serialization. If it
-        //      didn't advance, the serialized blob is consistent with
-        //      `revision_before` and we cache it. If it did advance, an
-        //      audio-thread `_set_param` ran during our read and the
-        //      blob may not represent any single moment in time —
-        //      return it (best-effort) but don't cache, so the next
-        //      call re-serializes.
-        //
-        // The previous `AtomicBool::swap(false)` design had a window
-        // where the audio thread could re-set the flag between the
-        // swap and the read, then have its update overwritten when we
-        // wrote the cache; this counter scheme detects that case.
-        let revision_before = inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
+    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    // Hot-path optimization for Pro Tools undo/snapshot flows,
+    // which call the `GetChunkSize` + `GetChunk` pair repeatedly.
+    // We use a seqlock-style protocol against the audio thread:
+    //
+    //   1. Snapshot `state_revision` *before* reading params.
+    //   2. If the cache exists and was captured at this revision,
+    //      hand back a clone — no audio update has happened since.
+    //   3. Otherwise serialize the current param snapshot.
+    //   4. Re-read `state_revision` *after* serialization. If it
+    //      didn't advance, the serialized blob is consistent with
+    //      `revision_before` and we cache it. If it did advance, an
+    //      audio-thread `_set_param` ran during our read and the
+    //      blob may not represent any single moment in time —
+    //      return it (best-effort) but don't cache, so the next
+    //      call re-serializes.
+    //
+    // The previous `AtomicBool::swap(false)` design had a window
+    // where the audio thread could re-set the flag between the
+    // swap and the read, then have its update overwritten when we
+    // wrote the cache; this counter scheme detects that case.
+    let revision_before = inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
 
-        let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
-            let (ids, values) = inst.plugin.params().collect_values();
-            let extra = inst.plugin.save_state();
-            state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref())
-        };
+    let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
+        let (ids, values) = inst.plugin.params().collect_values();
+        let extra = inst.plugin.save_state();
+        state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref())
+    };
 
-        let blob = {
-            let mut guard = match inst.state_cache.lock() {
-                Ok(g) => g,
-                // Poisoned (shouldn't happen; save_state is single-threaded
-                // in practice). Bypass the cache rather than panicking
-                // inside the AAX callback.
-                Err(_) => {
-                    return finalize_blob(serialize_now(inst), out_data);
-                }
-            };
-            match guard.as_ref() {
-                Some((rev, blob)) if *rev == revision_before => blob.clone(),
-                _ => {
-                    let fresh = serialize_now(inst);
-                    let revision_after =
-                        inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
-                    if revision_after == revision_before {
-                        // No audio update during serialization — safe to cache.
-                        *guard = Some((revision_before, fresh.clone()));
-                    }
-                    // else: audio updated mid-read; return the blob but
-                    // skip caching so the next call re-serializes.
-                    fresh
-                }
+    let blob: std::sync::Arc<Vec<u8>> = {
+        let mut guard = match inst.state_cache.lock() {
+            Ok(g) => g,
+            // Poisoned (shouldn't happen; save_state is single-threaded
+            // in practice). Bypass the cache rather than panicking
+            // inside the AAX callback.
+            Err(_) => {
+                return unsafe { finalize_blob(&serialize_now(inst), out_data) };
             }
         };
-        finalize_blob(blob, out_data)
-    }
+        match guard.as_ref() {
+            // `Arc::clone` on a hit — refcount bump, no Vec copy.
+            Some((rev, blob)) if *rev == revision_before => std::sync::Arc::clone(blob),
+            _ => {
+                let fresh = std::sync::Arc::new(serialize_now(inst));
+                let revision_after =
+                    inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
+                if revision_after == revision_before {
+                    // No audio update during serialization — safe to cache.
+                    *guard = Some((revision_before, std::sync::Arc::clone(&fresh)));
+                }
+                // else: audio updated mid-read; return the blob but
+                // skip caching so the next call re-serializes.
+                fresh
+            }
+        }
+    };
+    unsafe { finalize_blob(&blob, out_data) }
 }
 
 /// Hand a serialized state blob to the C caller as a raw pointer +
-/// length. Caller later calls `_free_state` to drop the Box.
-unsafe fn finalize_blob(blob: Vec<u8>, out_data: *mut *mut u8) -> u32 {
+/// length. The blob is copied into a fresh boxed slice the C side will
+/// later free with `_free_state` — taking `&[u8]` rather than `Vec<u8>`
+/// lets callers hand us either a freshly-built `Vec` or a borrow into
+/// an `Arc<Vec<u8>>` without an intermediate clone.
+unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
     let len = blob.len() as u32;
-    let mut boxed = blob.into_boxed_slice();
+    let mut boxed = blob.to_vec().into_boxed_slice();
     let ptr = boxed.as_mut_ptr();
     std::mem::forget(boxed);
     unsafe { *out_data = ptr };

@@ -186,6 +186,11 @@ fn decode_midi(bytes: &[u8]) -> Option<EventBody> {
             note: bytes[1],
             velocity: bytes[2] as f32 / 127.0,
         }),
+        0xA0 if bytes.len() >= 3 => Some(EventBody::Aftertouch {
+            channel,
+            note: bytes[1],
+            pressure: bytes[2] as f32 / 127.0,
+        }),
         0xB0 if bytes.len() >= 3 => Some(EventBody::ControlChange {
             channel,
             cc: bytes[1],

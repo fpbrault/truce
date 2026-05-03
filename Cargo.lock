@@ -6355,6 +6355,7 @@ dependencies = [
  "iced_graphics",
  "iced_runtime",
  "iced_wgpu",
+ "log",
  "pollster",
  "raw-window-handle 0.5.2",
  "truce-core",

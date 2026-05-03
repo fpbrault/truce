@@ -145,6 +145,11 @@ impl EventList {
         Self { events: Vec::new() }
     }
 
+    /// Append an event. Note: `sample_offset` is **not** bounds-checked
+    /// against any block size — callers that build event lists per
+    /// block must validate `sample_offset < num_samples` themselves
+    /// (the audio thread can't recover from an out-of-range offset, so
+    /// we treat that as a contract violation rather than panicking).
     pub fn push(&mut self, event: Event) {
         self.events.push(event);
     }
@@ -153,6 +158,12 @@ impl EventList {
         self.events.clear();
     }
 
+    /// Stable sort by `sample_offset`. **Stability matters:** events
+    /// with identical sample offsets stay in the order they were
+    /// pushed, which is what plugins assume when they iterate (e.g.
+    /// "MIDI on this sample then a CC on the same sample" stays in
+    /// that order). Don't replace with `sort_unstable_by_key` — the
+    /// stability guarantee is load-bearing.
     pub fn sort(&mut self) {
         self.events.sort_by_key(|e| e.sample_offset);
     }

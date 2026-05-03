@@ -348,7 +348,6 @@ pub struct PluginDriver<P: PluginExport> {
     setup: Option<SetupFn<P>>,
 
     capture: CaptureSpec,
-    _marker: std::marker::PhantomData<P>,
 }
 
 impl<P: PluginExport> Default for PluginDriver<P> {
@@ -372,7 +371,6 @@ impl<P: PluginExport> PluginDriver<P> {
             param_overrides: Vec::new(),
             setup: None,
             capture: CaptureSpec::defaults(),
-            _marker: std::marker::PhantomData,
         }
     }
 
@@ -551,7 +549,21 @@ impl<P: PluginExport> PluginDriver<P> {
             _ => None,
         };
 
-        // Wire script SR + sort once.
+        // Re-scale event offsets if the sample rate changed between
+        // when the script was built (`.script(...)` wired its
+        // sample_rate from the driver's then-current value) and when
+        // `.run()` actually runs at the current `self.sample_rate`. A
+        // builder order like `.script(...).sample_rate(48000).run()`
+        // would otherwise emit events at the offsets computed against
+        // the old SR — `wait_ms(100)` produced `4410` at 44100 Hz but
+        // the run uses 48000, putting "100ms" at 91.875ms instead.
+        let build_sr = self.script.sample_rate;
+        if build_sr > 0.0 && (build_sr - self.sample_rate).abs() > f64::EPSILON {
+            let scale = self.sample_rate / build_sr;
+            for (off, _) in self.script.events.iter_mut() {
+                *off = ((*off as f64) * scale).round() as usize;
+            }
+        }
         self.script.sample_rate = self.sample_rate;
         self.script.events.sort_by_key(|(off, _)| *off);
         let script_events = self.script.events;
@@ -618,7 +630,7 @@ impl<P: PluginExport> PluginDriver<P> {
             let mut out_slices: Vec<&mut [f32]> =
                 out_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
             let mut audio =
-                unsafe { AudioBuffer::from_slices(&in_slices, &mut out_slices, block_len) };
+                AudioBuffer::from_slices_checked(&in_slices, &mut out_slices, block_len);
 
             // Transport snapshot for this block.
             let transport_info = TransportInfo {

@@ -65,7 +65,21 @@ pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
     P::bus_layouts()
         .first()
         .map(|l| (l.total_input_channels(), l.total_output_channels()))
-        .unwrap_or((0, 2))
+        .unwrap_or_else(|| {
+            // `bus_layouts() == vec![]` means the plugin author returned
+            // an empty layout list. `aumi` and other zero-bus plugins
+            // are supposed to return `[BusLayout::new()]` (with zero
+            // channels) instead. Falling back to `(0, 2)` here was a
+            // historical default that contradicted the doc above and
+            // hid the configuration bug. Panic loudly so the author
+            // fixes their `bus_layouts()` impl.
+            panic!(
+                "{}::bus_layouts() returned an empty list. Plugins with \
+                 no audio I/O (e.g. aumi MIDI-effects) should return \
+                 vec![BusLayout::new()] explicitly.",
+                std::any::type_name::<P>()
+            )
+        })
 }
 
 /// Pick the plugin's first bus layout, or panic with a clear message.

@@ -55,11 +55,16 @@ pub(crate) fn render_with_state(
         } else if px.alpha == 255 {
             rgba.extend_from_slice(&[px.red, px.green, px.blue, 255]);
         } else {
-            // Un-premultiply.
+            // Un-premultiply with round-to-nearest. The previous
+            // truncating integer division (floor) made screenshots
+            // 1-bit darker than `truce-gpu::WgpuBackend::read_pixels`,
+            // which rounds — producing reference-PNG drift between
+            // the two render paths.
             let a = px.alpha as u16;
-            rgba.push(((px.red as u16 * 255) / a).min(255) as u8);
-            rgba.push(((px.green as u16 * 255) / a).min(255) as u8);
-            rgba.push(((px.blue as u16 * 255) / a).min(255) as u8);
+            let half = a / 2;
+            rgba.push(((px.red as u16 * 255 + half) / a).min(255) as u8);
+            rgba.push(((px.green as u16 * 255 + half) / a).min(255) as u8);
+            rgba.push(((px.blue as u16 * 255 + half) / a).min(255) as u8);
             rgba.push(px.alpha);
         }
     }

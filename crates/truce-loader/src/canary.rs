@@ -64,28 +64,19 @@ impl AbiCanary {
     }
 
     pub fn matches(&self, other: &Self) -> bool {
-        self.trait_object_size == other.trait_object_size
-            && self.audio_buffer_size == other.audio_buffer_size
-            && self.process_context_size == other.process_context_size
-            && self.process_status_size == other.process_status_size
-            && self.event_size == other.event_size
-            && self.event_body_size == other.event_body_size
-            && self.transport_size == other.transport_size
-            && self.widget_region_size == other.widget_region_size
-            && self.theme_size == other.theme_size
-            && self.plugin_layout_size == other.plugin_layout_size
-            && self.color_size == other.color_size
-            && self.vec_u8_size == other.vec_u8_size
-            && self.option_usize_size == other.option_usize_size
-            && self.audio_buffer_align == other.audio_buffer_align
-            && self.process_status_align == other.process_status_align
-            && self.result_normal_disc == other.result_normal_disc
-            && self.result_tail_disc == other.result_tail_disc
-            && self.result_keepalive_disc == other.result_keepalive_disc
-            && self.rustc_version_hash == other.rustc_version_hash
+        self.field_diffs(other).is_empty()
     }
 
     pub fn diff_report(&self, other: &Self) -> String {
+        let diffs = self.field_diffs(other);
+        if diffs.is_empty() {
+            "no differences".into()
+        } else {
+            format!("ABI mismatches:\n{}", diffs.join("\n"))
+        }
+    }
+
+    fn field_diffs(&self, other: &Self) -> Vec<String> {
         let mut diffs = Vec::new();
         macro_rules! check {
             ($field:ident) => {
@@ -99,6 +90,9 @@ impl AbiCanary {
                 }
             };
         }
+        // Single source of truth — adding a field to AbiCanary means
+        // adding one line below; `matches` and `diff_report` both
+        // reuse this list.
         check!(trait_object_size);
         check!(audio_buffer_size);
         check!(process_context_size);
@@ -118,11 +112,7 @@ impl AbiCanary {
         check!(result_tail_disc);
         check!(result_keepalive_disc);
         check!(rustc_version_hash);
-        if diffs.is_empty() {
-            "no differences".into()
-        } else {
-            format!("ABI mismatches:\n{}", diffs.join("\n"))
-        }
+        diffs
     }
 }
 

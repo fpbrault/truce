@@ -440,45 +440,77 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
 
 /// Parse a range string like "linear(-60, 24)" into tokens.
 fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
+    let bad = |msg: String| quote! { compile_error!(#msg) };
+
     if let Some(inner) = range
         .strip_prefix("linear(")
         .and_then(|s| s.strip_suffix(')'))
     {
         let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
-        if parts.len() == 2 {
-            let min: f64 = parts[0].parse().unwrap_or(0.0);
-            let max: f64 = parts[1].parse().unwrap_or(1.0);
-            return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
+        if parts.len() != 2 {
+            return bad(format!(
+                "linear range needs two arguments `linear(min, max)`, got `linear({inner})`"
+            ));
         }
+        let Ok(min) = parts[0].parse::<f64>() else {
+            return bad(format!("linear range min `{}` is not a number", parts[0]));
+        };
+        let Ok(max) = parts[1].parse::<f64>() else {
+            return bad(format!("linear range max `{}` is not a number", parts[1]));
+        };
+        return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
     }
     if let Some(inner) = range.strip_prefix("log(").and_then(|s| s.strip_suffix(')')) {
         let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
-        if parts.len() == 2 {
-            let min: f64 = parts[0].parse().unwrap_or(20.0);
-            let max: f64 = parts[1].parse().unwrap_or(20000.0);
-            return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
+        if parts.len() != 2 {
+            return bad(format!(
+                "log range needs two arguments `log(min, max)`, got `log({inner})`"
+            ));
         }
+        let Ok(min) = parts[0].parse::<f64>() else {
+            return bad(format!("log range min `{}` is not a number", parts[0]));
+        };
+        let Ok(max) = parts[1].parse::<f64>() else {
+            return bad(format!("log range max `{}` is not a number", parts[1]));
+        };
+        return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
     }
     if let Some(inner) = range
         .strip_prefix("discrete(")
         .and_then(|s| s.strip_suffix(')'))
     {
         let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
-        if parts.len() == 2 {
-            let min: i64 = parts[0].parse().unwrap_or(0);
-            let max: i64 = parts[1].parse().unwrap_or(1);
-            return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
+        if parts.len() != 2 {
+            return bad(format!(
+                "discrete range needs two arguments `discrete(min, max)`, got `discrete({inner})`"
+            ));
         }
+        let Ok(min) = parts[0].parse::<i64>() else {
+            return bad(format!(
+                "discrete range min `{}` is not an integer",
+                parts[0]
+            ));
+        };
+        let Ok(max) = parts[1].parse::<i64>() else {
+            return bad(format!(
+                "discrete range max `{}` is not an integer",
+                parts[1]
+            ));
+        };
+        return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
     }
     if let Some(inner) = range
         .strip_prefix("enum(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        let count: usize = inner.trim().parse().unwrap_or(2);
+        let Ok(count) = inner.trim().parse::<usize>() else {
+            return bad(format!("enum count `{}` is not a non-negative integer", inner.trim()));
+        };
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
-    // Default
-    quote! { ::truce::params::ParamRange::Discrete { min: 0, max: 1 } }
+    bad(format!(
+        "unknown range `{range}` — supported: linear(min, max), log(min, max), discrete(min, max), enum(count)"
+    ))
 }
 
 /// Parse a unit string into ParamUnit tokens.
@@ -491,7 +523,18 @@ fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
         "%" => quote! { ::truce::params::ParamUnit::Percent },
         "st" => quote! { ::truce::params::ParamUnit::Semitones },
         "pan" => quote! { ::truce::params::ParamUnit::Pan },
-        _ => quote! { ::truce::params::ParamUnit::None },
+        "" | "none" => quote! { ::truce::params::ParamUnit::None },
+        // Loud compile-error rather than silent fallback. The previous
+        // version silently mapped typos like `"hz "` (trailing space)
+        // or `"DB"` (uppercase) to `ParamUnit::None`, hiding the bug
+        // until a user complained their plugin rendered "0.5" instead
+        // of "0.5 Hz" in the host.
+        other => {
+            let msg = format!(
+                "unknown unit `{other}` — supported: dB, Hz, ms, s, %, st, pan, none"
+            );
+            quote! { compile_error!(#msg) }
+        }
     }
 }
 

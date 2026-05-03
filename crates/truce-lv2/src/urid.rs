@@ -5,7 +5,6 @@
 //! code (run(), atom decoding) never has to call back into the host.
 
 use std::ffi::{CStr, CString, c_char, c_void};
-use std::ptr;
 
 use crate::types::{LV2_ATOM__SEQUENCE, LV2_MIDI__MIDI_EVENT, LV2_URID__MAP, LV2Feature};
 
@@ -116,15 +115,3 @@ impl UridMap {
 }
 
 unsafe impl Send for UridMap {}
-
-// Default UridMap = no host interning. Safe to use — id lookups return 0
-// and any event compared against them won't match.
-impl UridMap {
-    pub fn _placeholder() -> Self {
-        UridMap {
-            handle: ptr::null_mut(),
-            map_fn: None,
-            ..Default::default()
-        }
-    }
-}

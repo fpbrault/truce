@@ -219,6 +219,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         note: ev.data1,
                         velocity: ev.data2 as f32 / 127.0,
                     }),
+                    0xA0 => Some(EventBody::Aftertouch {
+                        channel,
+                        note: ev.data1,
+                        pressure: ev.data2 as f32 / 127.0,
+                    }),
                     0xB0 => Some(EventBody::ControlChange {
                         channel,
                         cc: ev.data1,
@@ -393,17 +398,33 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 ) {
     unsafe {
         let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        // `slice::from_raw_parts(null, 0)` is sound but `from_raw_parts(null, n)`
+        // for `n > 0` is UB. Hosts under stress (or buggy hosts) have
+        // been seen to call effSetChunk with `(null, non_zero)`; treat
+        // it the same as "host gave us nothing" rather than UB.
+        if data.is_null() || len == 0 {
+            inst.state_loaded = true;
+            if let Some(parent) = inst.pending_editor_parent.take() {
+                open_editor_inner(inst, parent);
+            }
+            return;
+        }
         let blob = slice::from_raw_parts(data, len as usize);
+        let mut state_changed_fired = false;
         if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
             inst.plugin.params().restore_values(&deserialized.params);
             if let Some(extra) = &deserialized.extra {
                 inst.plugin.load_state(extra);
             }
-            // Notify an already-open editor that state changed (undo, preset recall).
-            if inst.pending_editor_parent.is_none()
-                && let Some(ref mut editor) = inst.editor
-            {
+            // Notify an already-open editor that state changed (undo,
+            // preset recall). The pending-parent / editor block below
+            // handles the case where the editor isn't built yet —
+            // every successful state-load fires `state_changed` exactly
+            // once on the open editor, regardless of how many times
+            // the host calls `cb_state_load` on the same instance.
+            if let Some(ref mut editor) = inst.editor {
                 editor.state_changed();
+                state_changed_fired = true;
             }
         }
         inst.state_loaded = true;
@@ -411,6 +432,10 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // If the host opened the editor before loading state, open it now.
         if let Some(parent) = inst.pending_editor_parent.take() {
             open_editor_inner(inst, parent);
+            // The freshly-opened editor reads state at construction;
+            // we don't need to additionally fire `state_changed` if we
+            // didn't above (no open editor existed at the time).
+            let _ = state_changed_fired;
         }
     }
 }

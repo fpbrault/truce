@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::types::AtomicF64;
 
 /// Smoothing style for a parameter.
 #[derive(Clone, Copy, Debug)]
@@ -8,74 +8,64 @@ pub enum SmoothingStyle {
     Exponential(f64),
 }
 
-/// Atomic f64 for smoother fields (same pattern as AtomicF64 in types.rs).
-struct SmoothAtomic {
-    bits: AtomicU64,
-}
-
-impl SmoothAtomic {
-    fn new(value: f64) -> Self {
-        Self {
-            bits: AtomicU64::new(value.to_bits()),
-        }
-    }
-
-    #[inline]
-    fn get(&self) -> f64 {
-        f64::from_bits(self.bits.load(Ordering::Relaxed))
-    }
-
-    #[inline]
-    fn set(&self, value: f64) {
-        self.bits.store(value.to_bits(), Ordering::Relaxed);
-    }
-}
-
 /// Per-parameter smoother. All methods take `&self` for interior mutability,
 /// enabling use through `Arc<Params>`. Thread safety relies on the host
 /// guarantee that `process()` and `reset()` never run concurrently.
 pub struct Smoother {
     style: SmoothingStyle,
-    current: SmoothAtomic,
-    target: SmoothAtomic,
-    coeff: SmoothAtomic,
-    sample_rate: SmoothAtomic,
+    current: AtomicF64,
+    target: AtomicF64,
+    coeff: AtomicF64,
+    sample_rate: AtomicF64,
 }
 
 impl Smoother {
     pub fn new(style: SmoothingStyle) -> Self {
-        Self {
+        let s = Self {
             style,
-            current: SmoothAtomic::new(0.0),
-            target: SmoothAtomic::new(0.0),
-            coeff: SmoothAtomic::new(0.0),
-            sample_rate: SmoothAtomic::new(44100.0),
-        }
+            current: AtomicF64::new(0.0),
+            target: AtomicF64::new(0.0),
+            coeff: AtomicF64::new(0.0),
+            sample_rate: AtomicF64::new(44100.0),
+        };
+        // Compute the coefficient up-front against the placeholder
+        // sample rate so unit tests that exercise `FloatParam` /
+        // `Smoother` directly (without calling `set_sample_rate` first)
+        // still produce non-zero output. The host re-runs this when
+        // it calls `set_sample_rate(sr)` at activate time.
+        s.recalculate_coeff();
+        s
     }
 
     pub fn set_sample_rate(&self, sr: f64) {
-        self.sample_rate.set(sr);
+        self.sample_rate.store(sr);
         self.recalculate_coeff();
     }
 
     /// Snap to a value immediately (used on reset/init).
     pub fn snap(&self, value: f64) {
-        self.current.set(value);
-        self.target.set(value);
+        self.current.store(value);
+        self.target.store(value);
     }
 
     /// Get next smoothed value, advancing one sample.
     #[inline]
     pub fn next(&self, target: f64) -> f32 {
-        self.target.set(target);
-        let current = self.current.get();
-        let coeff = self.coeff.get();
+        self.target.store(target);
+        let current = self.current.load();
+        let coeff = self.coeff.load();
 
         let new_current = match self.style {
             SmoothingStyle::None => target,
             SmoothingStyle::Linear(_) => {
                 let diff = target - current;
-                if diff.abs() < 1e-8 {
+                // Scale the snap threshold to the value magnitude so
+                // very-small-range params don't snap prematurely and
+                // very-large-range params (e.g. 20 kHz cutoffs) don't
+                // burn cycles on differences they can't perceive.
+                // Floor at 1e-8 for targets near zero.
+                let threshold = (target.abs() * 1e-6).max(1e-8);
+                if diff.abs() < threshold {
                     target
                 } else {
                     let step = diff * coeff;
@@ -89,18 +79,18 @@ impl Smoother {
             SmoothingStyle::Exponential(_) => current + coeff * (target - current),
         };
 
-        self.current.set(new_current);
+        self.current.store(new_current);
         new_current as f32
     }
 
     /// Current smoothed value without advancing.
     #[inline]
     pub fn current(&self) -> f32 {
-        self.current.get() as f32
+        self.current.load() as f32
     }
 
     fn recalculate_coeff(&self) {
-        let sr = self.sample_rate.get();
+        let sr = self.sample_rate.load();
         let new_coeff = match self.style {
             SmoothingStyle::None => 1.0,
             SmoothingStyle::Linear(ms) => {
@@ -116,6 +106,6 @@ impl Smoother {
                 }
             }
         };
-        self.coeff.set(new_coeff);
+        self.coeff.store(new_coeff);
     }
 }

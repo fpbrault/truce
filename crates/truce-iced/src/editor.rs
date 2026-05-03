@@ -315,7 +315,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             })) {
                 Some(a) => a,
                 None => {
-                    eprintln!("[truce-iced] No suitable GPU adapter found");
+                    log::warn!("no suitable GPU adapter found");
                     self.program = Some(program);
                     return false;
                 }
@@ -331,7 +331,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         )) {
             Ok(dq) => dq,
             Err(e) => {
-                eprintln!("[truce-iced] Failed to create wgpu device: {e}");
+                log::error!("failed to create wgpu device: {e}");
                 self.program = Some(program);
                 return false;
             }
@@ -339,7 +339,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
 
         let surface_caps = surface.get_capabilities(&adapter);
         if surface_caps.formats.is_empty() {
-            eprintln!("[truce-iced] No surface formats available");
+            log::warn!("no surface formats available");
             self.program = Some(program);
             return false;
         }
@@ -409,7 +409,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             bg_color: bg,
         });
 
-        eprintln!("[truce-iced] GPU active (wgpu, {w}x{h})");
+        log::info!("gpu active (wgpu, {w}x{h})");
         true
     }
 
@@ -454,7 +454,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
                 return;
             }
             Err(e) => {
-                eprintln!("[truce-iced] Surface error: {e}");
+                log::warn!("surface error: {e}");
                 return;
             }
         };
@@ -788,7 +788,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         );
 
         self.baseview_window = Some(window);
-        eprintln!("[truce-iced] Editor opened via baseview ({w}x{h})");
+        log::info!("editor opened via baseview ({w}x{h})");
     }
 
     fn close(&mut self) {
@@ -801,7 +801,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             window.close();
         }
         self.runtime = None;
-        eprintln!("[truce-iced] Editor closed");
+        log::info!("editor closed");
     }
 
     fn idle(&mut self) {

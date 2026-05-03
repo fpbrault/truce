@@ -25,6 +25,10 @@ struct Candidate {
     plugin: Box<dyn PluginLogic>,
     hash: u32,
     mtime: SystemTime,
+    /// Path of the versioned copy in the system temp dir. Tracked so
+    /// the loader can unlink it on Drop after the matching `Library`
+    /// handle has been released.
+    temp_path: PathBuf,
 }
 
 /// Manages a hot-reloadable plugin dylib.
@@ -42,6 +46,16 @@ pub struct NativeLoader {
     watcher_stop: Arc<AtomicBool>,
     /// Old library handles — leaked to avoid TLS destructor segfaults.
     leaked_handles: Vec<Library>,
+    /// Temp-file paths corresponding 1:1 to `leaked_handles` plus the
+    /// currently active library. The dylib at each path is mmap-backed
+    /// so we can't unlink it while the matching `Library` handle is
+    /// alive. `Drop` walks both vectors in lockstep so the file is
+    /// removed only after its owning handle has been released.
+    temp_paths: Vec<PathBuf>,
+    /// Path of the temp copy currently bound to `self.library`. Moved
+    /// into `temp_paths` when the library rotates out into
+    /// `leaked_handles` (or alongside it on shutdown).
+    current_temp: Option<PathBuf>,
     load_counter: u64,
     /// Unique ID for this loader instance (used in temp file names).
     instance_id: u64,
@@ -76,6 +90,8 @@ impl NativeLoader {
             reload_pending,
             watcher_stop,
             leaked_handles: Vec::new(),
+            temp_paths: Vec::new(),
+            current_temp: None,
             load_counter: 0,
             instance_id: LOADER_ID.fetch_add(1, Ordering::Relaxed),
         };
@@ -115,20 +131,32 @@ impl NativeLoader {
             }
         };
 
+        // After this point, every early-return drops `lib` (which may
+        // close the dylib handle) and we then unlink the temp file so
+        // it doesn't accumulate in /tmp across dozens of failed reloads
+        // during iterative plugin development.
+        let cleanup_temp = |lib: Library, temp: &std::path::Path| {
+            drop(lib);
+            let _ = std::fs::remove_file(temp);
+        };
+
         let canary_fn: Symbol<fn() -> AbiCanary> = match unsafe { lib.get(b"truce_abi_canary") } {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("missing truce_abi_canary export: {e}");
+                cleanup_temp(lib, &temp);
                 return None;
             }
         };
         let dylib_canary = canary_fn();
+        drop(canary_fn);
         let shell_canary = AbiCanary::current();
         if !shell_canary.matches(&dylib_canary) {
             log::error!(
                 "ABI mismatch — rebuild both shell and logic:\n{}",
                 shell_canary.diff_report(&dylib_canary)
             );
+            cleanup_temp(lib, &temp);
             return None;
         }
 
@@ -136,30 +164,37 @@ impl NativeLoader {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("missing truce_vtable_probe export: {e}");
+                cleanup_temp(lib, &temp);
                 return None;
             }
         };
         let probe = probe_fn();
-        if let Err(msg) = verify_probe(probe.as_ref()) {
+        let probe_result = verify_probe(probe.as_ref());
+        drop(probe);
+        drop(probe_fn);
+        if let Err(msg) = probe_result {
             log::error!("vtable probe failed: {msg}");
+            cleanup_temp(lib, &temp);
             return None;
         }
-        drop(probe);
 
         let create_fn: Symbol<CreateFn> = match unsafe { lib.get(b"truce_create") } {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("missing truce_create export: {e}");
+                cleanup_temp(lib, &temp);
                 return None;
             }
         };
         let plugin = create_fn(self.params_ptr);
+        drop(create_fn);
 
         Some(Candidate {
             library: lib,
             plugin,
             hash: new_hash,
             mtime: file_mtime(&self.dylib_path),
+            temp_path: temp,
         })
     }
 
@@ -176,6 +211,7 @@ impl NativeLoader {
                 self.plugin = Some(cand.plugin);
                 self.last_hash = cand.hash;
                 self.last_modified = cand.mtime;
+                self.current_temp = Some(cand.temp_path);
                 log::info!("loaded plugin dylib: {}", self.dylib_path.display());
                 true
             }
@@ -209,12 +245,18 @@ impl NativeLoader {
         self.plugin = None;
         if let Some(old) = self.library.take() {
             self.leaked_handles.push(old);
+            if let Some(p) = self.current_temp.take() {
+                // Track the temp path alongside the leaked handle so
+                // `Drop` can remove the file once the handle is gone.
+                self.temp_paths.push(p);
+            }
         }
 
         self.library = Some(candidate.library);
         self.plugin = Some(candidate.plugin);
         self.last_hash = candidate.hash;
         self.last_modified = candidate.mtime;
+        self.current_temp = Some(candidate.temp_path);
 
         if let (Some(state), Some(plugin)) = (state, self.plugin.as_mut())
             && !state.is_empty()
@@ -268,7 +310,19 @@ impl Drop for NativeLoader {
         self.watcher_stop.store(true, Ordering::Relaxed);
         // Drop plugin before library (plugin's drop is in the library).
         self.plugin = None;
-        // Leaked handles are intentionally not closed.
+        // Leaked handles are intentionally not closed (TLS destructors
+        // in the dylib could segfault on unload). But we *can* clean
+        // up the temp files for the active handle — its plugin is gone
+        // now and there's no possibility of a future `dlsym`.
+        if let (Some(lib), Some(path)) = (self.library.take(), self.current_temp.take()) {
+            drop(lib);
+            let _ = std::fs::remove_file(&path);
+        }
+        // Files behind `leaked_handles` stay on disk until the process
+        // exits — matches the leak-the-handle policy. macOS / Linux
+        // mmap survives the unlink, but on Windows the file is locked
+        // while loaded so we cannot delete it; either way, leaving
+        // them is no worse than the leaked dlopen handle itself.
     }
 }
 

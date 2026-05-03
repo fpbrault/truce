@@ -56,10 +56,3 @@ impl TransportSlot {
     }
 }
 
-impl Default for TransportSlot {
-    fn default() -> Self {
-        Self {
-            inner: Mutex::new(None),
-        }
-    }
-}

@@ -11,9 +11,14 @@ impl ParamRange {
     /// Map a plain value to 0.0–1.0.
     pub fn normalize(&self, plain: f64) -> f64 {
         match self {
-            Self::Linear { min, max } => ((plain - min) / (max - min)).clamp(0.0, 1.0),
+            Self::Linear { min, max } => {
+                if max == min {
+                    return 0.0;
+                }
+                ((plain - min) / (max - min)).clamp(0.0, 1.0)
+            }
             Self::Logarithmic { min, max } => {
-                if *min <= 0.0 || *max <= 0.0 {
+                if *min <= 0.0 || *max <= 0.0 || min == max {
                     return 0.0;
                 }
                 let min_log = min.ln();
@@ -21,6 +26,9 @@ impl ParamRange {
                 ((plain.ln() - min_log) / (max_log - min_log)).clamp(0.0, 1.0)
             }
             Self::Discrete { min, max } => {
+                if max == min {
+                    return 0.0;
+                }
                 ((plain - *min as f64) / (*max as f64 - *min as f64)).clamp(0.0, 1.0)
             }
             Self::Enum { count } => {
@@ -38,7 +46,10 @@ impl ParamRange {
         match self {
             Self::Linear { min, max } => min + n * (max - min),
             Self::Logarithmic { min, max } => {
-                if *min <= 0.0 || *max <= 0.0 {
+                // Match `normalize`'s asymmetric handling of bad bounds:
+                // if either end is non-positive or the range is empty,
+                // both directions collapse to `min` (round-trip stable).
+                if *min <= 0.0 || *max <= 0.0 || min == max {
                     return *min;
                 }
                 let min_log = min.ln();
@@ -74,7 +85,11 @@ impl ParamRange {
     pub fn step_count(&self) -> u32 {
         match self {
             Self::Linear { .. } | Self::Logarithmic { .. } => 0,
-            Self::Discrete { min, max } => (*max - *min) as u32,
+            // `max - min` as `i64` is fine, but `as u32` wraps for
+            // `min > max` or steps > u32::MAX. Saturate instead so a
+            // mis-specified `Discrete` range can't produce a bogus
+            // step count that callers might index with.
+            Self::Discrete { min, max } => (max.saturating_sub(*min)).max(0).min(u32::MAX as i64) as u32,
             Self::Enum { count } => (*count as u32).saturating_sub(1),
         }
     }

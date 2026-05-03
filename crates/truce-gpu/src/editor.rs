@@ -233,8 +233,11 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         let mut backend = WgpuBackend::headless(lw, lh, scale)?;
         inner.render_to(&mut backend);
         let pixels = backend.read_pixels();
-        let phys_w = (lw as f32 * scale) as u32;
-        let phys_h = (lh as f32 * scale) as u32;
+        // Round (rather than truncate) so non-integer DPI scales produce
+        // the same physical resolution the WgpuBackend internally
+        // computed when sizing the headless target.
+        let phys_w = (lw as f32 * scale).round() as u32;
+        let phys_h = (lh as f32 * scale).round() as u32;
         Some((pixels, phys_w, phys_h))
     }
 }

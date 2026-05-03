@@ -316,19 +316,22 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
     let infos = plugin.params().param_infos();
     for pi in &infos {
         let steps = pi.range.step_count();
-        let test_values: Vec<f64> = if steps > 0 {
-            // Discrete param: test exact step positions
-            (0..=steps).map(|i| i as f64 / steps as f64).collect()
+        let (test_values, tolerance) = if steps > 0 {
+            // Discrete param: test exact step positions. Tolerance
+            // sized for one-step quantization (half a step).
+            let v: Vec<f64> = (0..=steps).map(|i| i as f64 / steps as f64).collect();
+            (v, (0.5 / steps as f64).max(1e-6))
         } else {
-            // Continuous param: test arbitrary positions
-            vec![0.0, 0.25, 0.5, 0.75, 1.0]
+            // Continuous param: tighter tolerance — round-trip should
+            // be exact modulo `clamp(0, 1)` and float rounding.
+            (vec![0.0, 0.25, 0.5, 0.75, 1.0], 1e-6)
         };
         for &norm in &test_values {
             plugin.params().set_normalized(pi.id, norm);
             let got = plugin.params().get_normalized(pi.id).unwrap();
             assert!(
-                (got - norm).abs() < 0.02,
-                "Param {} ({}) normalized round-trip: set {norm}, got {got}",
+                (got - norm).abs() <= tolerance,
+                "Param {} ({}) normalized round-trip: set {norm}, got {got} (tol {tolerance})",
                 pi.id,
                 pi.name
             );
@@ -371,6 +374,13 @@ pub fn assert_no_duplicate_param_ids<P: PluginExport>() {
 // ---------------------------------------------------------------------------
 
 /// Assert corrupt state data doesn't crash.
+///
+/// Each blob in the corpus must either deserialize cleanly OR return
+/// `None` — and `restore_values` on a successful parse must not panic.
+/// The previous form passed trivially when `deserialize_state` returned
+/// `None` for everything (which would happen if the implementation
+/// regressed to "always reject"), so we now also exercise at least one
+/// valid blob to prove the code path under test is reachable.
 pub fn assert_corrupt_state_no_crash<P: PluginExport>() {
     let info = P::info();
     let hash = state::hash_plugin_id(info.clap_id);
@@ -383,16 +393,26 @@ pub fn assert_corrupt_state_no_crash<P: PluginExport>() {
     ];
 
     let plugin = P::create();
-    for (i, blob) in garbage.iter().enumerate() {
+    for blob in &garbage {
         let result = state::deserialize_state(blob, hash);
         // Should return None (not panic)
         if let Some(d) = result {
             // Even if it parses, loading shouldn't crash
             plugin.params().restore_values(&d.params);
         }
-        // If we get here without panic, the test passes
-        let _ = i; // suppress unused
     }
+
+    // Sanity check: a freshly-snapshotted state for *this* plugin must
+    // round-trip. Without this, the loop above would silently pass
+    // even if `deserialize_state` was hard-broken (always-`None`).
+    let mut snapshot_plugin = P::create();
+    snapshot_plugin.init();
+    let blob = state::snapshot_plugin(&snapshot_plugin);
+    assert!(
+        state::deserialize_state(&blob, hash).is_some(),
+        "deserialize_state rejected a blob produced by snapshot_plugin — \
+         the corruption test would pass trivially under this regression"
+    );
 }
 
 /// Assert empty state data doesn't crash.
@@ -487,7 +507,6 @@ pub struct ScreenshotTest<P: PluginExport> {
     param_overrides: Vec<(u32, f32)>,
     /// Optional plugin mutation between `P::create()` and render.
     setup: Option<SetupFn<P>>,
-    _marker: std::marker::PhantomData<P>,
 }
 
 impl<P: PluginExport> ScreenshotTest<P> {
@@ -512,7 +531,6 @@ impl<P: PluginExport> ScreenshotTest<P> {
             state_bytes: None,
             param_overrides: Vec::new(),
             setup: None,
-            _marker: std::marker::PhantomData,
         }
     }
 
@@ -645,10 +663,7 @@ fn compare_against_reference(
     max_diff_pixels: usize,
     pixel_threshold: u8,
 ) {
-    // Render artifact lives in `target/screenshots/` — gitignored,
-    // colocated with whatever workspace owns the test invocation.
     let render_dir = workspace_target_screenshots_dir();
-    std::fs::create_dir_all(&render_dir).ok();
     let render_path = render_dir.join(
         ref_path
             .file_name()
@@ -656,25 +671,31 @@ fn compare_against_reference(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("screenshot.png")),
     );
-    save_png(&render_path, pixels, width, height);
 
     if !ref_path.exists() {
+        // No baseline — save the current render so the user can
+        // inspect it before committing.
+        std::fs::create_dir_all(&render_dir).ok();
+        save_png(&render_path, pixels, width, height);
         panic!(
-            "No screenshot baseline at {ref}.\n\
-             Create one with: cargo truce screenshot --out {ref}\n\
+            "No screenshot baseline at {ref}. Just-rendered PNG saved at {rendered}.\n\
+             Create the baseline with: cargo truce screenshot --out {ref}\n\
              then inspect the rendered PNG and commit it.",
             ref = ref_path.display(),
+            rendered = render_path.display(),
         );
     }
 
     let (ref_pixels, ref_w, ref_h) = truce_core::screenshot::load_png(ref_path);
-    assert_eq!(
-        (width, height),
-        (ref_w, ref_h),
-        "GUI size changed: current {width}x{height}, reference {ref_w}x{ref_h}. \
-         Delete {} to regenerate.",
-        ref_path.display()
-    );
+    if (width, height) != (ref_w, ref_h) {
+        std::fs::create_dir_all(&render_dir).ok();
+        save_png(&render_path, pixels, width, height);
+        panic!(
+            "GUI size changed: current {width}x{height}, reference {ref_w}x{ref_h}. \
+             Delete {} to regenerate.",
+            ref_path.display()
+        );
+    }
 
     // Walk pixel-by-pixel (4 bytes each), counting only pixels whose
     // max RGBA channel delta exceeds `pixel_threshold`. Threshold = 0
@@ -697,6 +718,10 @@ fn compare_against_reference(
     }
 
     if diff_count > max_diff_pixels {
+        // Save the failing render only on failure — successful tests
+        // no longer eat I/O writing artifacts they don't need.
+        std::fs::create_dir_all(&render_dir).ok();
+        save_png(&render_path, pixels, width, height);
         panic!(
             "GUI screenshot mismatch: {diff_count} pixels differ above threshold {pixel_threshold} \
              (max allowed: {max_diff_pixels}; largest channel delta seen: {max_delta_seen}).\n\
