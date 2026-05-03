@@ -9,9 +9,10 @@
 //! ("—") for unknown fields in the readout.
 
 use truce::prelude::*;
+use truce_core::editor::EditorContext;
+use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_knob, param_selector};
-use truce_egui::{EguiEditor, ParamState};
 use truce_gui::font;
 
 const WINDOW_W: u32 = 270;
@@ -179,14 +180,14 @@ impl PluginLogic for Tremolo {
 
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
-            EguiEditor::new((WINDOW_W, WINDOW_H), tremolo_ui)
+            EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), tremolo_ui)
                 .with_visuals(truce_egui::theme::dark())
                 .with_font(font::JETBRAINS_MONO),
         ))
     }
 }
 
-fn tremolo_ui(ctx: &egui::Context, state: &ParamState) {
+fn tremolo_ui(ctx: &egui::Context, state: &EditorContext<TremoloParams>) {
     egui::TopBottomPanel::top("header")
         .exact_height(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
@@ -223,8 +224,8 @@ fn tremolo_ui(ctx: &egui::Context, state: &ParamState) {
 
 /// Read the editor's transport closure and render a compact readout
 /// like `▶ 128.0 BPM • 4/4 • ♩ 12.25` (or `■ — BPM` when stopped).
-fn draw_transport_readout(ui: &mut egui::Ui, state: &ParamState) {
-    let transport = state.context().transport();
+fn draw_transport_readout(ui: &mut egui::Ui, state: &EditorContext<TremoloParams>) {
+    let transport = state.transport();
     let line = format_transport(transport.as_ref());
 
     ui.horizontal(|ui| {

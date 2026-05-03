@@ -1,7 +1,8 @@
 use truce::prelude::*;
+use truce_core::editor::EditorContext;
+use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{level_meter, param_knob, param_xy_pad};
-use truce_egui::{EguiEditor, ParamState};
 use truce_gui::font;
 
 const WINDOW_W: u32 = 176;
@@ -83,14 +84,14 @@ impl PluginLogic for GainEgui {
 
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
-            EguiEditor::new((WINDOW_W, WINDOW_H), gain_ui)
+            EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
                 .with_visuals(truce_egui::theme::dark())
                 .with_font(font::JETBRAINS_MONO),
         ))
     }
 }
 
-fn gain_ui(ctx: &egui::Context, state: &ParamState) {
+fn gain_ui(ctx: &egui::Context, state: &EditorContext<GainParams>) {
     egui::TopBottomPanel::top("header")
         .exact_height(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))

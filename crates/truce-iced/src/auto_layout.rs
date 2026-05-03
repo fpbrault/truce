@@ -12,7 +12,7 @@ use truce_gui::layout::{GridLayout, WidgetKind};
 use truce_params::Params;
 
 use crate::param_message::Message;
-use crate::param_state::ParamState;
+use crate::param_cache::ParamCache;
 use crate::theme;
 use crate::widgets;
 
@@ -22,7 +22,7 @@ use crate::widgets;
 /// truce-iced generates the full UI automatically.
 pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
     layout: &GridLayout,
-    params: &'a ParamState<P>,
+    params: &'a ParamCache<P>,
 ) -> Element<'a, Message<M>> {
     let max_row = layout
         .widgets

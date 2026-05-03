@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_slint::{ParamState, SlintEditor};
+use truce_slint::{EditorContext, SlintEditor, SyncFn};
 
 slint::include_modules!();
 
@@ -78,24 +78,25 @@ impl PluginLogic for GainSlint {
 
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(SlintEditor::new(
+            self.params.clone(),
             (176, 290),
-            |state: ParamState| {
+            |state: EditorContext<GainParams>| -> SyncFn<GainParams> {
                 let ui = GainUi::new().unwrap();
 
                 // UI → host
                 let s = state.clone();
-                ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
+                ui.on_gain_changed(move |v| s.automate(P::Gain, v as f64));
                 let s = state.clone();
-                ui.on_pan_changed(move |v| s.set_immediate(P::Pan, v as f64));
+                ui.on_pan_changed(move |v| s.automate(P::Pan, v as f64));
 
                 // host → UI (params + meters)
-                Box::new(move |state: &ParamState| {
-                    ui.set_gain(state.get(P::Gain) as f32);
-                    ui.set_pan(state.get(P::Pan) as f32);
-                    ui.set_gain_text(slint::SharedString::from(state.format(P::Gain)));
-                    ui.set_pan_text(slint::SharedString::from(state.format(P::Pan)));
-                    ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
-                    ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
+                Box::new(move |state: &EditorContext<GainParams>| {
+                    ui.set_gain(state.get_param(P::Gain) as f32);
+                    ui.set_pan(state.get_param(P::Pan) as f32);
+                    ui.set_gain_text(slint::SharedString::from(state.format_param(P::Gain)));
+                    ui.set_pan_text(slint::SharedString::from(state.format_param(P::Pan)));
+                    ui.set_meter_left(meter_display(state.get_meter(P::MeterLeft)));
+                    ui.set_meter_right(meter_display(state.get_meter(P::MeterRight)));
                 })
             },
         )))

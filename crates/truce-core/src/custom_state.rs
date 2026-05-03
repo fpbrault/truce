@@ -208,8 +208,11 @@ pub struct StateBinding<T: State> {
 }
 
 impl<T: State> StateBinding<T> {
-    /// Create a new binding from an editor context.
-    pub fn new(context: &EditorContext) -> Self {
+    /// Create a new binding from an editor context. Generic over the
+    /// context's `<P>` since `StateBinding` cares only about the
+    /// `get_state` / `set_state` channel on the underlying
+    /// `EditorBridge`, never about parameter typing.
+    pub fn new<P: ?Sized>(context: &EditorContext<P>) -> Self {
         let bridge_for_get = Arc::clone(context.bridge());
         let bridge_for_set = Arc::clone(context.bridge());
         let mut binding = Self {

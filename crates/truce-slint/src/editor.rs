@@ -19,38 +19,19 @@ use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_params::Params;
 
 use crate::blit::BlitPipeline;
-use crate::param_state::ParamState;
 use crate::platform::{self, ParentWindow};
 
-/// Slint-based editor implementing truce's `Editor` trait.
-///
-/// The developer provides a setup closure that:
-/// 1. Creates the Slint component
-/// 2. Wires Slint callbacks to `ParamState` for UI→host parameter changes
-/// 3. Returns a per-frame sync closure for host→UI parameter updates
-///
-/// # Example
-///
-/// ```ignore
-/// SlintEditor::new((400, 300), |state: ParamState| {
-///     let ui = MyPluginUi::new().unwrap();
-///     let s = state.clone();
-///     ui.on_gain_changed(move |v| s.set_immediate(0, v as f64));
-///     Box::new(move |state: &ParamState| {
-///         ui.set_gain(state.get(0) as f32);
-///     })
-/// })
-/// ```
-/// Per-frame sync closure: takes the current `ParamState` and updates the
+/// Per-frame sync closure: takes the current `EditorContext` and updates the
 /// Slint component's properties. Returned by the editor's `setup` callback.
 ///
 /// Deliberately not `Send`-bounded — Slint's generated UI types contain
 /// `Rc<...>` and are `!Send`, so they can only be captured here (the
 /// closure stays on whichever thread `setup` was called on, namely
 /// baseview's window thread or the screenshot caller's thread).
-pub type SyncFn = Box<dyn Fn(&ParamState)>;
+pub type SyncFn<P> = Box<dyn Fn(&EditorContext<P>)>;
 
 /// Editor `setup` callback: called every time the host re-opens the editor,
 /// creates the Slint component, and returns a `SyncFn` that the editor calls
@@ -62,8 +43,8 @@ pub type SyncFn = Box<dyn Fn(&ParamState)>;
 /// that `Arc<dyn Fn(...) + Send + Sync>` is itself `Send`, which is in
 /// turn required because `SlintEditor: Send` (the `Editor` trait
 /// demands it). It does **not** propagate to the `SyncFn` the closure
-/// returns: the inner `Box<dyn Fn(&ParamState)>` is unbounded and is
-/// where Slint's `!Send` UI types are meant to live.
+/// returns: the inner `Box<dyn Fn(&EditorContext<P>)>` is unbounded
+/// and is where Slint's `!Send` UI types are meant to live.
 ///
 /// In practice this means the setup closure must:
 /// - Construct the Slint component **inside** the closure body
@@ -78,15 +59,35 @@ pub type SyncFn = Box<dyn Fn(&ParamState)>;
 /// Both the setup-time outer call and the per-frame returned call run
 /// on the same window thread, so no thread crossing actually happens
 /// for the Slint values themselves.
-pub type SetupFn = Arc<dyn Fn(ParamState) -> SyncFn + Send + Sync>;
+pub type SetupFn<P> = Arc<dyn Fn(EditorContext<P>) -> SyncFn<P> + Send + Sync>;
 
-pub struct SlintEditor {
+/// Slint-based editor implementing truce's `Editor` trait.
+///
+/// The developer provides a setup closure that:
+/// 1. Creates the Slint component
+/// 2. Wires Slint callbacks to `EditorContext` for UI→host parameter changes
+/// 3. Returns a per-frame sync closure for host→UI parameter updates
+///
+/// # Example
+///
+/// ```ignore
+/// SlintEditor::new(params, (400, 300), |state: EditorContext<MyParams>| {
+///     let ui = MyPluginUi::new().unwrap();
+///     let s = state.clone();
+///     ui.on_gain_changed(move |v| s.automate(0u32, v as f64));
+///     Box::new(move |state: &EditorContext<MyParams>| {
+///         ui.set_gain(state.get_param(0u32) as f32);
+///     })
+/// })
+/// ```
+pub struct SlintEditor<P: Params + ?Sized> {
+    params: Arc<P>,
     size: (u32, u32),
     /// Called on each open() to create the Slint component and param bindings.
     /// Must be `Fn` (not `FnOnce`) because the host may close and re-open
     /// the editor window multiple times. See [`SetupFn`] for the
     /// `Send + Sync` rationale.
-    setup: SetupFn,
+    setup: SetupFn<P>,
     window: Option<baseview::WindowHandle>,
 }
 
@@ -99,19 +100,21 @@ pub struct SlintEditor {
 // trait object; this impl asserts that the type doesn't escape its
 // thread in practice. The `setup` closure is already `Send +
 // Sync`-bounded at construction.
-unsafe impl Send for SlintEditor {}
+unsafe impl<P: Params + ?Sized> Send for SlintEditor<P> {}
 
-impl SlintEditor {
+impl<P: Params + 'static> SlintEditor<P> {
     /// Create a Slint editor.
     ///
     /// `size` is the window size in logical points. `setup` is called
     /// on the UI thread each time the editor opens. It must create a
     /// fresh Slint component and return a per-frame sync closure.
     pub fn new(
+        params: Arc<P>,
         size: (u32, u32),
-        setup: impl Fn(ParamState) -> Box<dyn Fn(&ParamState)> + Send + Sync + 'static,
+        setup: impl Fn(EditorContext<P>) -> SyncFn<P> + Send + Sync + 'static,
     ) -> Self {
         Self {
+            params,
             size,
             setup: Arc::new(setup),
             window: None,
@@ -123,10 +126,10 @@ impl SlintEditor {
 // Baseview WindowHandler
 // ---------------------------------------------------------------------------
 
-struct SlintWindowHandler {
+struct SlintWindowHandler<P: Params + ?Sized> {
     slint_window: Rc<MinimalSoftwareWindow>,
-    sync_fn: Box<dyn Fn(&ParamState)>,
-    state: ParamState,
+    sync_fn: SyncFn<P>,
+    state: EditorContext<P>,
     blit: Option<BlitPipeline>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -141,7 +144,7 @@ struct SlintWindowHandler {
     last_pos: LogicalPosition,
 }
 
-impl WindowHandler for SlintWindowHandler {
+impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut Window) {
         // 1. Drive Slint timers/animations
         slint::platform::update_timers_and_animations();
@@ -293,7 +296,7 @@ impl WindowHandler for SlintWindowHandler {
 // Editor trait
 // ---------------------------------------------------------------------------
 
-impl Editor for SlintEditor {
+impl<P: Params + 'static> Editor for SlintEditor<P> {
     fn size(&self) -> (u32, u32) {
         self.size
     }
@@ -303,7 +306,7 @@ impl Editor for SlintEditor {
 
         let (lw, lh) = self.size;
         let scale = platform::query_backing_scale(&parent);
-        let state = ParamState::new(context);
+        let typed_ctx = context.with_params(self.params.clone());
         let setup = Arc::clone(&self.setup);
 
         // --- baseview + wgpu ---
@@ -389,12 +392,12 @@ impl Editor for SlintEditor {
 
                 // Developer creates the Slint component here — it attaches
                 // to slint_window via create_window_adapter().
-                let sync_fn = setup(state.clone());
+                let sync_fn = setup(typed_ctx.clone());
 
-                SlintWindowHandler {
+                SlintWindowHandler::<P> {
                     slint_window,
                     sync_fn,
-                    state,
+                    state: typed_ctx,
                     blit: None,
                     device,
                     queue,
@@ -423,10 +426,11 @@ impl Editor for SlintEditor {
         // baseview drives its own frame loop.
     }
 
-    fn screenshot(&mut self, params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
-        let state = ParamState::from_params(params);
+    fn screenshot(&mut self, _params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
+        let state = truce_core::editor::for_test_params(self.params.clone() as Arc<dyn Params>)
+            .with_params(self.params.clone());
         let setup = Arc::clone(&self.setup);
-        Some(crate::screenshot::render_with_state(
+        Some(crate::screenshot::render_with_state::<P>(
             &state,
             self.size,
             2.0,

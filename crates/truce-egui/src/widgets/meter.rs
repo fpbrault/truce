@@ -1,8 +1,7 @@
 //! Level meter (display-only) reading truce meter values.
 
+use truce_core::editor::EditorContext;
 use truce_core::meter_display;
-
-use crate::ParamState;
 
 /// Show a vertical level meter reading truce meter values.
 ///
@@ -15,9 +14,9 @@ const BAR_GAP: f32 = 2.0;
 const BAR_PAD: f32 = 0.0;
 const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(42, 42, 48);
 
-pub fn level_meter(
+pub fn level_meter<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &ParamState,
+    state: &EditorContext<P>,
     meter_ids: &[impl Into<u32> + Copy],
     height: f32,
 ) -> egui::Response {
@@ -38,7 +37,7 @@ pub fn level_meter(
         let bar_bottom = bar_top + bar_h;
 
         for (i, &id) in meter_ids.iter().enumerate() {
-            let raw = state.meter(id);
+            let raw = state.get_meter(id);
             let display = meter_display(raw);
             let x = start_x + i as f32 * (bar_w + BAR_GAP);
 

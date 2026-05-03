@@ -17,9 +17,8 @@ use truce_params::Params;
 type IcedRenderer = iced_wgpu::Renderer;
 
 use crate::auto_layout;
-use crate::editor_handle::EditorHandle;
+use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
-use crate::param_state::ParamState;
 
 // ---------------------------------------------------------------------------
 // IcedPlugin trait — what plugin authors implement
@@ -41,14 +40,14 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
     fn update(
         &mut self,
         _message: Message<Self::Message>,
-        _params: &ParamState<P>,
-        _ctx: &EditorHandle,
+        _params: &ParamCache<P>,
+        _ctx: &EditorContext<P>,
     ) -> Task<Message<Self::Message>> {
         Task::none()
     }
 
     /// Build the view.
-    fn view<'a>(&'a self, params: &'a ParamState<P>) -> iced::Element<'a, Message<Self::Message>>;
+    fn view<'a>(&'a self, params: &'a ParamCache<P>) -> iced::Element<'a, Message<Self::Message>>;
 
     /// Custom theme (default: truce dark).
     fn theme(&self) -> iced::Theme {
@@ -81,7 +80,7 @@ impl<P: Params> IcedPlugin<P> for AutoPlugin {
         panic!("AutoPlugin must be created via IcedEditor::from_layout");
     }
 
-    fn view<'a>(&'a self, params: &'a ParamState<P>) -> iced::Element<'a, Message<()>> {
+    fn view<'a>(&'a self, params: &'a ParamCache<P>) -> iced::Element<'a, Message<()>> {
         auto_layout::auto_view(&self.layout, params)
     }
 }
@@ -90,19 +89,19 @@ impl<P: Params> IcedPlugin<P> for AutoPlugin {
 // IcedProgram — adapts IcedPlugin to iced_runtime::Program
 // ---------------------------------------------------------------------------
 
-pub(crate) struct IcedProgram<P: Params, M: IcedPlugin<P>> {
+pub(crate) struct IcedProgram<P: Params + 'static, M: IcedPlugin<P>> {
     pub(crate) plugin: M,
-    pub(crate) param_state: ParamState<P>,
-    pub(crate) editor_handle: EditorHandle,
+    pub(crate) param_cache: ParamCache<P>,
+    pub(crate) context: EditorContext<P>,
     pub(crate) meter_ids: Vec<u32>,
 }
 
-impl<P: Params, M: IcedPlugin<P>> IcedProgram<P, M> {
+impl<P: Params + 'static, M: IcedPlugin<P>> IcedProgram<P, M> {
     fn apply_param_message(&self, msg: &ParamMessage) {
         match msg {
-            ParamMessage::BeginEdit(id) => self.editor_handle.begin_edit(*id),
-            ParamMessage::SetNormalized(id, val) => self.editor_handle.set_param(*id, *val),
-            ParamMessage::EndEdit(id) => self.editor_handle.end_edit(*id),
+            ParamMessage::BeginEdit(id) => self.context.begin_edit(*id),
+            ParamMessage::SetNormalized(id, val) => self.context.set_param(*id, *val),
+            ParamMessage::EndEdit(id) => self.context.end_edit(*id),
             ParamMessage::Batch(msgs) => {
                 for m in msgs {
                     self.apply_param_message(m);
@@ -126,19 +125,17 @@ impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgra
         match message {
             Message::Tick => {
                 // Sync params and meters from atomics
-                self.param_state.sync(self.editor_handle.context());
-                self.param_state
-                    .sync_meters(self.editor_handle.context(), &self.meter_ids);
+                self.param_cache.sync(&self.context);
+                self.param_cache
+                    .sync_meters(&self.context, &self.meter_ids);
                 Task::none()
             }
-            other => self
-                .plugin
-                .update(other, &self.param_state, &self.editor_handle),
+            other => self.plugin.update(other, &self.param_cache, &self.context),
         }
     }
 
     fn view(&self) -> iced::Element<'_, Self::Message> {
-        self.plugin.view(&self.param_state)
+        self.plugin.view(&self.param_cache)
     }
 }
 
@@ -749,18 +746,18 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             self.params.clone()
         );
 
-        let mut param_state = ParamState::new(self.params.clone());
+        let mut param_cache = ParamCache::new(self.params.clone());
         if let Some((family, _)) = self.font {
-            param_state.set_font(iced::Font {
+            param_cache.set_font(iced::Font {
                 family: iced::font::Family::Name(family),
                 ..iced::Font::DEFAULT
             });
         }
-        let editor_handle = EditorHandle::new(context);
+        let typed_ctx = context.with_params(self.params.clone());
         let program = IcedProgram {
             plugin,
-            param_state,
-            editor_handle,
+            param_cache,
+            context: typed_ctx,
             meter_ids: self.meter_ids.clone(),
         };
 

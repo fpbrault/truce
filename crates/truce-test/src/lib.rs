@@ -52,6 +52,11 @@ pub use truce_driver::{
 
 pub mod assertions;
 
+/// Re-export of [`truce_core::editor::EditorContext::for_test_params`]
+/// for plugin authors who want to drive snapshot tests directly
+/// without the `assert_screenshot!` macro.
+pub use truce_core::editor::for_test_params;
+
 /// Construct a [`PluginDriver`] for the given plugin type, with
 /// `manifest_dir` wired to the calling crate's `CARGO_MANIFEST_DIR`.
 /// That lets `.state_file("test_states/foo.pluginstate")` resolve

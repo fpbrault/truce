@@ -435,11 +435,13 @@ where
     let params_write = Arc::clone(&params);
     let params_plain = Arc::clone(&params);
     let params_format = Arc::clone(&params);
+    let params_for_ctx = Arc::clone(&params);
     let plugin_meter = Arc::clone(plugin);
     let plugin_save = Arc::clone(plugin);
     let plugin_load = Arc::clone(plugin);
 
-    EditorContext::from_closures(ClosureBridge {
+    EditorContext::from_closures(
+        ClosureBridge {
         begin_edit: Box::new(|_id| {}),
         set_param: Box::new(move |id, norm| {
             params_write.set_normalized(id, norm);
@@ -471,5 +473,7 @@ where
             }
         }),
         transport: Box::new(move || Some(transport_read.snapshot())),
-    })
+        },
+        params_for_ctx,
+    )
 }

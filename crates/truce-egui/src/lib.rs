@@ -8,20 +8,20 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use truce_egui::{EguiEditor, ParamState};
+//! use truce_egui::EguiEditor;
 //! use truce_egui::widgets::{param_knob, param_slider};
+//! use truce_core::editor::EditorContext;
 //!
-//! let editor = EguiEditor::new((800, 600), |ctx: &egui::Context, state: &ParamState| {
+//! let editor = EguiEditor::new(params, (800, 600), |ctx: &egui::Context, state: &EditorContext<MyParams>| {
 //!     egui::CentralPanel::default().show(ctx, |ui| {
 //!         ui.heading("My Plugin");
-//!         param_slider(ui, state, 0);
+//!         param_slider(ui, state, 0u32);
 //!     });
 //! });
 //! ```
 
 pub mod editor;
 pub mod font;
-pub mod param_state;
 pub mod platform;
 pub mod renderer;
 mod screenshot;
@@ -29,4 +29,3 @@ pub mod theme;
 pub mod widgets;
 
 pub use editor::{EditorUi, EguiEditor};
-pub use param_state::ParamState;

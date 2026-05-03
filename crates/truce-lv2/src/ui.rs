@@ -708,6 +708,7 @@ fn build_editor_context<P: PluginExport>(
     let params_get_plain = params.clone();
     let params_format = params.clone();
     let params_set = params.clone();
+    let params_for_ctx = params.clone();
     let meter_slots_for_get = meter_slots.clone();
 
     // The write_function is a plain extern "C" fn — bitcast-safe to move
@@ -715,7 +716,8 @@ fn build_editor_context<P: PluginExport>(
     // raw-pointer Send issues.
     let write_set = write_function;
 
-    EditorContext::from_closures(ClosureBridge {
+    EditorContext::from_closures(
+        ClosureBridge {
         begin_edit: Box::new(|_id: u32| {}),
         end_edit: Box::new(|_id: u32| {}),
         request_resize: Box::new(|_w: u32, _h: u32| false),
@@ -756,7 +758,9 @@ fn build_editor_context<P: PluginExport>(
         // the notify-out port. `port_event` decodes them and writes the
         // slot — this closure just reads the latest value.
         transport: Box::new(move || transport_slot.read()),
-    })
+        },
+        params_for_ctx,
+    )
 }
 
 /// Build a static UI descriptor for this plugin type. Monomorphized per P.

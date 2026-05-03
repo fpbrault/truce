@@ -8,7 +8,7 @@ use iced::widget::canvas::{self, Event, Frame, Geometry, LineCap, Path, Stroke, 
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, alignment, mouse};
 
 use crate::param_message::{Message, ParamMessage};
-use crate::param_state::ParamState;
+use crate::param_cache::ParamCache;
 use crate::theme;
 use truce_params::Params;
 
@@ -28,7 +28,7 @@ pub struct KnobWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> KnobWidget<'a, M> {
-    pub fn new(id: impl Into<u32>, params: &'a ParamState<impl Params>) -> Self {
+    pub fn new(id: impl Into<u32>, params: &'a ParamCache<impl Params>) -> Self {
         let id = id.into();
         Self {
             id,

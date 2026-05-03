@@ -1,6 +1,6 @@
 //! XY pad control bound to two truce parameters.
 
-use crate::ParamState;
+use truce_core::editor::EditorContext;
 
 const LABEL_H: f32 = 16.0;
 const DOT_RADIUS: f32 = 5.0;
@@ -10,9 +10,9 @@ const DOT_RADIUS: f32 = 5.0;
 /// `id_x` controls the horizontal axis (0=left, 1=right).
 /// `id_y` controls the vertical axis (0=bottom, 1=top).
 /// Drag anywhere in the pad to set both values simultaneously.
-pub fn param_xy_pad(
+pub fn param_xy_pad<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &ParamState,
+    state: &EditorContext<P>,
     id_x: impl Into<u32>,
     id_y: impl Into<u32>,
     label: &str,
@@ -26,24 +26,24 @@ pub fn param_xy_pad(
 
     let pad_rect = egui::Rect::from_min_size(rect.min, egui::vec2(width, height));
 
-    let mut vx = state.get(id_x) as f32;
-    let mut vy = state.get(id_y) as f32;
+    let mut vx = state.get_param(id_x) as f32;
+    let mut vy = state.get_param(id_y) as f32;
 
     if response.drag_started() {
-        state.begin_gesture(id_x);
-        state.begin_gesture(id_y);
+        state.begin_edit(id_x);
+        state.begin_edit(id_y);
     }
     if (response.dragged() || response.drag_started())
         && let Some(pos) = response.interact_pointer_pos()
     {
         vx = ((pos.x - pad_rect.left()) / pad_rect.width()).clamp(0.0, 1.0);
         vy = 1.0 - ((pos.y - pad_rect.top()) / pad_rect.height()).clamp(0.0, 1.0);
-        state.set_value(id_x, vx as f64);
-        state.set_value(id_y, vy as f64);
+        state.set_param(id_x, vx as f64);
+        state.set_param(id_y, vy as f64);
     }
     if response.drag_stopped() {
-        state.end_gesture(id_x);
-        state.end_gesture(id_y);
+        state.end_edit(id_x);
+        state.end_edit(id_y);
     }
 
     if ui.is_rect_visible(rect) {

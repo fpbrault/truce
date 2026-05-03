@@ -421,8 +421,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_get = params.clone();
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
+            let params_for_ctx = params.clone();
             let transport_slot = inst.transport_slot.clone();
-            let context = EditorContext::from_closures(ClosureBridge {
+            let context = EditorContext::from_closures(
+                ClosureBridge {
                 begin_edit: Box::new(|_id| {}),
                 set_param: Box::new(move |id, value| {
                     params_for_set.set_normalized(id, value);
@@ -457,7 +459,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     plugin.load_state(&data);
                 }),
                 transport: Box::new(move || transport_slot.read()),
-            });
+                },
+                params_for_ctx,
+            );
             let handle = RawWindowHandle::AppKit(parent);
             editor.open(handle, context);
         }

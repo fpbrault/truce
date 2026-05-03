@@ -8,17 +8,20 @@
 use slint::PhysicalSize;
 use slint::platform::software_renderer::PremultipliedRgbaColor;
 
-use crate::param_state::ParamState;
+use truce_core::editor::EditorContext;
+use truce_params::Params;
+
+use crate::editor::SyncFn;
 use crate::platform;
 
 /// Headless render path shared by `SlintEditor::screenshot()` and any
 /// future ad-hoc callers in this crate. Kept `pub(crate)` — external
 /// callers should go through the `Editor::screenshot()` trait.
-pub(crate) fn render_with_state(
-    state: &ParamState,
+pub(crate) fn render_with_state<P: Params + ?Sized>(
+    state: &EditorContext<P>,
     size: (u32, u32),
     scale: f32,
-    setup: impl FnOnce(&ParamState) -> Box<dyn Fn(&ParamState)>,
+    setup: impl FnOnce(&EditorContext<P>) -> SyncFn<P>,
 ) -> (Vec<u8>, u32, u32) {
     platform::ensure_platform();
 

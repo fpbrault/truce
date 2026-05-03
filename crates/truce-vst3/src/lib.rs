@@ -606,8 +606,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_get = params.clone();
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
+            let params_for_ctx = params.clone();
             let transport_slot = inst.transport_slot.clone();
-            let context = EditorContext::from_closures(ClosureBridge {
+            let context = EditorContext::from_closures(
+                ClosureBridge {
                 begin_edit: Box::new(move |id| {
                     ffi::truce_vst3_begin_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
                 }),
@@ -645,7 +647,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     plugin.load_state(&data);
                 }),
                 transport: Box::new(move || transport_slot.read()),
-            });
+                },
+                params_for_ctx,
+            );
             #[cfg(target_os = "macos")]
             let handle = RawWindowHandle::AppKit(parent);
             #[cfg(target_os = "windows")]

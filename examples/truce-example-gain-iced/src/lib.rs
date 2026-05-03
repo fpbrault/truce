@@ -12,7 +12,7 @@ const WINDOW_H: u32 = 290;
 
 use truce::prelude::*;
 use truce_gui::font;
-use truce_iced::{IcedEditor, IcedPlugin, IntoElement, Message, ParamState, knob, meter, xy_pad};
+use truce_iced::{IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, knob, meter, xy_pad};
 
 // --- Parameters ---
 
@@ -52,7 +52,7 @@ impl IcedPlugin<GainParams> for GainUi {
         Self
     }
 
-    fn view<'a>(&'a self, params: &'a ParamState<GainParams>) -> Element<'a, Message<GainMsg>> {
+    fn view<'a>(&'a self, params: &'a ParamCache<GainParams>) -> Element<'a, Message<GainMsg>> {
         let pad = 10.0;
         let gap = 10.0;
 

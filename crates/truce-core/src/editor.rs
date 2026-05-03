@@ -1,4 +1,7 @@
+use std::ops::Deref;
 use std::sync::Arc;
+
+use truce_params::Params;
 
 use crate::events::TransportInfo;
 
@@ -259,31 +262,42 @@ impl EditorBridge for ClosureBridge {
     }
 }
 
-/// Context passed to [`Editor::open`]. Carries an `Arc<dyn EditorBridge>`
-/// — one trait-object handle covering all 11 host/plugin operations
-/// the editor needs. Inherent methods delegate to the bridge so call
-/// sites read as `ctx.set_param(id, v)` rather than the older
-/// `(ctx.set_param)(id, v)` closure-deref form.
+/// Context passed to [`Editor::open`]. Carries:
 ///
-/// `Clone` is cheap (Arc refcount bump). Editors that need to hand
-/// the context to UI worker threads or animation timers clone freely.
-#[derive(Clone)]
-pub struct EditorContext {
+/// - An `Arc<dyn EditorBridge>` — the host-plugin protocol surface
+///   (begin/set/end edit, request_resize, get_state, transport, …).
+/// - An `Arc<P>` typed parameter store — plugin authors `Deref` to
+///   `&P` and read fields directly: `state.gain.smoothed_next()`.
+///
+/// The default `P = dyn Params` keeps the trait-object boundary
+/// (`Editor::open(ctx: EditorContext)`) one-typed; editor crates
+/// that want typed access (truce-egui, truce-slint, truce-iced) carry
+/// their own `<P>` and reconstitute `EditorContext<P>` internally
+/// via [`EditorContext::with_params`] using the `Arc<P>` they stored
+/// at editor construction.
+///
+/// `Clone` is two refcount bumps (bridge + params). Editors that need
+/// to hand the context to UI worker threads or animation timers clone
+/// freely.
+pub struct EditorContext<P: ?Sized = dyn Params> {
     bridge: Arc<dyn EditorBridge>,
+    params: Arc<P>,
 }
 
-impl EditorContext {
-    /// Build a context from any [`EditorBridge`] implementor.
-    pub fn new(bridge: Arc<dyn EditorBridge>) -> Self {
-        Self { bridge }
-    }
-
-    /// Build a context from a [`ClosureBridge`]. Convenience for
-    /// format wrappers that compose state inline via closures.
-    pub fn from_closures(bridge: ClosureBridge) -> Self {
+impl<P: ?Sized> Clone for EditorContext<P> {
+    fn clone(&self) -> Self {
         Self {
-            bridge: Arc::new(bridge),
+            bridge: Arc::clone(&self.bridge),
+            params: Arc::clone(&self.params),
         }
+    }
+}
+
+impl<P: ?Sized> EditorContext<P> {
+    /// Build a typed context from any [`EditorBridge`] implementor and
+    /// the plugin's typed param store.
+    pub fn new(bridge: Arc<dyn EditorBridge>, params: Arc<P>) -> Self {
+        Self { bridge, params }
     }
 
     /// Access the underlying bridge handle. Editors that want to clone
@@ -293,29 +307,56 @@ impl EditorContext {
         &self.bridge
     }
 
-    pub fn begin_edit(&self, id: u32) {
+    /// Access the typed param store as an `Arc`. Use this when you
+    /// need to capture the params in a `'static` closure (e.g. an iced
+    /// `Subscription` or a worker thread).
+    pub fn params(&self) -> &Arc<P> {
+        &self.params
+    }
+
+    /// Replace the param-store generic parameter while reusing the
+    /// same bridge. Used by editor crates that receive the dyn-erased
+    /// `EditorContext` from [`Editor::open`] and want the typed
+    /// `EditorContext<P>` for their UI closure.
+    pub fn with_params<Q: ?Sized>(&self, params: Arc<Q>) -> EditorContext<Q> {
+        EditorContext {
+            bridge: Arc::clone(&self.bridge),
+            params,
+        }
+    }
+
+    pub fn begin_edit(&self, id: impl Into<u32>) {
+        self.bridge.begin_edit(id.into());
+    }
+    pub fn set_param(&self, id: impl Into<u32>, normalized: f64) {
+        self.bridge.set_param(id.into(), normalized);
+    }
+    pub fn end_edit(&self, id: impl Into<u32>) {
+        self.bridge.end_edit(id.into());
+    }
+    /// Begin + set + end in one call. Use for click-to-toggle widgets
+    /// and similar single-shot edits where the gesture and the value
+    /// arrive together.
+    pub fn automate(&self, id: impl Into<u32>, normalized: f64) {
+        let id = id.into();
         self.bridge.begin_edit(id);
-    }
-    pub fn set_param(&self, id: u32, normalized: f64) {
         self.bridge.set_param(id, normalized);
-    }
-    pub fn end_edit(&self, id: u32) {
         self.bridge.end_edit(id);
     }
     pub fn request_resize(&self, w: u32, h: u32) -> bool {
         self.bridge.request_resize(w, h)
     }
-    pub fn get_param(&self, id: u32) -> f64 {
-        self.bridge.get_param(id)
+    pub fn get_param(&self, id: impl Into<u32>) -> f64 {
+        self.bridge.get_param(id.into())
     }
-    pub fn get_param_plain(&self, id: u32) -> f64 {
-        self.bridge.get_param_plain(id)
+    pub fn get_param_plain(&self, id: impl Into<u32>) -> f64 {
+        self.bridge.get_param_plain(id.into())
     }
-    pub fn format_param(&self, id: u32) -> String {
-        self.bridge.format_param(id)
+    pub fn format_param(&self, id: impl Into<u32>) -> String {
+        self.bridge.format_param(id.into())
     }
-    pub fn get_meter(&self, id: u32) -> f32 {
-        self.bridge.get_meter(id)
+    pub fn get_meter(&self, id: impl Into<u32>) -> f32 {
+        self.bridge.get_meter(id.into())
     }
     pub fn get_state(&self) -> Vec<u8> {
         self.bridge.get_state()
@@ -326,4 +367,73 @@ impl EditorContext {
     pub fn transport(&self) -> Option<TransportInfo> {
         self.bridge.transport()
     }
+}
+
+impl EditorContext<dyn Params> {
+    /// Build a dyn-erased context from a [`ClosureBridge`]. Convenience
+    /// for format wrappers that compose state inline via closures.
+    pub fn from_closures(bridge: ClosureBridge, params: Arc<dyn Params>) -> Self {
+        Self {
+            bridge: Arc::new(bridge),
+            params,
+        }
+    }
+}
+
+impl<P: Params + 'static> EditorContext<P> {
+    /// Drop the typed `<P>` and return the dyn-erased context that
+    /// crosses the `Editor::open` trait-object boundary.
+    pub fn dyn_erase(self) -> EditorContext<dyn Params> {
+        EditorContext {
+            bridge: self.bridge,
+            params: self.params as Arc<dyn Params>,
+        }
+    }
+}
+
+/// Plugin authors read parameter fields directly via `Deref`:
+/// `state.gain.smoothed_next()`, `state.bypass.value()`. The `state`
+/// here is `&EditorContext<MyParams>` and `Deref::Target = MyParams`.
+impl<P: ?Sized> Deref for EditorContext<P> {
+    type Target = P;
+    fn deref(&self) -> &P {
+        &self.params
+    }
+}
+
+/// Build an [`EditorContext`] backed only by `params`. All write
+/// closures are no-ops; reads delegate to the params `Arc`; the
+/// transport reports the deterministic
+/// [`crate::events::TransportInfo::for_screenshot`] state so
+/// screenshot tests stay reproducible across CI runs.
+///
+/// Used by editor backends inside their `Editor::screenshot()` impl,
+/// and re-exported from `truce-test` for plugin authors that want to
+/// drive snapshot tests directly.
+pub fn for_test_params(params: Arc<dyn Params>) -> EditorContext<dyn Params> {
+    let p_get = Arc::clone(&params);
+    let p_plain = Arc::clone(&params);
+    let p_fmt = Arc::clone(&params);
+    let transport = TransportInfo::for_screenshot();
+    EditorContext::from_closures(
+        ClosureBridge {
+            begin_edit: Box::new(|_| {}),
+            set_param: Box::new(|_, _| {}),
+            end_edit: Box::new(|_| {}),
+            request_resize: Box::new(|_, _| false),
+            get_param: Box::new(move |id| p_get.get_normalized(id).unwrap_or(0.5)),
+            get_param_plain: Box::new(move |id| p_plain.get_plain(id).unwrap_or(0.0)),
+            format_param: Box::new(move |id| {
+                let plain = p_fmt.get_plain(id).unwrap_or(0.0);
+                p_fmt
+                    .format_value(id, plain)
+                    .unwrap_or_else(|| format!("{plain:.2}"))
+            }),
+            get_meter: Box::new(|_| 0.0),
+            get_state: Box::new(Vec::new),
+            set_state: Box::new(|_| {}),
+            transport: Box::new(move || Some(transport.clone())),
+        },
+        params,
+    )
 }

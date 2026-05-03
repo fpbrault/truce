@@ -7,7 +7,7 @@ use iced::Element;
 use iced::widget::{column, text, toggler};
 
 use crate::param_message::{Message, ParamMessage};
-use crate::param_state::ParamState;
+use crate::param_cache::ParamCache;
 use crate::theme;
 use truce_params::Params;
 
@@ -20,7 +20,7 @@ pub struct ToggleWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> ToggleWidget<'a, M> {
-    pub fn new(id: impl Into<u32>, params: &'a ParamState<impl Params>) -> Self {
+    pub fn new(id: impl Into<u32>, params: &'a ParamCache<impl Params>) -> Self {
         let id = id.into();
         Self {
             id,

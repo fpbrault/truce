@@ -1,26 +1,26 @@
 //! Toggle switch bound to a truce parameter.
 
-use crate::ParamState;
+use truce_core::editor::EditorContext;
 
 /// Show a toggle switch bound to a truce boolean parameter.
 ///
 /// Clicking toggles between 0.0 (off) and 1.0 (on). Uses the immediate
 /// gesture protocol (begin + set + end in one shot).
-pub fn param_toggle(
+pub fn param_toggle<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &ParamState,
+    state: &EditorContext<P>,
     id: impl Into<u32>,
     label: &str,
 ) -> egui::Response {
     let id = id.into();
-    let is_on = state.get(id) > 0.5;
+    let is_on = state.get_param(id) > 0.5;
 
     let desired = egui::vec2(60.0, 30.0);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
 
     if response.clicked() {
         let new_value = if is_on { 0.0 } else { 1.0 };
-        state.set_immediate(id, new_value);
+        state.automate(id, new_value);
     }
 
     if ui.is_rect_visible(rect) {

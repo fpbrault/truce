@@ -1,8 +1,10 @@
-//! Cached parameter state bridge between atomic params and iced widgets.
+//! Cached parameter state for iced widgets.
 //!
-//! `ParamState` reads parameter values from the atomic `Params` store once
-//! per tick (~60fps) and caches them as plain values that iced widgets can
-//! read without atomic loads on every frame.
+//! `ParamCache` reads parameter values from the atomic `Params` store
+//! once per tick (~60fps) and caches them as plain values that iced
+//! widgets can read without atomic loads on every frame. The cache is
+//! polled from `IcedProgram::update(Message::Tick)` against the
+//! `EditorContext` the editor was opened with.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +13,12 @@ use truce_core::editor::EditorContext;
 use truce_params::Params;
 
 /// Cached parameter values for iced widget consumption.
-pub struct ParamState<P: Params> {
+///
+/// Distinct from `EditorContext<P>`: that is the host-plugin protocol
+/// surface (live atomic reads, host gestures); this is a per-tick
+/// snapshot used inside `Canvas::draw` closures where iced doesn't
+/// allow side effects.
+pub struct ParamCache<P: Params + ?Sized> {
     params: Arc<P>,
     /// Param IDs (cached at construction so each `sync` doesn't reallocate
     /// `Vec<ParamInfo>`). The set is fixed for the lifetime of the editor —
@@ -27,8 +34,8 @@ pub struct ParamState<P: Params> {
     font: iced::Font,
 }
 
-impl<P: Params> ParamState<P> {
-    /// Create a new ParamState, populating initial values from the params.
+impl<P: Params + ?Sized> ParamCache<P> {
+    /// Create a new ParamCache, populating initial values from the params.
     pub fn new(params: Arc<P>) -> Self {
         let infos = params.param_infos();
         let ids: Vec<u32> = infos.iter().map(|i| i.id).collect();
@@ -92,7 +99,7 @@ impl<P: Params> ParamState<P> {
     }
 
     /// Poll all params from the editor context, return IDs that changed.
-    pub(crate) fn sync(&mut self, ctx: &EditorContext) -> Vec<u32> {
+    pub(crate) fn sync<Q: ?Sized>(&mut self, ctx: &EditorContext<Q>) -> Vec<u32> {
         let mut changed = Vec::new();
         for &id in &self.ids {
             let new_val = ctx.get_param(id);
@@ -107,7 +114,7 @@ impl<P: Params> ParamState<P> {
     }
 
     /// Poll meter values from the editor context.
-    pub(crate) fn sync_meters(&mut self, ctx: &EditorContext, meter_ids: &[u32]) {
+    pub(crate) fn sync_meters<Q: ?Sized>(&mut self, ctx: &EditorContext<Q>, meter_ids: &[u32]) {
         for &id in meter_ids {
             self.meters.insert(id, ctx.get_meter(id));
         }

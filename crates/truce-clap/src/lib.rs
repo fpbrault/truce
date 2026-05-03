@@ -1418,8 +1418,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
+        let params_for_ctx = params.clone();
         let transport_slot = data.transport_slot.clone();
-        let context = EditorContext::from_closures(ClosureBridge {
+        let context = EditorContext::from_closures(
+            ClosureBridge {
             begin_edit: Box::new(move |id| {
                 gui_changes.push(GuiParamChange::GestureBegin(id));
                 request_flush();
@@ -1461,7 +1463,9 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 plugin.load_state(&data);
             }),
             transport: Box::new(move || transport_slot.read()),
-        });
+            },
+            params_for_ctx,
+        );
 
         #[cfg(target_os = "macos")]
         let handle = RawWindowHandle::AppKit(parent_ptr);

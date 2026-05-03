@@ -28,19 +28,20 @@
 
 pub mod auto_layout;
 pub mod editor;
-pub mod editor_handle;
 pub mod font;
+pub mod param_cache;
 pub mod param_message;
-pub mod param_state;
 mod screenshot;
 pub mod theme;
 pub mod widgets;
 
 // Re-export primary types for convenience.
 pub use editor::{AutoPlugin, IcedEditor, IcedPlugin};
-pub use editor_handle::EditorHandle;
+pub use param_cache::ParamCache;
 pub use param_message::{Message, ParamMessage};
-pub use param_state::ParamState;
+// Re-export `EditorContext` so plugin authors can use it without a direct
+// truce-core dependency.
+pub use truce_core::editor::EditorContext;
 
 // Re-export widget helper functions.
 pub use widgets::{knob, meter, param_selector, param_slider, param_toggle, xy_pad};

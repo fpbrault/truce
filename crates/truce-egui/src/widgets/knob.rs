@@ -1,6 +1,6 @@
 //! Rotary knob control bound to a truce parameter.
 
-use crate::ParamState;
+use truce_core::editor::EditorContext;
 
 const KNOB_SIZE: f32 = 60.0;
 const KNOB_TOTAL_H: f32 = 82.0;
@@ -15,9 +15,9 @@ const SWEEP: f32 = std::f32::consts::FRAC_PI_2 * 3.0; // 270° = 1.5π
 ///
 /// Drag vertically to adjust the value. The knob displays a 270-degree
 /// arc with a value indicator and the parameter's formatted value text.
-pub fn param_knob(
+pub fn param_knob<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &ParamState,
+    state: &EditorContext<P>,
     id: impl Into<u32>,
     label: &str,
 ) -> egui::Response {
@@ -25,19 +25,19 @@ pub fn param_knob(
     let desired = egui::vec2(KNOB_SIZE, KNOB_TOTAL_H);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::drag());
 
-    let mut value = state.get(id) as f32;
+    let mut value = state.get_param(id) as f32;
 
     // Handle vertical drag
     if response.drag_started() {
-        state.begin_gesture(id);
+        state.begin_edit(id);
     }
     if response.dragged() {
         let delta = -response.drag_delta().y / 150.0;
         value = (value + delta).clamp(0.0, 1.0);
-        state.set_value(id, value as f64);
+        state.set_param(id, value as f64);
     }
     if response.drag_stopped() {
-        state.end_gesture(id);
+        state.end_edit(id);
     }
 
     // Paint
@@ -87,7 +87,7 @@ pub fn param_knob(
         painter.line_segment([center, pointer_end], egui::Stroke::new(2.0, pointer_color));
 
         // Value text (below knob arc)
-        let value_text = state.format(id);
+        let value_text = state.format_param(id);
         let value_y = center.y + KNOB_RADIUS + 2.0;
         painter.text(
             egui::pos2(rect.center().x, value_y),

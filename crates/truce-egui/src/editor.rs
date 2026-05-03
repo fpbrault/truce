@@ -3,13 +3,14 @@
 //! On `open()`, creates a baseview child window and a wgpu surface.
 //! Each `on_frame()` tick, runs the egui frame, tessellates, and renders.
 
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_params::Params;
 
-use crate::param_state::ParamState;
 use crate::platform::{ParentWindow, query_backing_scale};
 use crate::renderer::EguiRenderer;
 
@@ -17,45 +18,49 @@ use crate::renderer::EguiRenderer;
 ///
 /// Implement this for complex UIs that need internal state. For simple
 /// closure-based UIs, use `EguiEditor::new()` instead.
-pub trait EditorUi: Send {
-    fn ui(&mut self, ctx: &egui::Context, state: &ParamState);
+pub trait EditorUi<P: Params + ?Sized>: Send {
+    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<P>);
 
     /// Called once when the editor window opens. Use to create StateBindings.
-    fn opened(&mut self, _state: &ParamState) {}
+    fn opened(&mut self, _state: &EditorContext<P>) {}
 
     /// Plugin state was restored (preset recall, undo, session load).
     /// Re-read any cached custom state. Parameter values update automatically.
-    fn state_changed(&mut self, _state: &ParamState) {}
+    fn state_changed(&mut self, _state: &EditorContext<P>) {}
 }
 
-impl<F: FnMut(&egui::Context, &ParamState) + Send> EditorUi for F {
-    fn ui(&mut self, ctx: &egui::Context, state: &ParamState) {
+impl<P: Params + ?Sized, F: FnMut(&egui::Context, &EditorContext<P>) + Send> EditorUi<P> for F {
+    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<P>) {
         self(ctx, state);
     }
 }
 
 /// No-op placeholder for `mem::replace` during builder chain.
-struct NopUi;
-impl EditorUi for NopUi {
-    fn ui(&mut self, _ctx: &egui::Context, _state: &ParamState) {}
+struct NopUi<P: ?Sized>(PhantomData<fn(&P)>);
+impl<P: Params + ?Sized> EditorUi<P> for NopUi<P> {
+    fn ui(&mut self, _ctx: &egui::Context, _state: &EditorContext<P>) {}
 }
+
+/// Type alias to keep the `WithStateChanged` field signature within
+/// clippy's complexity budget without losing the `Send` bound.
+type StateChangedFn<P> = Box<dyn FnMut(&EditorContext<P>) + Send>;
 
 /// Wraps an EditorUi with an additional state_changed callback.
-struct WithStateChanged {
-    inner: Box<dyn EditorUi>,
-    on_changed: Box<dyn FnMut(&ParamState) + Send>,
+struct WithStateChanged<P: Params + ?Sized> {
+    inner: Box<dyn EditorUi<P>>,
+    on_changed: StateChangedFn<P>,
 }
 
-impl EditorUi for WithStateChanged {
-    fn ui(&mut self, ctx: &egui::Context, state: &ParamState) {
+impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
+    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<P>) {
         self.inner.ui(ctx, state);
     }
 
-    fn opened(&mut self, state: &ParamState) {
+    fn opened(&mut self, state: &EditorContext<P>) {
         self.inner.opened(state);
     }
 
-    fn state_changed(&mut self, state: &ParamState) {
+    fn state_changed(&mut self, state: &EditorContext<P>) {
         (self.on_changed)(state);
     }
 }
@@ -65,17 +70,24 @@ impl EditorUi for WithStateChanged {
 /// Owns the egui context, wgpu renderer, and baseview window. On each
 /// `on_frame()` tick, runs the egui frame, executes the user's UI function,
 /// tessellates, and presents via egui-wgpu.
-pub struct EguiEditor {
+///
+/// Generic in the plugin's `Params` type so the closure / struct UI can
+/// `Deref` straight to typed parameter fields:
+/// `state.gain.smoothed_next()`, `state.bypass.value()`. Stores its own
+/// `Arc<P>` from construction; rebuilds the typed `EditorContext<P>`
+/// every time the host opens the window via [`EditorContext::with_params`].
+pub struct EguiEditor<P: Params + ?Sized> {
+    params: Arc<P>,
     size: (u32, u32),
     /// Shared with the baseview WindowHandler so it survives open/close cycles.
-    ui: Arc<Mutex<Box<dyn EditorUi>>>,
+    ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
     font: Option<&'static [u8]>,
     scale_factor: Option<f64>,
     /// Active baseview window handle — exists only while editor is open.
     window: Option<baseview::WindowHandle>,
-    /// EditorContext stored at open() for state_changed forwarding.
-    context: Option<EditorContext>,
+    /// Typed editor context stored at open() for state_changed forwarding.
+    context: Option<EditorContext<P>>,
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -86,17 +98,19 @@ pub struct EguiEditor {
 // `Editor` trait requires `Send` so the editor can live behind a
 // trait object; this impl asserts that the type doesn't escape its
 // thread in practice.
-unsafe impl Send for EguiEditor {}
+unsafe impl<P: Params + ?Sized> Send for EguiEditor<P> {}
 
-impl EguiEditor {
+impl<P: Params + 'static> EguiEditor<P> {
     /// Create an egui editor with a closure-based UI.
     ///
     /// `size` is the initial window size in pixels (physical).
     pub fn new(
+        params: Arc<P>,
         size: (u32, u32),
-        ui_fn: impl FnMut(&egui::Context, &ParamState) + Send + 'static,
+        ui_fn: impl FnMut(&egui::Context, &EditorContext<P>) + Send + 'static,
     ) -> Self {
         Self {
+            params,
             size,
             ui: Arc::new(Mutex::new(Box::new(ui_fn))),
             visuals: None,
@@ -108,8 +122,9 @@ impl EguiEditor {
     }
 
     /// Create an egui editor with a trait-based UI (for stateful UIs).
-    pub fn with_ui(size: (u32, u32), ui: impl EditorUi + 'static) -> Self {
+    pub fn with_ui(params: Arc<P>, size: (u32, u32), ui: impl EditorUi<P> + 'static) -> Self {
         Self {
+            params,
             size,
             ui: Arc::new(Mutex::new(Box::new(ui))),
             visuals: None,
@@ -126,19 +141,22 @@ impl EguiEditor {
     /// API (`EguiEditor::with_ui`), implement `EditorUi::state_changed` instead.
     ///
     /// ```ignore
-    /// EguiEditor::new((400, 300), |ctx, state| { /* ui */ })
+    /// EguiEditor::new(params, (400, 300), |ctx, state| { /* ui */ })
     ///     .on_state_changed(|state| { /* re-read cached state */ })
     /// ```
-    pub fn on_state_changed(mut self, f: impl FnMut(&ParamState) + Send + 'static) -> Self {
+    pub fn on_state_changed(
+        mut self,
+        f: impl FnMut(&EditorContext<P>) + Send + 'static,
+    ) -> Self {
         let old = std::mem::replace(
             &mut self.ui,
-            Arc::new(Mutex::new(Box::new(NopUi) as Box<dyn EditorUi>)),
+            Arc::new(Mutex::new(Box::new(NopUi::<P>(PhantomData)) as Box<dyn EditorUi<P>>)),
         );
         let inner = Arc::try_unwrap(old)
             .ok()
             .and_then(|m| m.into_inner().ok())
             .expect("on_state_changed must be called during construction, not after open()");
-        self.ui = Arc::new(Mutex::new(Box::new(WithStateChanged {
+        self.ui = Arc::new(Mutex::new(Box::new(WithStateChanged::<P> {
             inner,
             on_changed: Box::new(f),
         })));
@@ -155,7 +173,7 @@ impl EguiEditor {
     /// Set a custom default font (TrueType data).
     ///
     /// ```ignore
-    /// EguiEditor::new((400, 300), my_ui)
+    /// EguiEditor::new(params, (400, 300), my_ui)
     ///     .with_font(truce_gui::font::JETBRAINS_MONO)
     /// ```
     pub fn with_font(mut self, font_data: &'static [u8]) -> Self {
@@ -168,9 +186,9 @@ impl EguiEditor {
 // Baseview WindowHandler — owns the egui frame loop + wgpu renderer
 // ---------------------------------------------------------------------------
 
-struct EguiWindowHandler {
-    ui: Arc<Mutex<Box<dyn EditorUi>>>,
-    param_state: ParamState,
+struct EguiWindowHandler<P: Params + ?Sized> {
+    ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
+    context: EditorContext<P>,
     egui_ctx: egui::Context,
     renderer: Option<EguiRenderer>,
     pending_events: Vec<egui::Event>,
@@ -181,7 +199,7 @@ struct EguiWindowHandler {
     last_cursor_pos: egui::Pos2,
 }
 
-impl EguiWindowHandler {
+impl<P: Params + ?Sized> EguiWindowHandler<P> {
     fn run_frame(&mut self) {
         let renderer = match self.renderer.as_mut() {
             Some(r) => r,
@@ -209,10 +227,10 @@ impl EguiWindowHandler {
             .native_pixels_per_point = Some(ppp);
 
         let ui = &self.ui;
-        let param_state = &self.param_state;
+        let context = &self.context;
         let output = self.egui_ctx.run(raw_input, |ctx| {
             if let Ok(mut ui_fn) = ui.lock() {
-                ui_fn.ui(ctx, param_state);
+                ui_fn.ui(ctx, context);
             }
         });
 
@@ -228,7 +246,7 @@ impl EguiWindowHandler {
     }
 }
 
-impl WindowHandler for EguiWindowHandler {
+impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut Window) {
         self.run_frame();
     }
@@ -468,13 +486,16 @@ fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
 // Editor trait implementation
 // ---------------------------------------------------------------------------
 
-impl Editor for EguiEditor {
+impl<P: Params + 'static> Editor for EguiEditor<P> {
     fn size(&self) -> (u32, u32) {
         self.size
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
-        self.context = Some(context.clone());
+        // Re-type the dyn-erased context to `EditorContext<P>` using
+        // the Arc<P> we stored at construction.
+        let typed_ctx = context.with_params(self.params.clone());
+        self.context = Some(typed_ctx.clone());
         let egui_ctx = egui::Context::default();
         let visuals = self.visuals.clone().unwrap_or_else(crate::theme::dark);
         egui_ctx.set_visuals(visuals.clone());
@@ -485,9 +506,8 @@ impl Editor for EguiEditor {
 
         // --- baseview + wgpu ---
         let ui = Arc::clone(&self.ui);
-        let param_state = ParamState::new(context);
         if let Ok(mut ui_fn) = ui.lock() {
-            ui_fn.opened(&param_state);
+            ui_fn.opened(&typed_ctx);
         }
         let size = self.size;
 
@@ -498,6 +518,7 @@ impl Editor for EguiEditor {
         };
 
         let parent_wrapper = ParentWindow(parent);
+        let handler_ctx = typed_ctx.clone();
 
         let window = baseview::Window::open_parented(
             &parent_wrapper,
@@ -515,9 +536,9 @@ impl Editor for EguiEditor {
                 // Request continuous repainting (plugin GUIs need it for meters)
                 egui_ctx.request_repaint();
 
-                EguiWindowHandler {
+                EguiWindowHandler::<P> {
                     ui,
-                    param_state,
+                    context: handler_ctx,
                     egui_ctx,
                     renderer,
                     pending_events: Vec::new(),
@@ -557,22 +578,22 @@ impl Editor for EguiEditor {
     }
 
     fn state_changed(&mut self) {
-        if let Some(ref ctx) = self.context {
-            let ps = ParamState::new(ctx.clone());
-            if let Ok(mut ui) = self.ui.lock() {
-                ui.state_changed(&ps);
-            }
+        if let Some(ref ctx) = self.context
+            && let Ok(mut ui) = self.ui.lock()
+        {
+            ui.state_changed(ctx);
         }
     }
 
-    fn screenshot(&mut self, params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
-        let state = ParamState::from_params(params);
+    fn screenshot(&mut self, _params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
+        let context = truce_core::editor::for_test_params(self.params.clone() as Arc<dyn Params>)
+            .with_params(self.params.clone());
         // Pin to 2.0 so screenshots are reproducible across hosts and CI
         // regardless of any prior `set_scale_factor` from a live window.
         let pixels_per_point = 2.0_f32;
         let ui = Arc::clone(&self.ui);
-        crate::screenshot::render_with_state(
-            &state,
+        crate::screenshot::render_with_state::<P>(
+            &context,
             self.size,
             pixels_per_point,
             self.font,

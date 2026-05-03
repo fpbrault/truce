@@ -11,7 +11,7 @@ use truce_core::meter_display;
 use truce_params::Params;
 
 use crate::param_message::Message;
-use crate::param_state::ParamState;
+use crate::param_cache::ParamCache;
 use crate::theme;
 
 /// Builder for a multi-channel level meter.
@@ -25,7 +25,7 @@ pub struct MeterWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
-    pub fn new(ids: &[u32], params: &'a ParamState<impl Params>) -> Self {
+    pub fn new(ids: &[u32], params: &'a ParamCache<impl Params>) -> Self {
         let values: Vec<f32> = ids.iter().map(|&id| params.meter(id)).collect();
         Self {
             values,

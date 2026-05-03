@@ -3,14 +3,15 @@
 //! Provides `SlintEditor`, which implements `truce_core::Editor` using
 //! Slint's software renderer + baseview + wgpu. Developers write their UI
 //! in `.slint` markup (compiled at build time) and wire parameters through
-//! `ParamState`.
+//! `EditorContext<P>`.
 //!
 //! # Usage
 //!
 //! ```ignore
-//! use truce_slint::{SlintEditor, ParamState};
+//! use truce_slint::SlintEditor;
+//! use truce_core::editor::EditorContext;
 //!
-//! SlintEditor::new((400, 300), |state: ParamState| {
+//! SlintEditor::new(params, (400, 300), |state: EditorContext<MyParams>| {
 //!     let ui = MyPluginUi::new().unwrap();
 //!     truce_slint::bind! { state, ui,
 //!         P::Gain   => gain,
@@ -22,12 +23,14 @@
 
 pub mod blit;
 pub mod editor;
-pub mod param_state;
 pub mod platform;
 mod screenshot;
 
-pub use editor::SlintEditor;
-pub use param_state::ParamState;
+pub use editor::{SlintEditor, SyncFn};
+
+// Re-export `EditorContext` so plugin authors using the `bind!` macro
+// don't need a direct truce-core dependency.
+pub use truce_core::editor::EditorContext;
 
 // Re-export slint so plugin authors can use it without a direct dependency.
 pub use slint;
@@ -66,16 +69,18 @@ pub use paste::paste;
 /// ```
 #[macro_export]
 macro_rules! bind {
-    ($state:expr, $ui:expr, $( $id:expr => $name:ident $( : $ty:ident )? ),* $(,)?) => {{
+    ($state:expr, $ui:expr, $( $id:expr => $name:ident $( : $ty:ident $(($arg:expr))? )? ),* $(,)?) => {{
         $(
-            $crate::bind!(@wire $state, $ui, $id, $name $( : $ty )?);
+            $crate::bind!(@wire $state, $ui, $id, $name $( : $ty $(($arg))? )?);
         )*
         let ui = $ui;
-        Box::new(move |state: &$crate::ParamState| {
+        // Return type is inferred from the surrounding `SetupFn` —
+        // typically `SyncFn<P>` aka `Box<dyn Fn(&EditorContext<P>)>`.
+        Box::new(move |state: &$crate::EditorContext<_>| {
             $(
-                $crate::bind!(@sync state, ui, $id, $name $( : $ty )?);
+                $crate::bind!(@sync state, ui, $id, $name $( : $ty $(($arg))? )?);
             )*
-        }) as Box<dyn Fn(&$crate::ParamState)>
+        })
     }};
 
     // -- float (default) --
@@ -84,13 +89,13 @@ macro_rules! bind {
             let s = $state.clone();
             let id: u32 = $id.into();
             $crate::paste! {
-                $ui.[<on_ $name _changed>](move |v| s.set_immediate(id, v as f64));
+                $ui.[<on_ $name _changed>](move |v| s.automate(id, v as f64));
             }
         }
     };
     (@sync $state:expr, $ui:expr, $id:expr, $name:ident) => {
         $crate::paste! {
-            $ui.[<set_ $name>]($state.get($id) as f32);
+            $ui.[<set_ $name>]($state.get_param($id.into()) as f32);
         }
     };
 
@@ -101,14 +106,14 @@ macro_rules! bind {
             let id: u32 = $id.into();
             $crate::paste! {
                 $ui.[<on_ $name _changed>](move |v: bool| {
-                    s.set_immediate(id, if v { 1.0 } else { 0.0 });
+                    s.automate(id, if v { 1.0 } else { 0.0 });
                 });
             }
         }
     };
     (@sync $state:expr, $ui:expr, $id:expr, $name:ident : bool) => {
         $crate::paste! {
-            $ui.[<set_ $name>]($state.get($id) > 0.5);
+            $ui.[<set_ $name>]($state.get_param($id.into()) > 0.5);
         }
     };
 
@@ -130,7 +135,7 @@ macro_rules! bind {
             $crate::paste! {
                 $ui.[<on_ $name _changed>](move |v: i32| {
                     let norm = if count <= 1 { 0.0 } else { v as f64 / (count - 1) as f64 };
-                    s.set_immediate(id, norm.clamp(0.0, 1.0));
+                    s.automate(id, norm.clamp(0.0, 1.0));
                 });
             }
         }
@@ -138,7 +143,7 @@ macro_rules! bind {
     (@sync $state:expr, $ui:expr, $id:expr, $name:ident : choice($count:expr)) => {
         {
             let count: u32 = $count;
-            let norm = $state.get($id);
+            let norm = $state.get_param($id.into());
             let idx = if count <= 1 { 0 } else { (norm * (count - 1) as f64).round() as i32 };
             $crate::paste! {
                 $ui.[<set_ $name>](idx);

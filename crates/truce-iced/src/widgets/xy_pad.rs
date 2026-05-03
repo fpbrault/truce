@@ -8,7 +8,7 @@ use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::param_message::{Message, ParamMessage};
-use crate::param_state::ParamState;
+use crate::param_cache::ParamCache;
 use crate::theme;
 use truce_params::Params;
 
@@ -28,7 +28,7 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
     pub fn new(
         x_id: impl Into<u32>,
         y_id: impl Into<u32>,
-        params: &'a ParamState<impl Params>,
+        params: &'a ParamCache<impl Params>,
     ) -> Self {
         let x_id = x_id.into();
         let y_id = y_id.into();

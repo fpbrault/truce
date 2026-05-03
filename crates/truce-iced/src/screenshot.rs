@@ -11,10 +11,9 @@ use iced_wgpu::wgpu;
 use truce_params::Params;
 
 use crate::editor::{IcedPlugin, IcedProgram};
-use crate::editor_handle::EditorHandle;
+use crate::param_cache::ParamCache;
 use crate::param_message::Message;
-use crate::param_state::ParamState;
-use truce_core::editor::{ClosureBridge, EditorContext};
+use truce_core::editor::for_test_params;
 
 /// Render an iced plugin UI offscreen and return RGBA pixel data.
 ///
@@ -94,44 +93,19 @@ where
     };
     let mut renderer = iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
 
-    // Build the iced program. Seeded with [`TransportInfo::for_screenshot`]
-    // so transport-aware widgets render a populated readout instead of
-    // a `(no host transport)` placeholder.
-    let mut param_state = ParamState::new(params.clone());
-    param_state.set_font(default_font);
-    let screenshot_transport = truce_core::events::TransportInfo::for_screenshot();
-    let noop_ctx = EditorContext::from_closures(ClosureBridge {
-        begin_edit: Box::new(|_| {}),
-        set_param: Box::new(|_, _| {}),
-        end_edit: Box::new(|_| {}),
-        request_resize: Box::new(|_, _| false),
-        get_param: {
-            let p = params.clone();
-            Box::new(move |id| p.get_normalized(id).unwrap_or(0.0))
-        },
-        get_param_plain: {
-            let p = params.clone();
-            Box::new(move |id| p.get_plain(id).unwrap_or(0.0))
-        },
-        format_param: {
-            let p = params.clone();
-            Box::new(move |id| {
-                let v = p.get_plain(id).unwrap_or(0.0);
-                p.format_value(id, v).unwrap_or_default()
-            })
-        },
-        get_meter: Box::new(|_| 0.0),
-        get_state: Box::new(Vec::new),
-        set_state: Box::new(|_| {}),
-        transport: Box::new(move || Some(screenshot_transport.clone())),
-    });
-    let editor_handle = EditorHandle::new(noop_ctx);
+    // Build the iced program. Seeded via [`for_test_params`] so
+    // transport-aware widgets render a populated readout instead of
+    // a `(no host transport)` placeholder, and so the synthetic context
+    // matches the dyn-erased shape live editors receive.
+    let mut param_cache = ParamCache::new(params.clone());
+    param_cache.set_font(default_font);
+    let context = for_test_params(params.clone() as Arc<dyn Params>).with_params(params.clone());
 
     let plugin = M::new(params);
     let program = IcedProgram {
         plugin,
-        param_state,
-        editor_handle,
+        param_cache,
+        context,
         meter_ids: Vec::new(),
     };
 
