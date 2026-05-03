@@ -102,6 +102,27 @@ pub struct Defaults {
     pub output_enabled: Option<bool>,
 }
 
+impl Defaults {
+    /// Layer these author-supplied defaults beneath whatever argv /
+    /// env already resolved. Only fields where `opts` is `None` adopt
+    /// the default; CLI / env take precedence.
+    ///
+    /// Adding a new field to [`Defaults`] **must also add a line
+    /// here** — keeping the apply logic next to the struct is the
+    /// only thing stopping a new field from silently never being
+    /// applied. The `match` below is exhaustive over [`Defaults`]'s
+    /// fields by destructuring; adding a field there forces a
+    /// compile error here if this method isn't updated.
+    fn apply(self, opts: &mut cli::Options) {
+        let Defaults {
+            input_enabled,
+            output_enabled,
+        } = self;
+        opts.input_enabled = opts.input_enabled.or(input_enabled);
+        opts.output_enabled = opts.output_enabled.or(output_enabled);
+    }
+}
+
 /// Run the plugin standalone with no plugin-author defaults. Argv,
 /// env, and the compiled runtime defaults are the only inputs.
 /// Dispatches to the windowed or headless runner; returns when the
@@ -143,10 +164,9 @@ where
 
     // Layer the plugin-author defaults beneath whatever argv / env
     // already resolved. Other Options fields stay CLI/env-only —
-    // device, sample rate, buffer, MIDI, BPM, state are
-    // per-machine concerns the developer shouldn't pin in code.
-    opts.input_enabled = opts.input_enabled.or(defaults.input_enabled);
-    opts.output_enabled = opts.output_enabled.or(defaults.output_enabled);
+    // device, sample rate, buffer, MIDI, BPM, state are per-machine
+    // concerns the developer shouldn't pin in code.
+    defaults.apply(&mut opts);
 
     if opts.list_devices {
         audio::list_devices();
