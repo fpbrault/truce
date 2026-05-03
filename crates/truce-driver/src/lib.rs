@@ -566,14 +566,14 @@ impl<P: PluginExport> PluginDriver<P> {
         // builder time, so the I/O failure (if any) surfaces as a
         // run-time panic at the same lifecycle stage as smoother /
         // process panics.
-        let state_bytes = match self.state_source.take() {
-            Some(StateSource::Blob(b)) => Some(b),
-            Some(StateSource::File(path)) => Some(
-                std::fs::read(&path)
-                    .unwrap_or_else(|e| panic!("state_file: failed to read {}: {e}", path.display())),
-            ),
-            None => None,
-        };
+        let state_bytes =
+            match self.state_source.take() {
+                Some(StateSource::Blob(b)) => Some(b),
+                Some(StateSource::File(path)) => Some(std::fs::read(&path).unwrap_or_else(|e| {
+                    panic!("state_file: failed to read {}: {e}", path.display())
+                })),
+                None => None,
+            };
         if let Some(bytes) = state_bytes.as_deref() {
             plugin.load_state(bytes);
         }
@@ -675,7 +675,10 @@ impl<P: PluginExport> PluginDriver<P> {
         // that schedule events past their declared duration almost
         // always have a cursor-arithmetic bug; surfacing it loudly is
         // cheap.
-        let dropped_events = script_events.iter().filter(|(off, _)| *off >= total_frames).count();
+        let dropped_events = script_events
+            .iter()
+            .filter(|(off, _)| *off >= total_frames)
+            .count();
         if dropped_events > 0 {
             eprintln!(
                 "[truce-driver] warning: {dropped_events} script event(s) scheduled past \
@@ -690,10 +693,13 @@ impl<P: PluginExport> PluginDriver<P> {
         // measurable allocator workout. Reusing the buffers keeps the
         // hot loop allocation-free for `Silence` / `Constant` /
         // `Buffer` and reduces per-block work for `Generator`.
-        let mut out_bufs: Vec<Vec<f32>> =
-            (0..channels).map(|_| vec![0.0f32; self.block_size]).collect();
+        let mut out_bufs: Vec<Vec<f32>> = (0..channels)
+            .map(|_| vec![0.0f32; self.block_size])
+            .collect();
         let mut in_bufs: Vec<Vec<f32>> = if is_effect {
-            (0..channels).map(|_| vec![0.0f32; self.block_size]).collect()
+            (0..channels)
+                .map(|_| vec![0.0f32; self.block_size])
+                .collect()
         } else {
             Vec::new()
         };

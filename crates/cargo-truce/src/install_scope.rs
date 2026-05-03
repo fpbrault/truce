@@ -144,7 +144,10 @@ pub(crate) fn effective_scope(
 /// `--user` / `--system` and need the same mutual-exclusion check;
 /// the helper centralizes the error message so both sites stay in
 /// sync.
-pub(crate) fn set_cli_install_scope(slot: &mut Option<InstallScope>, want: InstallScope) -> crate::Res {
+pub(crate) fn set_cli_install_scope(
+    slot: &mut Option<InstallScope>,
+    want: InstallScope,
+) -> crate::Res {
     if let Some(prev) = *slot
         && prev != want
     {

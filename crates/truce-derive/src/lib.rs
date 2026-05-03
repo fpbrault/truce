@@ -843,15 +843,16 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         }
                     },
                     ParamKind::Enum => {
-                        let enum_ty = f.enum_type.as_ref().expect(
-                            "ParamKind::Enum field must have enum_type populated",
-                        );
+                        let enum_ty = f
+                            .enum_type
+                            .as_ref()
+                            .expect("ParamKind::Enum field must have enum_type populated");
                         quote! {
                             x if x == self.#ident.id() => {
                                 Some(::truce::params::EnumParam::<#enum_ty>::format_by_index(value))
                             }
                         }
-                    },
+                    }
                     _ => quote! {
                         x if x == self.#ident.id() => {
                             Some(::truce::params::format_param_value(&self.#ident.info, value))

@@ -792,8 +792,7 @@ pub fn register_vst3<P: PluginExport>() {
     // capacity from len; converting through `into_boxed_slice()`
     // first trims to exact len and lets us route through `Box::leak`
     // alongside `descriptor` and `callbacks`.
-    let param_descs: &'static [Vst3ParamDescriptor] =
-        Box::leak(param_descs.into_boxed_slice());
+    let param_descs: &'static [Vst3ParamDescriptor] = Box::leak(param_descs.into_boxed_slice());
 
     unsafe {
         ffi::truce_vst3_register(

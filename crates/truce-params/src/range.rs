@@ -186,7 +186,11 @@ mod tests {
         for range in cases {
             let bottom = range.min();
             assert_eq!(range.normalize(bottom), 0.0, "normalize(min) for {range:?}");
-            assert_eq!(range.normalize(42.0), 0.0, "normalize(arbitrary) for {range:?}");
+            assert_eq!(
+                range.normalize(42.0),
+                0.0,
+                "normalize(arbitrary) for {range:?}"
+            );
             assert_eq!(
                 range.denormalize(0.0),
                 bottom,
