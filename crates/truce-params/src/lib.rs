@@ -121,4 +121,51 @@ pub trait Params: Send + Sync + 'static {
 
     /// Restore parameter values from a list of (id, value) pairs.
     fn restore_values(&self, values: &[(u32, f64)]);
+
+    /// Walk every parameter and meter ID reachable from `self`
+    /// (including nested `#[nested]` substructs) and panic on the
+    /// first duplicate.
+    ///
+    /// Why this isn't just a compile-time check: the
+    /// `#[derive(Params)]` collision check at expansion time only
+    /// sees IDs declared in the *current* struct. A parent param
+    /// `id = 5` and a nested-substruct param `id = 5` both compile,
+    /// because the parent derive doesn't see into the nested type.
+    /// At runtime, the `set_plain` / `get_plain` dispatcher matches
+    /// at the outer level first and silently never reaches the
+    /// nested one — preset round-trips would corrupt the nested
+    /// value. This method makes that bug surface as a panic at
+    /// plugin construction instead of as quiet state loss.
+    ///
+    /// Called automatically by the derive-generated `Self::new()`.
+    /// Plugin code shouldn't need to invoke it directly.
+    fn assert_no_id_collisions(&self) {
+        let mut all = self.param_infos();
+        // Borrow the names from the existing infos so the panic
+        // message can identify *which* IDs collided.
+        let mut seen: Vec<(u32, &'static str)> = Vec::with_capacity(all.len());
+        for info in all.drain(..) {
+            for (prev_id, prev_name) in &seen {
+                if *prev_id == info.id {
+                    panic!(
+                        "duplicate parameter ID {}: '{}' and '{}' (likely a \
+                         parent / nested-struct collision; the per-struct \
+                         compile-time check can't see across nested types)",
+                        info.id, prev_name, info.name,
+                    );
+                }
+            }
+            seen.push((info.id, info.name));
+        }
+        for meter_id in self.meter_ids() {
+            for (prev_id, prev_name) in &seen {
+                if *prev_id == meter_id {
+                    panic!(
+                        "meter ID {} collides with parameter ID for '{}'",
+                        meter_id, prev_name,
+                    );
+                }
+            }
+        }
+    }
 }

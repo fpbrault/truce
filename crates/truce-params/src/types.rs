@@ -111,11 +111,44 @@ pub struct IntParam {
 }
 
 impl IntParam {
+    /// # Panics
+    ///
+    /// Panics if `info.default_plain` is non-finite or doesn't
+    /// round-trip through `i64`. The cast `f64 as i64` saturates
+    /// silently — `default_plain = -1.0` lands on `-1` (fine), but
+    /// `default_plain = 1e30` saturates to `i64::MAX` and `f64::NAN`
+    /// becomes `0`. The derive populates `default_plain` from
+    /// `#[param(default = ...)]`; a user-supplied float there is a
+    /// programmer error, not a runtime condition we should
+    /// silently absorb.
     pub fn new(info: ParamInfo) -> Self {
-        let default = info.default_plain as i64;
+        let default = info.default_plain;
+        assert!(
+            default.is_finite(),
+            "IntParam '{}' default {} is not finite",
+            info.name,
+            default,
+        );
+        let truncated = default as i64;
+        assert!(
+            truncated as f64 == default,
+            "IntParam '{}' default {} doesn't round-trip through i64 \
+             — supply an integer-valued default in the derive attribute",
+            info.name,
+            default,
+        );
+        let (lo, hi) = (info.range.min() as i64, info.range.max() as i64);
+        assert!(
+            truncated >= lo && truncated <= hi,
+            "IntParam '{}' default {} is outside range [{}, {}]",
+            info.name,
+            truncated,
+            lo,
+            hi,
+        );
         Self {
             info,
-            value: AtomicI64::new(default),
+            value: AtomicI64::new(truncated),
         }
     }
 
@@ -149,11 +182,49 @@ pub struct EnumParam<E: ParamEnum> {
 }
 
 impl<E: ParamEnum> EnumParam<E> {
+    /// # Panics
+    ///
+    /// Panics if `info.default_plain` is non-finite, negative, or
+    /// `>= E::variant_count()`. The cast `f64 as u32` saturates
+    /// silently — a user-supplied `#[param(default = -1)]` would
+    /// land on variant 0 without any signal that the default was
+    /// invalid. Validate up front so the bug surfaces at plugin
+    /// construction time.
     pub fn new(info: ParamInfo) -> Self {
-        let default = info.default_plain as u32;
+        let default = info.default_plain;
+        let count = E::variant_count();
+        assert!(
+            default.is_finite(),
+            "EnumParam '{}' default {} is not finite",
+            info.name,
+            default,
+        );
+        assert!(
+            default >= 0.0,
+            "EnumParam '{}' default {} is negative; enum variants are \
+             0-indexed",
+            info.name,
+            default,
+        );
+        let idx = default as u32;
+        assert!(
+            (idx as f64) == default,
+            "EnumParam '{}' default {} is non-integer; supply a 0-indexed \
+             variant index",
+            info.name,
+            default,
+        );
+        assert!(
+            (idx as usize) < count,
+            "EnumParam '{}' default {} is out of range; only {} variant(s) \
+             defined",
+            info.name,
+            idx,
+            count,
+        );
         Self {
             info,
-            value: AtomicU32::new(default),
+            value: AtomicU32::new(idx),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -227,5 +298,102 @@ impl From<MeterSlot> for u32 {
 impl From<&MeterSlot> for u32 {
     fn from(m: &MeterSlot) -> u32 {
         m.id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::info::{ParamFlags, ParamUnit};
+    use crate::range::ParamRange;
+
+    fn info(name: &'static str, range: ParamRange, default_plain: f64) -> ParamInfo {
+        ParamInfo {
+            id: 0,
+            name,
+            short_name: name,
+            group: "",
+            range,
+            default_plain,
+            flags: ParamFlags::AUTOMATABLE,
+            unit: ParamUnit::None,
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum E4 {
+        A,
+        B,
+        C,
+        D,
+    }
+    impl ParamEnum for E4 {
+        fn from_index(i: usize) -> Self {
+            match i {
+                0 => Self::A,
+                1 => Self::B,
+                2 => Self::C,
+                _ => Self::D,
+            }
+        }
+        fn to_index(&self) -> usize {
+            *self as usize
+        }
+        fn name(&self) -> &'static str {
+            match self {
+                Self::A => "A",
+                Self::B => "B",
+                Self::C => "C",
+                Self::D => "D",
+            }
+        }
+        fn variant_count() -> usize {
+            4
+        }
+        fn variant_names() -> &'static [&'static str] {
+            &["A", "B", "C", "D"]
+        }
+    }
+
+    #[test]
+    fn enum_param_accepts_in_range_default() {
+        let p: EnumParam<E4> = EnumParam::new(info("Mode", ParamRange::Enum { count: 4 }, 2.0));
+        assert_eq!(p.index(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "negative")]
+    fn enum_param_rejects_negative_default() {
+        let _: EnumParam<E4> = EnumParam::new(info("Mode", ParamRange::Enum { count: 4 }, -1.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn enum_param_rejects_overflow_default() {
+        let _: EnumParam<E4> = EnumParam::new(info("Mode", ParamRange::Enum { count: 4 }, 99.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "non-integer")]
+    fn enum_param_rejects_fractional_default() {
+        let _: EnumParam<E4> = EnumParam::new(info("Mode", ParamRange::Enum { count: 4 }, 1.5));
+    }
+
+    #[test]
+    fn int_param_accepts_negative_default() {
+        let p = IntParam::new(info("N", ParamRange::Discrete { min: -10, max: 10 }, -3.0));
+        assert_eq!(p.value(), -3);
+    }
+
+    #[test]
+    #[should_panic(expected = "round-trip")]
+    fn int_param_rejects_fractional_default() {
+        let _ = IntParam::new(info("N", ParamRange::Discrete { min: 0, max: 10 }, 1.5));
+    }
+
+    #[test]
+    #[should_panic(expected = "outside range")]
+    fn int_param_rejects_out_of_range_default() {
+        let _ = IntParam::new(info("N", ParamRange::Discrete { min: 0, max: 5 }, 10.0));
     }
 }
