@@ -2013,10 +2013,14 @@ mod tests {
         assert!(size > 0, "Vertex should have non-zero size: {size}");
     }
 
+    // Both ortho-matrix tests check that the helper maps top-left
+    // screen-space origin (0, 0) to wgpu's top-left clip-space corner
+    // (-1, +1) and bottom-right screen (w, h) to clip (+1, -1). The Y
+    // flip is the `-2.0 / h` term in `ortho_matrix` — without it,
+    // increasing screen-y would move the vertex *up* in clip space.
     #[test]
     fn ortho_matrix_maps_origin() {
         let m = ortho_matrix(800.0, 600.0);
-        // (0,0) should map to (-1, 1) in clip space
         let x = m[0][0] * 0.0 + m[3][0];
         let y = m[1][1] * 0.0 + m[3][1];
         assert!((x - (-1.0)).abs() < 1e-6);
@@ -2026,7 +2030,6 @@ mod tests {
     #[test]
     fn ortho_matrix_maps_bottom_right() {
         let m = ortho_matrix(800.0, 600.0);
-        // (800, 600) should map to (1, -1) in clip space
         let x = m[0][0] * 800.0 + m[3][0];
         let y = m[1][1] * 600.0 + m[3][1];
         assert!((x - 1.0).abs() < 1e-6);

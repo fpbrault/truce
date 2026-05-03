@@ -370,7 +370,15 @@ fn convert_mouse_button(btn: &baseview::MouseButton) -> Option<egui::PointerButt
         baseview::MouseButton::Left => Some(egui::PointerButton::Primary),
         baseview::MouseButton::Right => Some(egui::PointerButton::Secondary),
         baseview::MouseButton::Middle => Some(egui::PointerButton::Middle),
-        _ => None,
+        // Side-mouse "back" / "forward" thumb buttons. baseview reports
+        // them on every platform that distinguishes the buttons (X11
+        // XInput2, Win32 WM_XBUTTON*, NSEvent buttonNumber 3/4); egui
+        // surfaces them as `Extra1` / `Extra2`. Plugin authors that opt
+        // in (e.g. for back/forward navigation in a custom editor) get
+        // the events; ones that don't simply ignore the variant.
+        baseview::MouseButton::Back => Some(egui::PointerButton::Extra1),
+        baseview::MouseButton::Forward => Some(egui::PointerButton::Extra2),
+        baseview::MouseButton::Other(_) => None,
     }
 }
 
@@ -563,7 +571,7 @@ impl Editor for EguiEditor {
         // regardless of any prior `set_scale_factor` from a live window.
         let pixels_per_point = 2.0_f32;
         let ui = Arc::clone(&self.ui);
-        Some(crate::screenshot::render_with_state(
+        crate::screenshot::render_with_state(
             &state,
             self.size,
             pixels_per_point,
@@ -574,6 +582,6 @@ impl Editor for EguiEditor {
                     ui.ui(ctx, state);
                 }
             },
-        ))
+        )
     }
 }

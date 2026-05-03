@@ -842,12 +842,12 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         // typed `Arc<P>` (already on hand from construction). Used by
         // `truce_test::assert_screenshot::<Plugin>()`. The dyn-erased `params`
         // arg is unused — IcedEditor carries the concrete type.
-        Some(crate::screenshot::render_to_pixels::<P, M>(
+        crate::screenshot::render_to_pixels::<P, M>(
             Arc::clone(&self.params),
             self.size,
             2.0,
             self.font,
-        ))
+        )
     }
 
     fn set_size(&mut self, width: u32, height: u32) -> bool {

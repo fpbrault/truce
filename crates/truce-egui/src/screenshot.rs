@@ -10,6 +10,12 @@ use crate::ParamState;
 /// Headless render path shared by `EguiEditor::screenshot()` and any
 /// future ad-hoc callers in this crate. Kept `pub(crate)` — external
 /// callers should go through the `Editor::screenshot()` trait.
+///
+/// Returns `None` when no wgpu adapter is available (CI runners without
+/// a GPU, headless VMs, container environments). Mirrors
+/// `WgpuBackend::headless` in `truce-gpu`, so all three GPU-backed
+/// screenshot paths funnel adapter-acquisition failures through `None`
+/// rather than mixing panics with optional returns.
 pub(crate) fn render_with_state(
     state: &ParamState,
     size: (u32, u32),
@@ -17,7 +23,7 @@ pub(crate) fn render_with_state(
     font: Option<&'static [u8]>,
     visuals: Option<egui::Visuals>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
-) -> (Vec<u8>, u32, u32) {
+) -> Option<(Vec<u8>, u32, u32)> {
     let (width, height) = size;
     let ctx = egui::Context::default();
     ctx.set_visuals(visuals.unwrap_or_else(crate::theme::dark));
@@ -72,8 +78,7 @@ pub(crate) fn render_with_state(
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
-    }))
-    .expect("no wgpu adapter for screenshot rendering");
+    }))?;
 
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
@@ -84,7 +89,7 @@ pub(crate) fn render_with_state(
         },
         None,
     ))
-    .expect("failed to create wgpu device for snapshot");
+    .ok()?;
 
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
 
@@ -217,5 +222,5 @@ pub(crate) fn render_with_state(
         egui_renderer.free_texture(id);
     }
 
-    (pixels, phys_w, phys_h)
+    Some((pixels, phys_w, phys_h))
 }

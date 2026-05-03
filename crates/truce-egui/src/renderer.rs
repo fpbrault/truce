@@ -21,6 +21,13 @@ impl EguiRenderer {
     /// # Safety
     /// The window must remain valid for the lifetime of the renderer.
     pub unsafe fn from_window(window: &baseview::Window, width: u32, height: u32) -> Option<Self> {
+        // Zero-sized configure panics inside wgpu. Some hosts (notably
+        // VST3 in iZotope's RX shell) hand the editor a zero-extent
+        // parent during a transient measurement step before the real
+        // open. Mirror `resize`'s zero-guard so we don't crash there.
+        if width == 0 || height == 0 {
+            return None;
+        }
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
@@ -89,6 +96,11 @@ impl EguiRenderer {
         width: u32,
         height: u32,
     ) -> Option<Self> {
+        // See `from_window` — same zero-guard applies; AAX hands a
+        // CAMetalLayer that may not yet have a real bounds size.
+        if width == 0 || height == 0 {
+            return None;
+        }
         unsafe {
             let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::METAL,
@@ -191,6 +203,15 @@ impl EguiRenderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         {
+            // `egui_wgpu::Renderer::render` (egui 0.31) takes
+            // `&mut RenderPass<'static>`, but `begin_render_pass` returns a
+            // pass borrowing `encoder` and `frame_view` lifetimes. wgpu 24
+            // exposes `forget_lifetime()` specifically to bridge this —
+            // discharging the borrow checker's view without changing the
+            // GPU contract (the inner scope still ends before `encoder`
+            // is consumed by `submit`). The egui-wgpu API is the
+            // constraint here; nothing on our side to fix until egui
+            // drops the `'static` requirement.
             let mut pass = encoder
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("egui"),
