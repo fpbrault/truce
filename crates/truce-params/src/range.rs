@@ -89,7 +89,9 @@ impl ParamRange {
             // `min > max` or steps > u32::MAX. Saturate instead so a
             // mis-specified `Discrete` range can't produce a bogus
             // step count that callers might index with.
-            Self::Discrete { min, max } => (max.saturating_sub(*min)).max(0).min(u32::MAX as i64) as u32,
+            Self::Discrete { min, max } => {
+                (max.saturating_sub(*min)).max(0).min(u32::MAX as i64) as u32
+            }
             Self::Enum { count } => (*count as u32).saturating_sub(1),
         }
     }

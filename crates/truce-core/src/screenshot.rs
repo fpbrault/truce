@@ -79,9 +79,9 @@ pub fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     // worst-case estimate (4 bytes/pixel × declared dimensions); the
     // subsequent `next_frame` will surface any real decode error.
     let info = reader.info();
-    let buf_size = reader.output_buffer_size().unwrap_or_else(|| {
-        (info.width as usize) * (info.height as usize) * 4
-    });
+    let buf_size = reader
+        .output_buffer_size()
+        .unwrap_or_else(|| (info.width as usize) * (info.height as usize) * 4);
     let mut buf = vec![0u8; buf_size];
     let info = reader
         .next_frame(&mut buf)

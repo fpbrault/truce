@@ -55,4 +55,3 @@ impl TransportSlot {
         self.inner.try_lock().ok().and_then(|g| g.clone())
     }
 }
-
