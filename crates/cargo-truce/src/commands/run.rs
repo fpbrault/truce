@@ -36,6 +36,10 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
                 }
                 "--no-build" => no_build = true,
                 "--debug" => debug = true,
+                "--help" | "-h" => {
+                    print_help();
+                    return Ok(());
+                }
                 "--" => past_separator = true,
                 other => return Err(format!("unknown flag: {other}").into()),
             }
@@ -253,6 +257,25 @@ fn standalone_bin_name(bundle_id: &str) -> String {
     } else {
         format!("{bundle_id}-standalone")
     }
+}
+
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce run [-p <crate>] [--no-build] [--debug] [-- <args>]
+
+Build and run a plugin standalone. Pass `--debug` for a faster-compile
+dev-profile build (fine when iterating outside a DAW); release otherwise.
+
+Anything after `--` is forwarded verbatim to the standalone binary
+(e.g. `cargo truce run -- --headless --bpm 140`).
+
+Options:
+  -p <crate>       Build and run only the plugin with this cargo crate name.
+  --no-build       Skip rebuild; run the existing staged binary.
+  --debug          Cargo dev profile (faster compile).
+  -h, --help       Show this message."
+    );
 }
 
 /// Staged name inside `target/bundles/` — keeps the standalone

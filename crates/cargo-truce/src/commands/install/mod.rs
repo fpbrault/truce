@@ -3,7 +3,7 @@
 
 #![allow(unused_imports)]
 
-use crate::install_scope::{Format, InstallScope, effective_scope, note_once};
+use crate::install_scope::{Format, InstallScope, effective_scope, note_once, set_cli_install_scope};
 use crate::util::fs_ctx;
 use crate::{
     Config, PluginDef, Res, cargo_build, codesign_bundle, deployment_target,
@@ -55,18 +55,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--no-build" => no_build = true,
             "--shell" => shell_mode = true,
             "--debug" => debug = true,
-            "--user" => {
-                if matches!(cli_scope, Some(InstallScope::System)) {
-                    return Err("--user and --system are mutually exclusive".into());
-                }
-                cli_scope = Some(InstallScope::User);
-            }
-            "--system" => {
-                if matches!(cli_scope, Some(InstallScope::User)) {
-                    return Err("--user and --system are mutually exclusive".into());
-                }
-                cli_scope = Some(InstallScope::System);
-            }
+            "--user" => set_cli_install_scope(&mut cli_scope, InstallScope::User)?,
+            "--system" => set_cli_install_scope(&mut cli_scope, InstallScope::System)?,
             "--ask" => {
                 return Err(
                     "--ask is not valid for `cargo truce install` (no end user to prompt). \
@@ -82,6 +72,10 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
                     );
                 }
                 plugin_filter = Some(args[i].clone());
+            }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
             }
             other => return Err(format!("Unknown flag: {other}").into()),
         }
@@ -136,28 +130,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
 
     // Filter plugins if -p specified
-    let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
-        let matched: Vec<_> = config
-            .plugin
-            .iter()
-            .filter(|p| p.crate_name == *filter)
-            .collect();
-        if matched.is_empty() {
-            return Err(format!(
-                "No plugin with crate name '{filter}'. Available: {}",
-                config
-                    .plugin
-                    .iter()
-                    .map(|p| p.crate_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .into());
-        }
-        matched
-    } else {
-        config.plugin.iter().collect()
-    };
+    let plugins: Vec<&PluginDef> = super::pick_plugins(&config, plugin_filter.as_deref())?;
 
     // Logic profile (the dylib the shell dlopens at runtime). Baked
     // into the shell binary via `TRUCE_LOGIC_PROFILE` so the runtime
@@ -521,6 +494,36 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
     eprintln!("\nDone. Restart your DAW to rescan.");
     Ok(())
+}
+
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
+                           [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
+
+Build and install plugins into the host's plug-in directories. Defaults
+to release. Defaults to whichever formats are in the plugin's Cargo.toml
+default features (typically clap + vst3).
+
+Per-format scope is per-user by default; pass --system for the shared
+system directories. AAX and AU v3 are always system-scope.
+
+Options:
+  --clap           CLAP only
+  --vst3           VST3 only
+  --vst2           VST2 only (legacy format)
+  --au2            AU v2 only (.component, macOS only)
+  --au3            AU v3 only (.appex, macOS only)
+  --aax            AAX only (requires pre-built template)
+  --user           Install per-user (default).
+  --system         Install system-wide (sudo / admin required).
+  --shell          Build dynamic shells + per-plugin logic dylibs.
+  --debug          Cargo dev profile (faster compile, slower DSP).
+  --no-build       Skip build, install existing artifacts.
+  -p <crate>       Install only the plugin with this cargo crate name.
+  -h, --help       Show this message"
+    );
 }
 
 /// Resolve the per-format effective scope and print the fallback note

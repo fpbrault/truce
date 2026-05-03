@@ -129,6 +129,14 @@ where
         }
     };
 
+    // `--help` was a process-wide `exit(0)` inside `cli::parse`. Now
+    // it returns `Options { help: true, .. }` so libraries calling
+    // into `parse` can be tested without short-circuiting the
+    // process; we honor it here at the binary boundary.
+    if opts.help {
+        return;
+    }
+
     // Latch the verbose flag before anything else logs — every
     // `vlog!` checks this static.
     set_verbose(opts.verbose);

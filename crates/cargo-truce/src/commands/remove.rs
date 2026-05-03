@@ -3,7 +3,7 @@
 
 #[cfg(target_os = "macos")]
 use crate::Config;
-use crate::install_scope::{InstallScope, note_once};
+use crate::install_scope::{InstallScope, note_once, set_cli_install_scope};
 use crate::{PluginDef, Res, confirm_prompt, dirs, load_config, run_sudo};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -86,18 +86,8 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--dry-run" => dry_run = true,
             "--yes" | "-y" => yes = true,
             "--stale" => stale = true,
-            "--user" => {
-                if matches!(cli_scope, Some(InstallScope::System)) {
-                    return Err("--user and --system are mutually exclusive".into());
-                }
-                cli_scope = Some(InstallScope::User);
-            }
-            "--system" => {
-                if matches!(cli_scope, Some(InstallScope::User)) {
-                    return Err("--user and --system are mutually exclusive".into());
-                }
-                cli_scope = Some(InstallScope::System);
-            }
+            "--user" => set_cli_install_scope(&mut cli_scope, InstallScope::User)?,
+            "--system" => set_cli_install_scope(&mut cli_scope, InstallScope::System)?,
             "-p" => {
                 i += 1;
                 crate_filter = Some(
@@ -109,6 +99,10 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "-n" => {
                 i += 1;
                 name_filter = Some(args.get(i).cloned().ok_or("-n requires a plugin name")?);
+            }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
             }
             other => return Err(format!("Unknown flag: {other}").into()),
         }
@@ -504,4 +498,33 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
         eprintln!("\nDone. Restart your DAW to rescan.");
     }
     Ok(())
+}
+
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
+                          [--user|--system] [-p <crate>] [-n <name>]
+                          [--stale] [--dry-run] [--yes]
+
+Remove installed plugin bundles for this project. Default: all formats,
+all plugins, both user + system scopes. Asks for confirmation. AAX and
+AU v3 are always system-scope — `--user` skips them.
+
+Options:
+  --clap           CLAP only
+  --vst3           VST3 only
+  --vst2           VST2 only
+  --au2            AU v2 only (.component, macOS only)
+  --au3            AU v3 only (.app, macOS only)
+  --aax            AAX only
+  --user           Only remove from per-user directories.
+  --system         Only remove from system directories.
+  -p <crate>       Filter by cargo crate name.
+  -n <name>        Filter by display name.
+  --stale          Remove vendor bundles NOT in the current project.
+  --dry-run        Show what would be removed without deleting.
+  --yes, -y        Skip confirmation prompt.
+  -h, --help       Show this message"
+    );
 }

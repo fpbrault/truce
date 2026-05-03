@@ -11,8 +11,8 @@ use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 use crate::util::fs_ctx;
 use crate::{
-    PluginDef, Res, cargo_build, deployment_target, detect_default_features, load_config,
-    project_root, release_lib,
+    Res, cargo_build, deployment_target, detect_default_features, load_config, project_root,
+    release_lib,
 };
 use std::process::Command;
 
@@ -50,6 +50,10 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                         .ok_or("-p requires a plugin crate name")?,
                 );
             }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
             other => return Err(format!("unknown flag: {other}").into()),
         }
         i += 1;
@@ -71,28 +75,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         aax = available.contains("aax");
     }
 
-    let plugins: Vec<&PluginDef> = if let Some(ref f) = plugin_filter {
-        let matched: Vec<_> = config
-            .plugin
-            .iter()
-            .filter(|p| p.crate_name == *f)
-            .collect();
-        if matched.is_empty() {
-            return Err(format!(
-                "No plugin with crate name '{f}'. Available: {}",
-                config
-                    .plugin
-                    .iter()
-                    .map(|p| p.crate_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .into());
-        }
-        matched
-    } else {
-        config.plugin.iter().collect()
-    };
+    let plugins = super::pick_plugins(&config, plugin_filter.as_deref())?;
     if plugins.is_empty() {
         return Err("no matching plugins".into());
     }
@@ -483,4 +466,30 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     }
     eprintln!("\nBundles in {}", bundles_dir.display());
     Ok(())
+}
+
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
+                         [-p <crate>] [--shell] [--debug]
+
+Build per-format bundles into target/bundles/ without installing.
+Defaults to release; pass --debug for the cargo dev profile.
+Defaults match `install`: when no format flags are passed, every
+format in the project's default Cargo features is built.
+
+Options:
+  --clap           CLAP only
+  --vst3           VST3 only
+  --vst2           VST2 only
+  --lv2            LV2 only
+  --au2            AU v2 only (.component, macOS only)
+  --au3            AU v3 only (.appex inside .app, macOS only)
+  --aax            AAX only (requires pre-built SDK + template)
+  -p <crate>       Build only the plugin with this cargo crate name
+  --shell          Build dynamic shells + per-plugin logic dylibs
+  --debug          Cargo dev profile (faster compile, slower DSP)
+  -h, --help       Show this message"
+    );
 }

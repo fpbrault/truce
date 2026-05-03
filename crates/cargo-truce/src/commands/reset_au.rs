@@ -33,6 +33,10 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
     for arg in args {
         match arg.as_str() {
             "--yes" | "-y" => yes = true,
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
             other => return Err(format!("Unknown flag: {other}").into()),
         }
     }
@@ -147,4 +151,20 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
 
     eprintln!("Done. Restart your DAW to rescan.");
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce reset-au [--yes]
+
+macOS-only. Flush Audio Unit caches and restart `pkd` /
+`AudioComponentRegistrar`. Use when AU bundles are stuck serving
+stale binaries. CLAP / VST3 / VST2 / LV2 are unaffected.
+
+Options:
+  --yes, -y        Skip confirmation prompt.
+  -h, --help       Show this message."
+    );
 }

@@ -179,10 +179,15 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             }
             "-p" => {
                 i += 1;
-                if i >= args.len() {
-                    return Err("-p requires a plugin crate name".into());
-                }
-                plugin_filter = Some(args[i].clone());
+                plugin_filter = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or("-p requires a plugin crate name")?,
+                );
+            }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
             }
             other => return Err(format!("Unknown flag: {other}").into()),
         }
@@ -196,28 +201,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         run_vst2 = true;
     }
 
-    let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
-        let matched: Vec<_> = config
-            .plugin
-            .iter()
-            .filter(|p| p.crate_name == *filter)
-            .collect();
-        if matched.is_empty() {
-            return Err(format!(
-                "No plugin with crate name '{filter}'. Available: {}",
-                config
-                    .plugin
-                    .iter()
-                    .map(|p| p.crate_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .into());
-        }
-        matched
-    } else {
-        config.plugin.iter().collect()
-    };
+    let plugins: Vec<&PluginDef> = super::pick_plugins(&config, plugin_filter.as_deref())?;
 
     let mut failures = 0;
 
@@ -467,6 +451,27 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         eprintln!("All validations passed.");
         Ok(())
     }
+}
+
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce validate [--auval] [--auval3] [--pluginval] [--clap] [--vst2]
+                            [--all] [-p <crate>]
+
+Run validation tools on installed plugins. With no flag, runs every
+available validator.
+
+Options:
+  --auval          AU v2 validation via auval (macOS).
+  --auval3         AU v3 validation via auval (macOS).
+  --pluginval      VST3 validation via pluginval.
+  --clap           CLAP validation via clap-validator.
+  --vst2           VST2 dlopen + AEffect smoke (macOS).
+  --all            Run every available validator (default).
+  -p <crate>       Validate only the plugin with this cargo crate name.
+  -h, --help       Show this message"
+    );
 }
 
 /// Build each plugin as a VST2 dylib, dlopen it via the C smoke binary

@@ -124,8 +124,11 @@ fn print_help() {
 
 /// Parse argv + env and return resolved options. Plugin-author
 /// defaults are not handled here — [`crate::run_with`] applies them
-/// after parsing. Prints help and exits if `--help` / `-h` seen;
-/// returns `Err` on parse failure.
+/// after parsing. When `--help` / `-h` is present, prints help and
+/// returns options with `help = true` so the caller exits cleanly
+/// at the binary boundary (no `process::exit` from library code,
+/// which would short-circuit any test that drives this entry point).
+/// Returns `Err` on parse failure.
 pub fn parse() -> Result<Options, String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut args = pico_args::Arguments::from_vec(args);
@@ -134,7 +137,10 @@ pub fn parse() -> Result<Options, String> {
     let help = args.contains(["-h", "--help"]);
     if help {
         print_help();
-        std::process::exit(0);
+        return Ok(Options {
+            help: true,
+            ..Options::default()
+        });
     }
 
     let headless = args.contains("--headless");

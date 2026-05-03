@@ -29,6 +29,10 @@ pub(crate) fn cmd_reset_aax(args: &[String]) -> Res {
     for arg in args {
         match arg.as_str() {
             "--yes" | "-y" => yes = true,
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
             other => return Err(format!("Unknown flag: {other}").into()),
         }
     }
@@ -72,4 +76,20 @@ pub(crate) fn cmd_reset_aax(args: &[String]) -> Res {
         eprintln!("Done. Restart Pro Tools to rescan.");
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce reset-aax [--yes]
+
+macOS-only. Wipe this vendor's entries from the Pro Tools AAX cache
+(/Users/Shared/Pro Tools/AAXPlugInCache). Pro Tools re-scans AAX
+plugins on next launch.
+
+Options:
+  --yes, -y        Skip confirmation prompt.
+  -h, --help       Show this message."
+    );
 }
