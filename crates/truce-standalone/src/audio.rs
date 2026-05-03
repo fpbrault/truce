@@ -197,7 +197,7 @@ pub fn list_devices() {
     println!("Output:");
     let (default_out, outs) = enumerate_devices(true);
     for name in outs {
-        let marker = if Some(&name) == default_out.as_ref() {
+        let marker = if default_out.as_deref() == Some(name.as_str()) {
             " (default)"
         } else {
             ""
@@ -207,7 +207,7 @@ pub fn list_devices() {
     println!("Input:");
     let (default_in, ins) = enumerate_devices(false);
     for name in ins {
-        let marker = if Some(&name) == default_in.as_ref() {
+        let marker = if default_in.as_deref() == Some(name.as_str()) {
             " (default)"
         } else {
             ""
@@ -947,36 +947,42 @@ fn audio_callback<P: PluginExport>(
         buf.resize(num_frames, 0.0);
     }
 
-    // Mic + file are independent input sources that *sum* into the
-    // plugin's bus. Each path starts from a zero-init `channel_bufs`
-    // and adds its contribution; single-source cases are unchanged.
-    if is_effect
-        && input_enabled.load(Ordering::Relaxed)
-        && let Ok(mut ring) = input_ring.try_lock()
-    {
-        let needed = num_frames * channels;
-        let available = ring.len().min(needed);
-        for i in 0..available / channels {
-            for ch in 0..channels {
-                if i < num_frames {
-                    channel_bufs[ch][i] += ring[i * channels + ch];
+    // Effect-only input plumbing: mic + file are independent input
+    // sources that *sum* into the plugin's bus, and the plugin reads
+    // from `input_bufs` while writing to `channel_bufs`. Three
+    // `is_effect`-gated steps live together here so the invariant
+    // ("only effects have inputs") stays in one place — instruments
+    // skip the whole block and just clear `input_bufs`.
+    if is_effect {
+        // (1) Mic ring → channel_bufs (per-block sum).
+        if input_enabled.load(Ordering::Relaxed)
+            && let Ok(mut ring) = input_ring.try_lock()
+        {
+            let needed = num_frames * channels;
+            let available = ring.len().min(needed);
+            for i in 0..available / channels {
+                for ch in 0..channels {
+                    if i < num_frames {
+                        channel_bufs[ch][i] += ring[i * channels + ch];
+                    }
                 }
             }
+            if available > 0 {
+                ring.drain(..available);
+            }
         }
-        if available > 0 {
-            ring.drain(..available);
+
+        // (2) Playback file → channel_bufs (per-block sum, summed on
+        // top of mic above).
+        #[cfg(feature = "playback")]
+        if let Some(src) = playback {
+            src.mix_into(channel_bufs, num_frames);
         }
-    }
 
-    #[cfg(feature = "playback")]
-    if is_effect && let Some(src) = playback {
-        src.mix_into(channel_bufs, num_frames);
-    }
-
-    // Mirror `channel_bufs` into `input_bufs` for the effect path
-    // (the plugin reads from `input_bufs` and writes to
-    // `channel_bufs`). Same resize-without-realloc trick as above.
-    if is_effect {
+        // (3) Mirror channel_bufs into input_bufs so the plugin can
+        // hold an immutable input slice and a mutable output slice
+        // pointing at independent storage. Same resize-without-realloc
+        // trick as above.
         input_bufs.resize_with(channels, Vec::new);
         for (dst, src) in input_bufs.iter_mut().zip(channel_bufs.iter()) {
             dst.clear();

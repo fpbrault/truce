@@ -234,11 +234,17 @@ pub fn parse() -> Result<Options, String> {
     Ok(opts)
 }
 
-fn parse_on_off(s: &str, flag: &str) -> Result<bool, String> {
+/// Parse an on/off boolean. `source` is the human-facing label
+/// prepended to error messages — pass the originating CLI flag
+/// (`"--input-enabled"`) when called from argv parsing, or the env
+/// var name (`"TRUCE_STANDALONE_INPUT_ENABLED"`) when called from the
+/// env-fallback layer. Either way, the user sees a parse error
+/// pointing at exactly where the bad value came from.
+fn parse_on_off(s: &str, source: &str) -> Result<bool, String> {
     match s.trim().to_lowercase().as_str() {
         "on" | "true" | "1" | "yes" => Ok(true),
         "off" | "false" | "0" | "no" => Ok(false),
-        other => Err(format!("{flag}: expected `on` or `off` (got `{other}`)")),
+        other => Err(format!("{source}: expected `on` or `off` (got `{other}`)")),
     }
 }
 
