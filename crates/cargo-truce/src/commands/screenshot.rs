@@ -19,7 +19,9 @@
 //!   baselines on whichever host you gate from.
 //! - `--debug` — cargo dev profile (faster compile).
 
-use crate::{Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root};
+use crate::{
+    Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root, target_dir,
+};
 use std::path::{Path, PathBuf};
 
 /// FFI signature emitted by `truce::plugin!`'s `__truce_screenshot`.
@@ -159,11 +161,14 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     }
 
     if check_mode {
-        // Render to target/screenshots/ for diffing; never overwrite
+        // Render to <target>/screenshots/ for diffing; never overwrite
         // the committed baseline in --check mode. Use the basename
         // of the supplied --out so multiple `--check` invocations
         // don't trample each other in the workspace target dir.
-        let render_dir = root.join("target").join("screenshots");
+        // `target_dir` honours `CARGO_TARGET_DIR` and the workspace's
+        // `.cargo/config.toml`'s `[build].target-dir` so the artifact
+        // landing path tracks where cargo actually builds.
+        let render_dir = target_dir(&root).join("screenshots");
         let fallback_name = format!("{}.png", plugin.crate_name);
         let render_path = render_dir.join(
             resolved_out

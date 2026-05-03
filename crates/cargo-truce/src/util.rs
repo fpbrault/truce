@@ -72,16 +72,14 @@ pub(crate) fn shared_lib_name(stem: &str) -> String {
     }
 }
 
-/// Return the cargo target directory for `root`. Honors the
-/// `CARGO_TARGET_DIR` env var when set (so test harnesses and CI can
-/// share a build cache across crates) and falls back to
-/// `<root>/target/`. Use this anywhere xtask reads or writes inside
-/// the cargo target tree — never hard-code `<root>/target/`.
+/// Resolve cargo's effective target directory for a given workspace
+/// root. Thin re-export of `truce_build::target_dir` so cargo-truce
+/// callers can stay on a `crate::target_dir` import; the actual
+/// resolution logic (`CARGO_TARGET_DIR` → `.cargo/config.toml`'s
+/// `[build].target-dir` → `<root>/target`) lives in truce-build,
+/// shared with truce-test.
 pub(crate) fn target_dir(root: &Path) -> PathBuf {
-    match std::env::var_os("CARGO_TARGET_DIR") {
-        Some(v) if !v.is_empty() => PathBuf::from(v),
-        _ => root.join("target"),
-    }
+    truce_build::target_dir(root)
 }
 
 // Process-scoped active build profile. Drives both `cargo build`'s

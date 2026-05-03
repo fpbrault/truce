@@ -28,6 +28,7 @@ tinytemplate = "1.2"
 # transitive duplication when both are in a workspace build.
 png = "0.18"
 truce-shim-types = { workspace = true }
+truce-build = { workspace = true }
 
 [dependencies.libloading]
 version = "0.9"
