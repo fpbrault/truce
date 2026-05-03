@@ -9,6 +9,14 @@ pub enum ParamRange {
 
 impl ParamRange {
     /// Map a plain value to 0.0–1.0.
+    ///
+    /// Degenerate bounds — `min == max` for `Linear` / `Discrete`,
+    /// non-positive or empty for `Logarithmic`, `count <= 1` for
+    /// `Enum` — collapse to `0.0`. Combined with [`Self::denormalize`]
+    /// returning `min` on the same inputs, the pair is round-trip
+    /// stable: the result always converges to the bottom of the
+    /// (degenerate) range rather than producing NaN or wrapping into
+    /// nonsense.
     pub fn normalize(&self, plain: f64) -> f64 {
         match self {
             Self::Linear { min, max } => {
@@ -41,6 +49,10 @@ impl ParamRange {
     }
 
     /// Map 0.0–1.0 back to a plain value.
+    ///
+    /// Degenerate bounds collapse to `min` (or `0.0` for `Enum` with
+    /// `count <= 1`). See [`Self::normalize`] for the round-trip
+    /// semantics.
     pub fn denormalize(&self, normalized: f64) -> f64 {
         let n = normalized.clamp(0.0, 1.0);
         match self {
@@ -59,7 +71,12 @@ impl ParamRange {
             Self::Discrete { min, max } => {
                 ((*min as f64) + n * (*max as f64 - *min as f64)).round()
             }
-            Self::Enum { count } => (n * (*count as f64 - 1.0)).round(),
+            Self::Enum { count } => {
+                if *count <= 1 {
+                    return 0.0;
+                }
+                (n * (*count as f64 - 1.0)).round()
+            }
         }
     }
 
@@ -140,6 +157,50 @@ mod tests {
             let norm = range.normalize(idx as f64);
             let back = range.denormalize(norm);
             assert_eq!(back as usize, idx);
+        }
+    }
+
+    /// Degenerate bounds (empty/non-positive/single-step) collapse the
+    /// round trip to a fixed point at `min` rather than producing NaN
+    /// or wrapping. Locks in `normalize → 0.0`, `denormalize(0.0) →
+    /// min`, and `normalize(min) → 0.0` for every range variant so a
+    /// future maintainer simplifying one branch can't accidentally
+    /// reintroduce divergent behavior.
+    #[test]
+    fn degenerate_bounds_round_trip_stable() {
+        let cases = [
+            ParamRange::Linear { min: 5.0, max: 5.0 },
+            ParamRange::Logarithmic {
+                min: 100.0,
+                max: 100.0,
+            },
+            ParamRange::Logarithmic {
+                min: -1.0,
+                max: 10.0,
+            },
+            ParamRange::Logarithmic { min: 1.0, max: 0.0 },
+            ParamRange::Discrete { min: 7, max: 7 },
+            ParamRange::Enum { count: 0 },
+            ParamRange::Enum { count: 1 },
+        ];
+        for range in cases {
+            let bottom = range.min();
+            assert_eq!(range.normalize(bottom), 0.0, "normalize(min) for {range:?}");
+            assert_eq!(range.normalize(42.0), 0.0, "normalize(arbitrary) for {range:?}");
+            assert_eq!(
+                range.denormalize(0.0),
+                bottom,
+                "denormalize(0.0) for {range:?}"
+            );
+            assert_eq!(
+                range.denormalize(0.5),
+                bottom,
+                "denormalize(mid) for {range:?}"
+            );
+            // Double round trip lands at the same fixed point.
+            let once = range.denormalize(range.normalize(42.0));
+            let twice = range.denormalize(range.normalize(once));
+            assert_eq!(once, twice, "round-trip not stable for {range:?}");
         }
     }
 }

@@ -180,8 +180,11 @@ impl<E: ParamEnum> EnumParam<E> {
 
     /// Format a plain value (index as f64) to the variant name string.
     ///
-    /// Used by the `#[derive(Params)]` macro for default `format_value` on enum fields.
-    pub fn format_by_index(&self, value: f64) -> String {
+    /// Associated function — the dispatch is purely on `E`, no instance
+    /// state is read. The `#[derive(Params)]` macro calls it as
+    /// `<EnumParam<E>>::format_by_index(value)` so the field type
+    /// supplies `E`.
+    pub fn format_by_index(value: f64) -> String {
         E::from_index(value.round() as usize).name().to_string()
     }
 }
@@ -200,15 +203,16 @@ impl<E: ParamEnum> EnumParam<E> {
 ///     pub meter_left: MeterSlot,
 /// }
 /// ```
+///
+/// `id` is `pub` so the `#[derive(Params)]` macro can construct a
+/// `MeterSlot { id: <auto-assigned> }` directly without going through
+/// a `pub fn new(id)` constructor that would let user code mint
+/// arbitrary slots and break the auto-assignment contract.
 pub struct MeterSlot {
     pub id: u32,
 }
 
 impl MeterSlot {
-    pub fn new(id: u32) -> Self {
-        Self { id }
-    }
-
     pub fn id(&self) -> u32 {
         self.id
     }
