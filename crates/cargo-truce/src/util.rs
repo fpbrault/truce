@@ -113,6 +113,23 @@ pub(crate) fn set_debug_profile(debug: bool) {
     set_build_profile(if debug { "debug" } else { "release" });
 }
 
+/// Set a process-wide env var for downstream `cargo build` invocations
+/// to inherit. Wraps the 2024-edition `unsafe std::env::set_var` so
+/// the soundness comment lives in one place.
+///
+/// Soundness: `set_var` is `unsafe` because it mutates process-wide env
+/// state without synchronization, and Rust can't see other threads
+/// reading the same map (e.g. cpal / coreaudio threads on macOS,
+/// allocator threads on Linux). `cargo truce` reaches this helper from
+/// the install / build paths, both of which run only on the main
+/// thread before any worker thread spawns — at the call site we hold
+/// no concurrent reader. New callers must satisfy the same invariant.
+pub(crate) fn set_build_env(key: &str, value: &str) {
+    unsafe {
+        std::env::set_var(key, value);
+    }
+}
+
 /// Preflight check for `cargo truce install --shell` / `build --shell`:
 /// the project's `Cargo.toml` (single-crate plugin or workspace root)
 /// must declare a `[profile.shell]` table so `cargo build --profile

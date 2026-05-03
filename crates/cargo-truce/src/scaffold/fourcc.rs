@@ -17,7 +17,14 @@ use super::PluginSpec;
 /// 2. If fewer than 4 initials, backfill from the last segment's remaining
 ///    characters first (the differentiator), then earlier segments.
 /// 3. Pad with 'X' if still short.
+///
+/// Always returns a 4-character ASCII string; on inputs with no
+/// alphanumeric content (`""`, `"---"`) it falls through to all-`'X'`.
 pub fn to_fourcc(s: &str) -> String {
+    // `filter_map` keeps the iterator chain total — no `unwrap` after
+    // the `!seg.is_empty()` guard, no defensive panic on empty input.
+    // `chars().next()` returns `None` only when the segment was empty,
+    // which the split filter has already excluded.
     let segments: Vec<&str> = s
         .split(|c: char| !c.is_alphanumeric())
         .filter(|seg| !seg.is_empty())
@@ -25,7 +32,8 @@ pub fn to_fourcc(s: &str) -> String {
 
     let mut code: Vec<char> = segments
         .iter()
-        .map(|seg| seg.chars().next().unwrap().to_uppercase().next().unwrap())
+        .filter_map(|seg| seg.chars().next())
+        .flat_map(|c| c.to_uppercase())
         .collect();
 
     if code.len() >= 4 {
@@ -54,7 +62,13 @@ pub fn to_fourcc(s: &str) -> String {
 /// Assign collision-free fourcc codes to all plugins. When two plugins produce
 /// the same code, the later one gets its last character replaced with '2'–'9',
 /// then 'A'–'Z' until a unique code is found.
-pub fn resolve_fourccs(plugins: &[PluginSpec]) -> HashMap<String, String> {
+///
+/// Returns `Err` only when 35+ plugins share the same 3-character
+/// prefix and the suffix slots ('2'–'9', 'A'–'Z' = 34 distinct
+/// characters) are exhausted. The caller (`scaffold`) should surface
+/// this as a clean error — the user can rename one plugin to break the
+/// prefix collision instead of getting a process panic mid-scaffold.
+pub fn resolve_fourccs(plugins: &[PluginSpec]) -> Result<HashMap<String, String>, String> {
     let mut assignments: HashMap<String, String> = HashMap::new();
     let mut used: HashSet<String> = HashSet::new();
 
@@ -77,15 +91,17 @@ pub fn resolve_fourccs(plugins: &[PluginSpec]) -> HashMap<String, String> {
             }
         }
         if !resolved {
-            // Extremely unlikely: 34 slots exhausted. Panic is acceptable here
-            // since it means 35+ plugins share the same 3-char prefix.
-            panic!("cannot resolve fourcc collision for '{}'", p.name);
+            return Err(format!(
+                "cannot resolve fourcc collision for '{}': 34+ plugins share \
+                 the prefix '{}'. Rename one to break the collision.",
+                p.name, base,
+            ));
         }
         used.insert(fc.clone());
         assignments.insert(p.name.clone(), fc);
     }
 
-    assignments
+    Ok(assignments)
 }
 
 #[cfg(test)]
@@ -164,7 +180,7 @@ mod tests {
                 kind: PluginKind::Instrument,
             },
         ];
-        let map = resolve_fourccs(&plugins);
+        let map = resolve_fourccs(&plugins).unwrap();
         assert_eq!(map["gain"], to_fourcc("gain"));
         assert_eq!(map["synth"], to_fourcc("synth"));
     }
@@ -182,7 +198,7 @@ mod tests {
                 kind: PluginKind::Effect,
             },
         ];
-        let map = resolve_fourccs(&plugins);
+        let map = resolve_fourccs(&plugins).unwrap();
         assert_ne!(map["aa"], map["ab"]);
         assert_eq!(map["aa"].len(), 4);
         assert_eq!(map["ab"].len(), 4);
@@ -204,7 +220,7 @@ mod tests {
                 kind: PluginKind::Effect,
             },
         ];
-        let map = resolve_fourccs(&plugins);
+        let map = resolve_fourccs(&plugins).unwrap();
         let mut codes: Vec<&String> = map.values().collect();
         codes.sort();
         codes.dedup();
@@ -223,7 +239,7 @@ mod tests {
                 kind: PluginKind::Effect,
             },
         ];
-        let map = resolve_fourccs(&plugins);
+        let map = resolve_fourccs(&plugins).unwrap();
         // First plugin should keep its natural code
         assert_eq!(map["soft-clip"], to_fourcc("soft-clip"));
     }

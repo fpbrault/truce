@@ -44,14 +44,23 @@ fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
 }
 
 fn clear_au_caches() {
-    let home = dirs::home_dir().unwrap();
-    for dir in [
-        home.join("Library/Caches/AudioUnitCache"),
-        home.join("Library/Containers/com.apple.garageband10/Data/Library/Caches/AudioUnitCache"),
-        home.join("Library/Containers/com.apple.logicpro10/Data/Library/Caches/AudioUnitCache"),
-        home.join("Library/Caches/com.apple.logic10/AudioUnitCache"),
-    ] {
-        let _ = fs::remove_dir_all(&dir);
+    // No HOME (or USERPROFILE on Windows) → skip the per-user cache
+    // sweep silently. The system-wide `killall AudioComponentRegistrar`
+    // below still runs; AU caches in $HOME just don't exist for a user
+    // whose env we can't resolve.
+    if let Some(home) = dirs::home_dir() {
+        for dir in [
+            home.join("Library/Caches/AudioUnitCache"),
+            home.join(
+                "Library/Containers/com.apple.garageband10/Data/Library/Caches/AudioUnitCache",
+            ),
+            home.join(
+                "Library/Containers/com.apple.logicpro10/Data/Library/Caches/AudioUnitCache",
+            ),
+            home.join("Library/Caches/com.apple.logic10/AudioUnitCache"),
+        ] {
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
     let _ = Command::new("killall")
         .args(["-9", "AudioComponentRegistrar"])

@@ -53,7 +53,7 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
     }
 
     eprintln!("Clearing AU/DAW caches...");
-    let home = dirs::home_dir().unwrap();
+    let home = dirs::require_home_dir()?;
 
     // AU caches (system + sandboxed DAW containers)
     let cache_dirs = [

@@ -6,9 +6,19 @@
 //! --last <duration>` directly.
 
 use crate::Res;
-use std::process::Command;
 
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn cmd_log_stream_au() -> Res {
+    Err("`cargo truce log-stream-au` is macOS-only — it wraps Apple's \
+         `/usr/bin/log stream`, which doesn't exist on Linux or Windows. \
+         AU v3 itself is also macOS-only."
+        .into())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn cmd_log_stream_au() -> Res {
+    use std::process::Command;
+
     eprintln!("Streaming AU v3 appex logs (Ctrl-C to stop)...\n");
     let status = Command::new("/usr/bin/log")
         .args([

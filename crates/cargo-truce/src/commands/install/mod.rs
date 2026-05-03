@@ -160,254 +160,40 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         // re-emits it via `cargo:rustc-env=`, which bakes it into the
         // shell binary as a compile-time constant. The shell's runtime
         // dylib_path() lookup uses `option_env!("TRUCE_LOGIC_PROFILE")`
-        // to know which target subdir holds the logic dylib.
-        // 2024-edition: `set_var` is unsafe (process-wide env state).
-        // Single-threaded install path; main thread is the only writer.
-        unsafe {
-            std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
-        }
+        // to know which target subdir holds the logic dylib. The
+        // 2024-edition unsafety is documented once on `set_build_env`.
+        crate::set_build_env("TRUCE_LOGIC_PROFILE", logic_profile);
     }
 
     // --- Build ---
     //
-    // One cargo invocation per (plugin, format) pair so that the
-    // name-override env vars can be applied per-plugin. The shared
-    // target cache means incremental rebuilds stay fast even though
-    // we invoke cargo more times than strictly necessary.
+    // One cargo invocation per (plugin, format) pair so the
+    // name-override env vars can be applied per-plugin. Platform gates
+    // (AU is macOS-only, AAX is macOS/Windows + SDK-configured) and
+    // the format-suffix copy live inside `build_format_dylibs`; the
+    // shared target cache absorbs the cost of one cargo invocation
+    // per format.
     if !no_build {
-        if clap {
-            let mut format_features: Vec<&str> = vec!["clap"];
-            for f in &extra_features {
-                format_features.push(f);
-            }
-            let features_combined = format_features.join(",");
-            if !extra_features.is_empty() {
-                let label = extra_features.join(" + ");
-                crate::vprintln!("Building CLAP ({label})...");
-            } else {
-                crate::vprintln!("Building CLAP...");
-            }
-            for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-                if let Some(n) = p.clap_name.as_deref() {
-                    env_pairs.push(("TRUCE_CLAP_NAME_OVERRIDE", n));
-                }
-                cargo_build(
-                    &env_pairs,
-                    &[
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        &features_combined,
-                    ],
-                    dt,
-                )?;
-                let src = release_lib(&root, &p.dylib_stem());
-                let dst = release_lib(&root, &format!("{}_clap", p.dylib_stem()));
-                if src.exists() {
-                    fs_ctx::copy(&src, &dst)?;
-                }
+        use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
+        let format_selection: &[(bool, BuildFormat)] = &[
+            (clap, BuildFormat::Clap),
+            (vst3, BuildFormat::Vst3),
+            (vst2, BuildFormat::Vst2),
+            (lv2, BuildFormat::Lv2),
+            (au2, BuildFormat::Au2),
+            (aax, BuildFormat::Aax),
+        ];
+        for &(selected, format) in format_selection {
+            if selected {
+                build_format_dylibs(format, &plugins, &extra_features, &config, &root, dt)?;
             }
         }
 
-        if vst3 {
-            let mut format_features: Vec<&str> = vec!["vst3"];
-            for f in &extra_features {
-                format_features.push(f);
-            }
-            let features_combined = format_features.join(",");
-            if !extra_features.is_empty() {
-                let label = extra_features.join(" + ");
-                crate::vprintln!("Building VST3 ({label})...");
-            } else {
-                crate::vprintln!("Building VST3...");
-            }
-            for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-                if let Some(n) = p.vst3_name.as_deref() {
-                    env_pairs.push(("TRUCE_VST3_NAME_OVERRIDE", n));
-                }
-                cargo_build(
-                    &env_pairs,
-                    &[
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        &features_combined,
-                    ],
-                    dt,
-                )?;
-                let src = release_lib(&root, &p.dylib_stem());
-                let dst = release_lib(&root, &format!("{}_vst3", p.dylib_stem()));
-                if src.exists() {
-                    fs_ctx::copy(&src, &dst)?;
-                }
-            }
-        }
-
-        if vst2 {
-            crate::vprintln!("Building VST2...");
-            for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-                if let Some(n) = p.vst2_name.as_deref() {
-                    env_pairs.push(("TRUCE_VST2_NAME_OVERRIDE", n));
-                }
-                cargo_build(
-                    &env_pairs,
-                    &[
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        "vst2",
-                    ],
-                    dt,
-                )?;
-                let src = release_lib(&root, &p.dylib_stem());
-                let dst = release_lib(&root, &format!("{}_vst2", p.dylib_stem()));
-                fs_ctx::copy(&src, &dst)?;
-            }
-        }
-
-        if lv2 {
-            crate::vprintln!("Building LV2...");
-            for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-                if let Some(n) = p.lv2_name.as_deref() {
-                    env_pairs.push(("TRUCE_LV2_NAME_OVERRIDE", n));
-                }
-                cargo_build(
-                    &env_pairs,
-                    &[
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        "lv2",
-                    ],
-                    dt,
-                )?;
-                let src = release_lib(&root, &p.dylib_stem());
-                let dst = release_lib(&root, &format!("{}_lv2", p.dylib_stem()));
-                fs_ctx::copy(&src, &dst)?;
-            }
-        }
-
-        if au2 {
-            #[cfg(target_os = "macos")]
-            {
-                crate::vprintln!("Building AU v2...");
-                for p in &plugins {
-                    let mut env_pairs: Vec<(&str, &str)> = vec![
-                        ("TRUCE_AU_VERSION", "2"),
-                        ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
-                    ];
-                    if let Some(n) = p.au_name.as_deref() {
-                        env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
-                    }
-                    cargo_build(
-                        &env_pairs,
-                        &[
-                            "-p",
-                            &p.crate_name,
-                            "--no-default-features",
-                            "--features",
-                            "au",
-                        ],
-                        dt,
-                    )?;
-                    let src = release_lib(&root, &p.dylib_stem());
-                    let dst = release_lib(&root, &format!("{}_au", p.dylib_stem()));
-                    fs_ctx::copy(&src, &dst)?;
-                }
-            }
-            #[cfg(not(target_os = "macos"))]
-            crate::log_skip(
-                "AU v2: not supported on this platform. Audio Unit is macOS-only.".to_string(),
-            );
-        }
-
-        if aax {
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            {
-                // SDK-not-configured is project-wide, not per-plugin —
-                // emit one skip line and bypass the build loop so we
-                // don't redundantly cargo-build the `aax` feature only
-                // to have `emit_aax_bundle` no-op each plugin.
-                if crate::resolve_aax_sdk_path(&config).is_none() {
-                    let hint = if cfg!(target_os = "windows") {
-                        "[windows].aax_sdk_path"
-                    } else {
-                        "[macos].aax_sdk_path"
-                    };
-                    crate::log_skip(format!(
-                        "AAX: SDK not configured. Set {hint} in truce.toml or the AAX_SDK_PATH env var."
-                    ));
-                } else {
-                    crate::vprintln!("Building AAX...");
-                    for p in &plugins {
-                        let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-                        if let Some(n) = p.aax_name.as_deref() {
-                            env_pairs.push(("TRUCE_AAX_NAME_OVERRIDE", n));
-                        }
-                        cargo_build(
-                            &env_pairs,
-                            &[
-                                "-p",
-                                &p.crate_name,
-                                "--no-default-features",
-                                "--features",
-                                "aax",
-                            ],
-                            dt,
-                        )?;
-                        let src = release_lib(&root, &p.dylib_stem());
-                        let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
-                        fs_ctx::copy(&src, &dst)?;
-                        emit_aax_bundle(&root, p, &config, false)?;
-                    }
-                }
-            }
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            crate::log_skip(
-                "AAX: not supported on this platform. Use macOS or Windows to build AAX."
-                    .to_string(),
-            );
-        }
-
-        // Shell mode: also build the logic dylibs (the dylibs each
-        // installed shell will dlopen at runtime). Built in the
-        // profile baked into the shell — release by default, debug
-        // when `--debug` was passed. Scoped per-plugin (was
-        // `--workspace` until 0.13.x; that rebuilt every framework
-        // crate on a fresh checkout).
+        // Shell mode: also build the logic dylibs the installed shells
+        // dlopen at runtime. Built in the profile baked into the shell
+        // (release by default, debug when `--debug` was passed).
         if shell_mode {
-            for p in &plugins {
-                crate::vprintln!(
-                    "Building {} logic dylib for {}...",
-                    logic_profile,
-                    p.crate_name
-                );
-                let mut cmd = Command::new("cargo");
-                cmd.arg("build").arg("-p").arg(&p.crate_name);
-                match logic_profile {
-                    "debug" => {} // cargo default
-                    "release" => {
-                        cmd.arg("--release");
-                    }
-                    other => {
-                        cmd.arg("--profile").arg(other);
-                    }
-                }
-                #[cfg(target_os = "macos")]
-                cmd.env("MACOSX_DEPLOYMENT_TARGET", dt);
-                let status = cmd.status()?;
-                if !status.success() {
-                    return Err(format!("{logic_profile} build of {} failed", p.crate_name).into());
-                }
-            }
+            build_logic_dylibs(&plugins, logic_profile, dt)?;
         }
     }
 
@@ -470,10 +256,10 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
 
     #[cfg(target_os = "macos")]
-    if au2 {
-        let cache = dirs::home_dir()
-            .unwrap()
-            .join("Library/Caches/AudioUnitCache");
+    if au2
+        && let Some(home) = dirs::home_dir()
+    {
+        let cache = home.join("Library/Caches/AudioUnitCache");
         let _ = fs::remove_dir_all(&cache);
         crate::vprintln!("Cleared AU cache.");
     }

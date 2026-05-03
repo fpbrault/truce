@@ -1,0 +1,268 @@
+//! Per-format cdylib build helper, shared by `cargo truce build` and
+//! `cargo truce install`.
+//!
+//! Both commands run an identical sequence for every selected format:
+//!
+//! 1. Skip on unsupported platforms (AU is macOS-only, AAX is macOS /
+//!    Windows) with a single `log_skip` line.
+//! 2. For AAX, gate on a configured SDK path (project-wide check, not
+//!    per-plugin — emit one skip line and bypass the cargo build loop
+//!    when missing).
+//! 3. `cargo build` each plugin with the format's feature set, picking
+//!    up the per-plugin `TRUCE_*_NAME_OVERRIDE` env vars and (for AU2)
+//!    `TRUCE_AU_VERSION` / `TRUCE_AU_PLUGIN_ID`.
+//! 4. Copy the produced `lib<stem>.<dylib-ext>` to a format-suffixed
+//!    path (`<stem>_clap`, `<stem>_vst3`, …) so the next format build
+//!    doesn't overwrite the previous one (every plugin's cdylib lands
+//!    at the same canonical cargo path).
+//! 5. For AAX, also call `emit_aax_bundle` to assemble the `.aaxplugin`
+//!    that the install / package paths consume.
+//!
+//! Centralizing this loop turned ~400 paste-copies of the same per-format
+//! pattern (six formats × two commands) into one driver plus a small
+//! enum.
+
+use crate::util::fs_ctx;
+use crate::{Config, PluginDef, Res, cargo_build, release_lib};
+use std::path::Path;
+
+/// One of the per-format cdylib targets the build / install pipelines
+/// produce. Encodes the cargo feature flag, the format-suffix used in
+/// the workspace target dir, and the platform-gate behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BuildFormat {
+    Clap,
+    Vst3,
+    Vst2,
+    Lv2,
+    Au2,
+    Aax,
+}
+
+impl BuildFormat {
+    /// Cargo feature flag passed to `cargo build --features <feature>`.
+    fn feature(self) -> &'static str {
+        match self {
+            BuildFormat::Clap => "clap",
+            BuildFormat::Vst3 => "vst3",
+            BuildFormat::Vst2 => "vst2",
+            BuildFormat::Lv2 => "lv2",
+            BuildFormat::Au2 => "au",
+            BuildFormat::Aax => "aax",
+        }
+    }
+
+    /// Human-facing name used in the "Building <label>..." banner.
+    fn label(self) -> &'static str {
+        match self {
+            BuildFormat::Clap => "CLAP",
+            BuildFormat::Vst3 => "VST3",
+            BuildFormat::Vst2 => "VST2",
+            BuildFormat::Lv2 => "LV2",
+            BuildFormat::Au2 => "AU v2",
+            BuildFormat::Aax => "AAX",
+        }
+    }
+
+    /// Format-suffix appended to the dylib stem on copy. Keeps each
+    /// format's binary distinct in `target/<profile>/` so subsequent
+    /// per-format builds don't overwrite earlier ones.
+    fn dylib_suffix(self) -> &'static str {
+        match self {
+            BuildFormat::Clap => "_clap",
+            BuildFormat::Vst3 => "_vst3",
+            BuildFormat::Vst2 => "_vst2",
+            BuildFormat::Lv2 => "_lv2",
+            BuildFormat::Au2 => "_au",
+            BuildFormat::Aax => "_aax",
+        }
+    }
+
+    /// Per-plugin `TRUCE_*_NAME_OVERRIDE` env var the format wrapper
+    /// reads at build time to override the bundle's display name. Each
+    /// format wires its own override in the corresponding macro
+    /// (`truce-clap`, `truce-vst3`, …).
+    fn name_override_env(self) -> &'static str {
+        match self {
+            BuildFormat::Clap => "TRUCE_CLAP_NAME_OVERRIDE",
+            BuildFormat::Vst3 => "TRUCE_VST3_NAME_OVERRIDE",
+            BuildFormat::Vst2 => "TRUCE_VST2_NAME_OVERRIDE",
+            BuildFormat::Lv2 => "TRUCE_LV2_NAME_OVERRIDE",
+            BuildFormat::Au2 => "TRUCE_AU_NAME_OVERRIDE",
+            BuildFormat::Aax => "TRUCE_AAX_NAME_OVERRIDE",
+        }
+    }
+
+    /// Plugin's per-format display-name override, if any.
+    fn name_override<'a>(self, p: &'a PluginDef) -> Option<&'a str> {
+        match self {
+            BuildFormat::Clap => p.clap_name.as_deref(),
+            BuildFormat::Vst3 => p.vst3_name.as_deref(),
+            BuildFormat::Vst2 => p.vst2_name.as_deref(),
+            BuildFormat::Lv2 => p.lv2_name.as_deref(),
+            BuildFormat::Au2 => p.au_name.as_deref(),
+            BuildFormat::Aax => p.aax_name.as_deref(),
+        }
+    }
+}
+
+/// Build cdylibs for one format across `plugins`. Centralizes the
+/// per-format banner, env-var assembly, cargo build, copy-to-suffix,
+/// and (for AAX) `emit_aax_bundle` step that `cargo truce build` and
+/// `cargo truce install` both used to inline six times each.
+///
+/// Platform gates:
+/// - `Au2`: macOS only. Other platforms emit `crate::log_skip` and
+///   return `Ok(())` so callers don't need cfg blocks at the call site.
+/// - `Aax`: macOS / Windows only. Linux emits `log_skip`.
+/// - `Aax` SDK: macOS / Windows with no SDK configured emits one
+///   project-wide `log_skip` and skips the build loop entirely.
+///
+/// `extra_features` are appended to the format's own feature (used by
+/// shell-mode builds to add `"shell"`); empty otherwise.
+pub(crate) fn build_format_dylibs(
+    format: BuildFormat,
+    plugins: &[&PluginDef],
+    extra_features: &[&str],
+    config: &Config,
+    root: &Path,
+    deployment_target: &str,
+) -> Res {
+    // Platform / SDK gates first — every gate emits a single skip line
+    // and exits cleanly, so the caller's "if format_selected { build }"
+    // doesn't need its own cfg arms.
+    match format {
+        BuildFormat::Au2 => {
+            #[cfg(not(target_os = "macos"))]
+            {
+                crate::log_skip(
+                    "AU v2: not supported on this platform. Audio Unit is macOS-only."
+                        .to_string(),
+                );
+                return Ok(());
+            }
+        }
+        BuildFormat::Aax => {
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
+                crate::log_skip(
+                    "AAX: not supported on this platform. Use macOS or Windows to build AAX."
+                        .to_string(),
+                );
+                return Ok(());
+            }
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if crate::resolve_aax_sdk_path(config).is_none() {
+                let hint = if cfg!(target_os = "windows") {
+                    "[windows].aax_sdk_path"
+                } else {
+                    "[macos].aax_sdk_path"
+                };
+                crate::log_skip(format!(
+                    "AAX: SDK not configured. Set {hint} in truce.toml or the AAX_SDK_PATH env var."
+                ));
+                return Ok(());
+            }
+        }
+        _ => {}
+    }
+
+    // Build banner. Mirrors the per-format pre-loop log line each
+    // command used to emit; the shell-mode label gets the extra-feature
+    // list parenthesised (e.g. "Building CLAP (shell)...").
+    if extra_features.is_empty() {
+        crate::vprintln!("Building {}...", format.label());
+    } else {
+        let extras = extra_features.join(" + ");
+        crate::vprintln!("Building {} ({extras})...", format.label());
+    }
+
+    let mut format_features: Vec<&str> = vec![format.feature()];
+    format_features.extend_from_slice(extra_features);
+    let combined = format_features.join(",");
+
+    for p in plugins {
+        // Per-plugin env: AU2 needs the shim version + bundle id; every
+        // format optionally overrides its display name.
+        let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+        if format == BuildFormat::Au2 {
+            env_pairs.push(("TRUCE_AU_VERSION", "2"));
+            env_pairs.push(("TRUCE_AU_PLUGIN_ID", &p.bundle_id));
+        }
+        if let Some(n) = format.name_override(p) {
+            env_pairs.push((format.name_override_env(), n));
+        }
+
+        cargo_build(
+            &env_pairs,
+            &[
+                "-p",
+                &p.crate_name,
+                "--no-default-features",
+                "--features",
+                &combined,
+            ],
+            deployment_target,
+        )?;
+
+        let src = release_lib(root, &p.dylib_stem());
+        let dst = release_lib(root, &format!("{}{}", p.dylib_stem(), format.dylib_suffix()));
+        // CLAP / VST3 historically guarded the copy with `if src.exists()`
+        // because a feature-flagged plugin can legitimately produce no
+        // output for a format it doesn't support; preserve that for
+        // every format so the loop is uniformly tolerant.
+        if src.exists() {
+            fs_ctx::copy(&src, &dst)?;
+        }
+
+        // AAX additionally assembles the `.aaxplugin` bundle in
+        // `target/bundles/` here — both install (which then copies the
+        // bundle to /Library/...) and build (which leaves it in
+        // `target/bundles/`) want the bundle assembled.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if format == BuildFormat::Aax {
+            crate::commands::install::aax::emit_aax_bundle(root, p, config, false)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Build the per-plugin "logic" dylib (the cdylib the shell-mode shell
+/// dlopens at runtime). Profile is `release` by default; `--debug`
+/// flips it to cargo's debug profile; custom profiles fall through to
+/// `cargo build --profile <name>`. Scoped per-plugin so a fresh
+/// checkout doesn't rebuild every framework crate.
+pub(crate) fn build_logic_dylibs(
+    plugins: &[&PluginDef],
+    logic_profile: &str,
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] deployment_target: &str,
+) -> Res {
+    use std::process::Command;
+
+    for p in plugins {
+        crate::vprintln!(
+            "Building {} logic dylib for {}...",
+            logic_profile,
+            p.crate_name
+        );
+        let mut cmd = Command::new("cargo");
+        cmd.arg("build").arg("-p").arg(&p.crate_name);
+        match logic_profile {
+            "debug" => {} // cargo default
+            "release" => {
+                cmd.arg("--release");
+            }
+            other => {
+                cmd.arg("--profile").arg(other);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
+        let status = cmd.status()?;
+        if !status.success() {
+            return Err(format!("{logic_profile} build of {} failed", p.crate_name).into());
+        }
+    }
+    Ok(())
+}

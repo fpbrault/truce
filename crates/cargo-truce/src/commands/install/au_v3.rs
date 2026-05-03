@@ -491,8 +491,9 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
     // (which silently no-ops if `pkd` is mid-respawn).
     run_silent("killall", &["-9", "pkd"]);
     run_silent("killall", &["-9", "AudioComponentRegistrar"]);
-    let home = dirs::home_dir().unwrap();
-    let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
+    if let Some(home) = dirs::home_dir() {
+        let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
+    }
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     // ---- Phase 3: register + verify per plugin ----

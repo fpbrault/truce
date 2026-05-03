@@ -80,9 +80,22 @@ impl Renderer {
     }
 
     pub fn render<C: Serialize>(&self, name: &str, ctx: &C) -> String {
-        self.tt
-            .render(name, ctx)
-            .unwrap_or_else(|e| panic!("template '{name}' failed to render: {e}"))
+        // tinytemplate's `Display` for its error type already prints
+        // the line number inside the template plus the failing variable
+        // (e.g. "Encountered render error on line 14: ..."), so we
+        // include the registered template name on the outside and let
+        // the underlying error carry the in-template location.
+        // Templates are static `include_str!` literals and contexts
+        // are crate-internal — every render-time failure is a
+        // programmer error in this crate, hence `panic!` rather than
+        // bubbling a `Result` to the scaffold driver.
+        self.tt.render(name, ctx).unwrap_or_else(|e| {
+            panic!(
+                "scaffold template '{name}' failed to render: {e}\n\
+                 (this is a bug in cargo-truce — the template or its \
+                 context drifted; please report it.)"
+            )
+        })
     }
 }
 

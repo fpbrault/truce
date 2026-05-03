@@ -81,9 +81,9 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             dt,
         )?;
 
-        let built = standalone_built_path(&root, &plugin.bundle_id);
+        let built = standalone_built_path(&root, &plugin.crate_name);
         if !built.exists() {
-            let bin_name = standalone_bin_name(&plugin.bundle_id);
+            let bin_name = standalone_bin_name(&plugin.crate_name);
             return Err(format!(
                 "standalone binary not found at {}. \
                  Does your plugin have a [[bin]] target named '{bin_name}'?",
@@ -167,7 +167,7 @@ fn stage_macos_app_bundle(
     let macos = contents.join("MacOS");
     fs_ctx::create_dir_all(&macos)?;
 
-    let exe_name = standalone_bin_name(&plugin.bundle_id);
+    let exe_name = standalone_bin_name(&plugin.crate_name);
     fs_ctx::copy(built, macos.join(&exe_name))?;
 
     // Microphone usage description is plugin-specific so the
@@ -230,7 +230,7 @@ fn exec_path_inside_stage(
         staged
             .join("Contents")
             .join("MacOS")
-            .join(standalone_bin_name(&plugin.bundle_id))
+            .join(standalone_bin_name(&plugin.crate_name))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -240,7 +240,13 @@ fn exec_path_inside_stage(
 
 /// Cargo's output path for the standalone binary. Tracks the active
 /// build profile so `--debug` finds the bin under `target/debug/`.
-fn standalone_built_path(root: &std::path::Path, bundle_id: &str) -> PathBuf {
+///
+/// `crate_name` (not `bundle_id`) — the scaffold's `[[bin]]` declares
+/// `name = "{crate_name}-standalone"`, so cargo writes the binary under
+/// `target/<profile>/{crate_name}-standalone(.exe)`. Older revisions
+/// passed `bundle_id` here, which silently broke `cargo truce run`
+/// whenever a plugin's `bundle_id` differed from its cargo crate name.
+fn standalone_built_path(root: &std::path::Path, crate_name: &str) -> PathBuf {
     let profile = if crate::is_debug_profile() {
         "debug"
     } else {
@@ -248,14 +254,14 @@ fn standalone_built_path(root: &std::path::Path, bundle_id: &str) -> PathBuf {
     };
     crate::target_dir(root)
         .join(profile)
-        .join(standalone_bin_name(bundle_id))
+        .join(standalone_bin_name(crate_name))
 }
 
-fn standalone_bin_name(bundle_id: &str) -> String {
+fn standalone_bin_name(crate_name: &str) -> String {
     if cfg!(windows) {
-        format!("{bundle_id}-standalone.exe")
+        format!("{crate_name}-standalone.exe")
     } else {
-        format!("{bundle_id}-standalone")
+        format!("{crate_name}-standalone")
     }
 }
 
