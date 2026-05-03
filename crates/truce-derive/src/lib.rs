@@ -22,7 +22,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use std::collections::HashSet;
 use syn::ext::IdentExt;
-use syn::{Data, DeriveInput, Fields, Lit, Type, TypePath};
+use syn::{Data, DeriveInput, Expr, Fields, Lit, Type, TypePath, UnOp};
 use truce_build::{Config, PluginDef};
 
 /// Resolve `truce.toml` and pull out the `[[plugin]]` entry for the
@@ -324,11 +324,20 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                     }
                 }
                 "default" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    match value {
-                        Lit::Float(lit) => attrs.default = Some(lit.base10_parse()?),
-                        Lit::Int(lit) => attrs.default = Some(lit.base10_parse::<i64>()? as f64),
-                        _ => {}
+                    // `meta.value()` returns the stream after `=`. Parse as
+                    // an `Expr` so we accept negative literals like
+                    // `default = -1` (which `Lit` alone refuses — `-1` is
+                    // an `Expr::Unary(Neg, Lit::Int(1))`, not a literal).
+                    let expr: Expr = meta.value()?.parse()?;
+                    match parse_default_expr(&expr) {
+                        Some(v) => attrs.default = Some(v),
+                        None => {
+                            return Err(meta.error(
+                                "expected a numeric literal for `default` \
+                                 (e.g. `default = 0.5`, `default = 3`, \
+                                 `default = -1`)",
+                            ));
+                        }
                     }
                 }
                 "unit" => {
@@ -388,6 +397,30 @@ fn is_meter_slot(ty: &Type) -> bool {
 #[allow(dead_code)]
 fn has_param_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("param"))
+}
+
+/// Coerce a `default = ...` attribute expression into an `f64`.
+///
+/// `meta.value().parse::<Lit>()` rejects unary-negated literals
+/// (`-1`) because the negation is an `Expr::Unary`, not part of the
+/// literal token. Parse as `Expr` instead, then unwrap the standard
+/// shapes: bare int/float literals (positive) and `-int` / `-float`
+/// (negative). Anything more elaborate (`1 + 2`, `f()`) returns
+/// `None` so the caller can emit a `compile_error!`.
+fn parse_default_expr(expr: &Expr) -> Option<f64> {
+    match expr {
+        Expr::Lit(syn::ExprLit { lit, .. }) => match lit {
+            Lit::Float(lit) => lit.base10_parse::<f64>().ok(),
+            Lit::Int(lit) => lit.base10_parse::<i64>().ok().map(|n| n as f64),
+            _ => None,
+        },
+        Expr::Unary(syn::ExprUnary {
+            op: UnOp::Neg(_),
+            expr: inner,
+            ..
+        }) => parse_default_expr(inner).map(|v| -v),
+        _ => None,
+    }
 }
 
 /// Collect parameter fields, nested fields, and meter fields from a struct.
@@ -588,6 +621,61 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     let short_name = a.short_name.as_deref().unwrap_or(name);
     let group = a.group.as_deref().unwrap_or("");
     let default_plain = a.default.unwrap_or(0.0);
+
+    // Compile-time sanity check on `default = ...`. Catches the
+    // user-error cases that used to silently saturate at runtime
+    // (`as u32` on a negative `default_plain`, `as i64` on a
+    // fractional value). The variant-count range check for
+    // EnumParam still runs at construction time because we don't
+    // have `variant_count()` at expansion time without per-call
+    // const-eval plumbing.
+    if let Some(d) = a.default {
+        let err = match f.kind {
+            ParamKind::Bool => {
+                if d != 0.0 && d != 1.0 {
+                    Some(format!(
+                        "BoolParam default {} must be 0 or 1; got {}",
+                        name, d
+                    ))
+                } else {
+                    None
+                }
+            }
+            ParamKind::Int => {
+                if !d.is_finite() || (d as i64 as f64) != d {
+                    Some(format!(
+                        "IntParam '{}' default must be an integer literal; got {}",
+                        name, d
+                    ))
+                } else {
+                    None
+                }
+            }
+            ParamKind::Enum => {
+                if !d.is_finite() || d < 0.0 || (d as u32 as f64) != d {
+                    Some(format!(
+                        "EnumParam '{}' default must be a non-negative integer (variant index); got {}",
+                        name, d
+                    ))
+                } else {
+                    None
+                }
+            }
+            ParamKind::Float => {
+                if !d.is_finite() {
+                    Some(format!(
+                        "FloatParam '{}' default must be finite; got {}",
+                        name, d
+                    ))
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(msg) = err {
+            return quote! { compile_error!(#msg); };
+        }
+    }
 
     let range = match &a.range {
         Some(r) => parse_range_tokens(r),
@@ -958,10 +1046,18 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! {
             impl #struct_name {
                 pub fn new() -> Self {
-                    Self {
+                    let me = Self {
                         #(#param_inits,)*
                         #(#meter_inits,)*
-                    }
+                    };
+                    // The compile-time ID-collision check only sees
+                    // the IDs declared in *this* struct; a parent ID
+                    // matching a nested-struct ID compiles cleanly
+                    // and would silently corrupt state round-trip.
+                    // Surface the bug as a panic at construction
+                    // instead.
+                    <Self as ::truce::params::Params>::assert_no_id_collisions(&me);
+                    me
                 }
             }
 
