@@ -54,6 +54,14 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
 
 /// Trait implemented by #[derive(Params)] on a struct.
 /// Format wrappers use this to enumerate, read, and write parameters.
+///
+/// Stays dyn-compatible (every method dispatches through `&self`) so
+/// editors can pass `Arc<dyn Params>` into the screenshot pipeline
+/// without naming the concrete type. Generic code that needs to
+/// *construct* a fresh `Params` value should add a `Default` bound
+/// rather than expecting one on the trait — `#[derive(Params)]` emits
+/// `impl Default` alongside the trait impl, so that bound is free for
+/// derive users.
 pub trait Params: Send + Sync + 'static {
     /// All parameter infos, in declaration order.
     fn param_infos(&self) -> Vec<ParamInfo>;
@@ -102,12 +110,4 @@ pub trait Params: Send + Sync + 'static {
 
     /// Restore parameter values from a list of (id, value) pairs.
     fn restore_values(&self, values: &[(u32, f64)]);
-
-    /// Construct a fresh instance with default parameter values.
-    /// Mirrors the inherent `MyParams::new()` that `#[derive(Params)]`
-    /// emits, exposed on the trait so generic code (snapshot helpers,
-    /// etc.) can call it on `P: Params`.
-    fn new() -> Self
-    where
-        Self: Sized;
 }

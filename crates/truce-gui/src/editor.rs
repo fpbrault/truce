@@ -1065,8 +1065,10 @@ mod tests {
                 self.set_plain(id, val);
             }
         }
+    }
 
-        fn new() -> Self {
+    impl Default for TestParams {
+        fn default() -> Self {
             Self::new()
         }
     }
@@ -1373,8 +1375,10 @@ mod tests {
                 self.set_plain(id, val);
             }
         }
+    }
 
-        fn new() -> Self {
+    impl Default for ManyOptionParams {
+        fn default() -> Self {
             Self::new()
         }
     }

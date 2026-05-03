@@ -844,9 +844,14 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                             Some(if value > 0.5 { "On".to_string() } else { "Off".to_string() })
                         }
                     },
-                    ParamKind::Enum => quote! {
-                        x if x == self.#ident.id() => {
-                            Some(self.#ident.format_by_index(value))
+                    ParamKind::Enum => {
+                        let enum_ty = f.enum_type.as_ref().expect(
+                            "ParamKind::Enum field must have enum_type populated",
+                        );
+                        quote! {
+                            x if x == self.#ident.id() => {
+                                Some(::truce::params::EnumParam::<#enum_ty>::format_by_index(value))
+                            }
                         }
                     },
                     _ => quote! {
@@ -947,7 +952,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             .map(|m| {
                 let ident = &m.ident;
                 let id = m.id.unwrap();
-                quote! { #ident: ::truce::params::MeterSlot::new(#id) }
+                quote! { #ident: ::truce::params::MeterSlot { id: #id } }
             })
             .collect();
 
@@ -1126,13 +1131,6 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 for (id, value) in values {
                     self.set_plain(*id, *value);
                 }
-            }
-
-            fn new() -> Self
-            where
-                Self: Sized,
-            {
-                Self::new()
             }
         }
     };
