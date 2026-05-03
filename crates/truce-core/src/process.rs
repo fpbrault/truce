@@ -39,11 +39,16 @@ impl<'a> ProcessContext<'a> {
     }
 
     /// Read a parameter's plain value by ID.
-    pub fn param(&self, id: u32) -> f64 {
-        match self.params_fn {
-            Some(f) => f(id),
-            None => 0.0,
-        }
+    ///
+    /// Returns `None` when no params callback is wired up (e.g. when a
+    /// plugin runs under the bare test driver without a `with_params`
+    /// closure). Callers that always run inside a real format wrapper
+    /// can `.unwrap_or_default()`. The previous always-`0.0` return
+    /// silently masked test-harness misconfiguration as "this param
+    /// happens to be at zero", which is indistinguishable from the
+    /// host actually setting it to zero.
+    pub fn param(&self, id: u32) -> Option<f64> {
+        self.params_fn.map(|f| f(id))
     }
 
     /// Report a meter value (0.0 to 1.0).

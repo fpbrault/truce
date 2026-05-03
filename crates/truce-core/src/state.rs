@@ -100,10 +100,14 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
     offset += 8;
 
     let extra = if extra_len > 0 {
-        if offset + extra_len > data.len() {
-            return None;
+        // `offset + extra_len` can wrap to a small value when
+        // `extra_len` is huge (host-supplied), making the comparison
+        // pass even though the slice would overrun. Use `checked_add`
+        // and reject overflow as malformed.
+        match offset.checked_add(extra_len) {
+            Some(end) if end <= data.len() => Some(data[offset..end].to_vec()),
+            _ => return None,
         }
-        Some(data[offset..offset + extra_len].to_vec())
     } else {
         None
     };
@@ -164,6 +168,14 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
 }
 
 /// Compute a simple hash of the plugin ID string for state identification.
+///
+/// Uses FNV-1a-64. **Do not change this without bumping the envelope's
+/// `STATE_VERSION` and writing a migration:** the returned hash is
+/// stored verbatim in every `.pluginstate` blob the host has saved,
+/// and a different algorithm here would invalidate every shipped
+/// session. If a stronger hash is ever needed, it must be selected via
+/// the version byte in the envelope, not by replacing this function in
+/// place.
 pub fn hash_plugin_id(id: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
     for byte in id.bytes() {

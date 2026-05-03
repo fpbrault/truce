@@ -156,6 +156,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         note: ev.data1,
                         velocity: ev.data2 as f32 / 127.0,
                     }),
+                    0xA0 => Some(EventBody::Aftertouch {
+                        channel,
+                        note: ev.data1,
+                        pressure: ev.data2 as f32 / 127.0,
+                    }),
                     0xB0 => Some(EventBody::ControlChange {
                         channel,
                         cc: ev.data1,
@@ -466,10 +471,16 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
             editor.close();
         }
         // Keep the editor alive — just closed, not dropped.
-        // Dropping and recreating on each open/close cycle can cause
-        // instability in AU v3 appex (the audio thread accesses the same
-        // AuInstance via raw pointer). The editor will be reopened in-place
-        // by the next gui_open call.
+        //
+        // Dropping the editor here would tear down its baseview window
+        // synchronously, and on AU we've observed crashes from that
+        // teardown re-entering the host's NSTimer / autorelease pool
+        // mid-callback (the host typically calls our `gui_close` from
+        // inside a draw or timer fire — see `aax_editor_crash` in the
+        // memory notes for the related Pro Tools incident). The
+        // editor's `close()` already drops the NSView and Metal
+        // resources; the lightweight Rust struct that survives is
+        // reopened in-place by the next `gui_open` call.
     }
 }
 
@@ -567,9 +578,6 @@ pub fn register_au<P: PluginExport>() {
             param_descs.as_ptr(),
             param_descs.len() as u32,
         );
-
-        // Reference the ObjC shim symbols to force the linker to include them
-        std::hint::black_box(ffi::truce_au_register as *const ());
     }
 }
 

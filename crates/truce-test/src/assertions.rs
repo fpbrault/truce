@@ -46,7 +46,15 @@ fn peak_in_range<P: PluginExport>(result: &DriverResult<P>, start: usize, end: u
     result
         .output
         .iter()
-        .flat_map(|ch| ch[start..end.min(ch.len())].iter())
+        .flat_map(|ch| {
+            // Bound `start` against the channel too — a channel
+            // shorter than `start` (mismatch between
+            // `result.total_frames` and an individual channel) used to
+            // panic via `ch[start..]` when start was past the end.
+            let s = start.min(ch.len());
+            let e = end.min(ch.len()).max(s);
+            ch[s..e].iter()
+        })
         .map(|s| s.abs())
         .fold(0.0f32, f32::max)
 }

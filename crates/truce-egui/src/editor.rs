@@ -308,8 +308,13 @@ impl WindowHandler for EguiWindowHandler {
                 use keyboard_types::KeyState;
                 self.modifiers = convert_kb_modifiers(&kb.modifiers);
 
-                // Text input
+                // Text input. Suppress Text events when Ctrl/Cmd is
+                // held — otherwise Ctrl+A/Ctrl+C/etc. would also insert
+                // the character into focused text fields, which egui's
+                // shortcut handler reads through `command_pressed()`.
+                let modifier_held = self.modifiers.command || self.modifiers.mac_cmd;
                 if kb.state == KeyState::Down
+                    && !modifier_held
                     && let keyboard_types::Key::Character(ref ch) = kb.key
                 {
                     for c in ch.chars() {
@@ -338,8 +343,13 @@ impl WindowHandler for EguiWindowHandler {
                     let ph = info.physical_size().height;
                     let scale = info.scale() as f32;
                     truce_gui::platform::note_linux_scale_factor(info.scale());
-                    // Store logical size — egui screen_rect uses logical points
-                    self.size = ((pw as f32 / scale) as u32, (ph as f32 / scale) as u32);
+                    // Store logical size — egui screen_rect uses logical
+                    // points. Round so a physical 800px@2× reports as 400
+                    // logical, not 399 (truncating cast).
+                    self.size = (
+                        (pw as f32 / scale).round() as u32,
+                        (ph as f32 / scale).round() as u32,
+                    );
                     self.scale_factor = scale;
                     if let Some(renderer) = self.renderer.as_mut() {
                         renderer.resize(pw, ph);
@@ -365,12 +375,25 @@ fn convert_mouse_button(btn: &baseview::MouseButton) -> Option<egui::PointerButt
 }
 
 fn convert_kb_modifiers(mods: &keyboard_types::Modifiers) -> egui::Modifiers {
+    let alt = mods.contains(keyboard_types::Modifiers::ALT);
+    let ctrl = mods.contains(keyboard_types::Modifiers::CONTROL);
+    let shift = mods.contains(keyboard_types::Modifiers::SHIFT);
+    let meta = mods.contains(keyboard_types::Modifiers::META);
     egui::Modifiers {
-        alt: mods.contains(keyboard_types::Modifiers::ALT),
-        ctrl: mods.contains(keyboard_types::Modifiers::CONTROL),
-        shift: mods.contains(keyboard_types::Modifiers::SHIFT),
-        mac_cmd: mods.contains(keyboard_types::Modifiers::META),
-        command: mods.contains(keyboard_types::Modifiers::META),
+        alt,
+        ctrl,
+        shift,
+        // `mac_cmd` is Mac-specific, fed by Cmd (META on macOS).
+        mac_cmd: cfg!(target_os = "macos") && meta,
+        // `command` is the cross-platform "primary modifier": Cmd on
+        // macOS, Ctrl elsewhere. Mapping META→command on Linux/Windows
+        // (the previous behavior) made egui treat the Super key as the
+        // shortcut modifier, breaking Ctrl+C/V/X/Z in plugin editors.
+        command: if cfg!(target_os = "macos") {
+            meta
+        } else {
+            ctrl
+        },
     }
 }
 

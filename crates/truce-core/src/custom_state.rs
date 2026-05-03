@@ -53,7 +53,14 @@ impl<'a> StateCursor<'a> {
     pub fn skip_field(&mut self) -> bool {
         // Fields are prefixed with a u32 byte length by the derive macro.
         if let Some(bytes) = self.read_bytes(4) {
-            let len = u32::from_le_bytes(bytes.try_into().unwrap()) as usize;
+            // `read_bytes(4)` returns `Some(slice of length 4)` or
+            // `None`, so the `try_into::<[u8; 4]>()` here cannot fail.
+            // The `expect` documents that invariant for readers.
+            let len = u32::from_le_bytes(
+                bytes
+                    .try_into()
+                    .expect("read_bytes(4) returned a slice of unexpected length"),
+            ) as usize;
             if self.pos + len <= self.data.len() {
                 self.pos += len;
                 return true;
@@ -236,6 +243,13 @@ impl<T: State> StateBinding<T> {
 }
 
 impl<T: State> Default for StateBinding<T> {
+    /// Construct an **unwired** binding: `read()` returns `T::default()`
+    /// and `update()` *silently discards* the new state. Only useful
+    /// as a placeholder before the framework calls
+    /// `bind_get`/`bind_set` to install real closures (typically the
+    /// `#[derive(Plugin)]` expansion does this in `init()`). If you
+    /// see writes vanishing, check that the binding has been wired up
+    /// before you call `update`.
     fn default() -> Self {
         Self {
             cached: T::default(),

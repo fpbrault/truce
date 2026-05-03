@@ -167,11 +167,20 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 
 /// Build a PortLayout from the plugin's declared bus layout + params.
 pub fn derive_port_layout<P: PluginExport>() -> PortLayout {
+    let plugin = P::create();
+    derive_port_layout_from::<P>(&plugin)
+}
+
+/// Same as [`derive_port_layout`], but reuses an already-built plugin
+/// instance to avoid the cost of `P::create()` (which can allocate
+/// internal buffers on plugin-defined defaults). The TTL writer paths
+/// build their own plugin and the LV2 `instantiate` callback already
+/// owns one — both call this variant to skip a second build.
+pub fn derive_port_layout_from<P: PluginExport>(plugin: &P) -> PortLayout {
     let layouts = P::bus_layouts();
     let default_layout = layouts
         .first()
         .expect("Plugin must declare at least one bus layout");
-    let plugin = P::create();
     let params = plugin.params();
     let param_count = params.param_infos().len() as u32;
     let meter_count = params.meter_ids().len() as u32;
@@ -200,8 +209,8 @@ pub unsafe fn instantiate<P: PluginExport>(
     features: *const *const LV2Feature,
 ) -> *mut Lv2Instance<P> {
     unsafe {
-        let layout = derive_port_layout::<P>();
         let plugin = P::create();
+        let layout = derive_port_layout_from::<P>(&plugin);
         let info = P::info();
         let param_infos = plugin.params().param_infos();
 

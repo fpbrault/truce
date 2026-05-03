@@ -436,7 +436,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// Used by `truce-gpu` to draw through the GPU backend instead of
     /// the internal CPU backend.
     pub fn render_to(&mut self, backend: &mut dyn RenderBackend) {
-        unsafe { update_interaction(self) };
+        update_interaction(self);
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
         Self::render_widgets(
@@ -481,9 +481,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 
 /// Update interaction regions and live param values.
 ///
-/// # Safety
-/// The editor must be valid and not concurrently accessed.
-pub unsafe fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
+/// Takes `&mut BuiltinEditor<P>` so the borrow checker enforces
+/// non-aliasing — the function only touches Rust references and is
+/// fully safe.
+pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
     match &editor.layout {
         Layout::Rows(pl) => {
             editor.interaction.build_regions(pl);
@@ -652,7 +653,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
 
         let editor = unsafe { &mut *self.editor };
 
-        unsafe { update_interaction(editor) };
+        update_interaction(editor);
         // Pick up host automation / preset recall that changed params
         // without going through the UI: flips the dirty bit so the
         // normal gate below still has the chance to short-circuit when

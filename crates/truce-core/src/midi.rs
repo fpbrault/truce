@@ -1,6 +1,12 @@
 use crate::events::EventBody;
 
 /// Upconvert MIDI 1.0 bytes to our event representation.
+///
+/// Handles channel-voice messages (status `0x80..=0xEF`). System
+/// messages — SysEx (`0xF0`), MIDI Time Code, Song Position, system
+/// realtime — return `None`; the framework's `EventBody` enum doesn't
+/// model them yet, so callers that care about SysEx must inspect the
+/// raw bytes themselves rather than relying on this conversion.
 pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
     if bytes.is_empty() {
         return None;
@@ -56,34 +62,45 @@ pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
 }
 
 /// Downconvert our events to MIDI 1.0 bytes.
-pub fn event_to_midi1(event: &EventBody) -> Option<[u8; 3]> {
+///
+/// Returns `(length, bytes)`: `length` is 2 for `ChannelPressure` and
+/// `ProgramChange`, 3 for everything else. Sinks must respect the
+/// length — emitting all 3 bytes for a 2-byte status produces a
+/// spurious trailing 0 that downstream parsers interpret as a Note Off
+/// (running-status confusion).
+pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
     match event {
         EventBody::NoteOn {
             channel,
             note,
             velocity,
-        } => Some([0x90 | channel, *note, (*velocity * 127.0).round() as u8]),
+        } => Some((3, [0x90 | channel, *note, (*velocity * 127.0).round() as u8])),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
-        } => Some([0x80 | channel, *note, (*velocity * 127.0).round() as u8]),
+        } => Some((3, [0x80 | channel, *note, (*velocity * 127.0).round() as u8])),
         EventBody::ControlChange { channel, cc, value } => {
-            Some([0xB0 | channel, *cc, (*value * 127.0).round() as u8])
+            Some((3, [0xB0 | channel, *cc, (*value * 127.0).round() as u8]))
         }
         EventBody::PitchBend { channel, value } => {
             let raw = ((*value + 1.0) * 8192.0).round() as u16;
             let raw = raw.min(16383);
-            Some([
-                0xE0 | channel,
-                (raw & 0x7F) as u8,
-                ((raw >> 7) & 0x7F) as u8,
-            ])
+            Some((
+                3,
+                [
+                    0xE0 | channel,
+                    (raw & 0x7F) as u8,
+                    ((raw >> 7) & 0x7F) as u8,
+                ],
+            ))
         }
         EventBody::ChannelPressure { channel, pressure } => {
-            Some([0xD0 | channel, (*pressure * 127.0).round() as u8, 0])
+            Some((2, [0xD0 | channel, (*pressure * 127.0).round() as u8, 0]))
         }
-        EventBody::ProgramChange { channel, program } => Some([0xC0 | channel, *program, 0]),
+        EventBody::ProgramChange { channel, program } => {
+            Some((2, [0xC0 | channel, *program, 0]))
+        }
         _ => None,
     }
 }
@@ -96,7 +113,8 @@ mod tests {
     fn round_trip_note_on() {
         let bytes = [0x90, 60, 100];
         let event = parse_midi1(&bytes).unwrap();
-        let back = event_to_midi1(&event).unwrap();
+        let (len, back) = event_to_midi1(&event).unwrap();
+        assert_eq!(len, 3);
         assert_eq!(back[0], 0x90);
         assert_eq!(back[1], 60);
         assert_eq!(back[2], 100);

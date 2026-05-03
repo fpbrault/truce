@@ -45,7 +45,7 @@ pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32
 /// both ride on this entry point.
 pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
     let mut editor = <P as Plugin>::editor(plugin)
-        .expect("plugin returned no editor: PluginLogic::custom_editor() returned None and layout() was empty");
+        .expect("plugin returned no editor: Plugin::editor() returned None and layout() was empty");
     // `PluginExport::Params` is the concrete params type the
     // `plugin!` macro wired up. Hand the editor the live params Arc
     // (so any state we pre-loaded into `plugin` flows through), erased
@@ -74,7 +74,15 @@ pub fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let mut reader = decoder
         .read_info()
         .unwrap_or_else(|e| panic!("Failed to read PNG info: {e}"));
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+    // `output_buffer_size()` is `None` for some interlaced PNGs the
+    // png crate refuses to size up-front. Fall back to a generous
+    // worst-case estimate (4 bytes/pixel × declared dimensions); the
+    // subsequent `next_frame` will surface any real decode error.
+    let info = reader.info();
+    let buf_size = reader.output_buffer_size().unwrap_or_else(|| {
+        (info.width as usize) * (info.height as usize) * 4
+    });
+    let mut buf = vec![0u8; buf_size];
     let info = reader
         .next_frame(&mut buf)
         .unwrap_or_else(|e| panic!("Failed to decode PNG frame: {e}"));

@@ -374,9 +374,15 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 // Event conversion: CLAP input events -> EventList
 // ---------------------------------------------------------------------------
 
+/// `sort` controls whether the resulting `event_list` gets a stable
+/// sort by sample offset. `process` needs sorted events (the plugin
+/// iterates them in time order); `params_flush` discards the events
+/// after extracting param/GUI updates and doesn't care about order, so
+/// it passes `false` to skip the sort.
 unsafe fn convert_input_events<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     in_events: *const clap_input_events,
+    sort: bool,
 ) {
     unsafe {
         data.event_list.clear();
@@ -517,7 +523,9 @@ unsafe fn convert_input_events<P: PluginExport>(
             }
         }
 
-        data.event_list.sort();
+        if sort {
+            data.event_list.sort();
+        }
     }
 }
 
@@ -614,8 +622,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             return CLAP_PROCESS_CONTINUE;
         }
 
-        // Convert CLAP input events to our EventList
-        convert_input_events::<P>(data, proc.in_events);
+        // Convert CLAP input events to our EventList — sort by
+        // sample offset so the plugin sees them in time order.
+        convert_input_events::<P>(data, proc.in_events, true);
 
         // Build transport info from the CLAP transport event (or default)
         let transport = if !proc.transport.is_null() {
@@ -928,12 +937,21 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
     out_buffer_capacity: u32,
 ) -> bool {
     unsafe {
+        // Same `out_len == 0` / null-buffer guard the VST3/VST2/AU/AAX
+        // wrappers gained in the host-crash-fixes pass: a zero
+        // capacity makes `cap - 1` underflow (caught here by
+        // `saturating_sub`) and a null `out_buffer` plus non-zero
+        // capacity would still write the trailing NUL. Treat both as
+        // "host wants nothing" and return.
+        if out_buffer_capacity == 0 || out_buffer.is_null() {
+            return false;
+        }
         let data = data_from_plugin::<P>(plugin);
         match data.plugin.params().format_value(param_id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
                 let cap = out_buffer_capacity as usize;
-                let len = bytes.len().min(cap.saturating_sub(1));
+                let len = bytes.len().min(cap - 1);
                 ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out_buffer, len);
                 *out_buffer.add(len) = 0;
                 true
@@ -975,7 +993,10 @@ unsafe extern "C" fn params_flush<P: PluginExport>(
 ) {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        convert_input_events::<P>(data, in_events);
+        // params_flush only forwards param values to the plugin and
+        // sweeps GUI-driven changes outward; it doesn't iterate the
+        // event list in time order, so skip the sort.
+        convert_input_events::<P>(data, in_events, false);
         flush_gui_changes::<P>(data, out_events);
     }
 }

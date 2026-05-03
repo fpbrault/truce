@@ -8,6 +8,23 @@ pub struct AudioBuffer<'a> {
 }
 
 impl<'a> AudioBuffer<'a> {
+    /// Safe wrapper around [`from_slices`] for callers that hold their
+    /// own owned `Vec<Vec<f32>>` (e.g. `truce-driver`'s test harness).
+    /// Forwards to the unsafe constructor — the borrow checker proves
+    /// the lifetime invariants the `unsafe fn` requires when both
+    /// slice arrays and the buffer itself live in the same scope.
+    /// `num_samples > slice length` still asserts in debug builds.
+    pub fn from_slices_checked(
+        inputs: &'a [&'a [f32]],
+        outputs: &'a mut [&'a mut [f32]],
+        num_samples: usize,
+    ) -> Self {
+        // SAFETY: caller hands us references that the borrow checker
+        // already proved valid for `'a`; the debug-mode assertions
+        // inside `from_slices` cover the `num_samples` bound.
+        unsafe { Self::from_slices(inputs, outputs, num_samples) }
+    }
+
     /// Create a buffer from pre-split channel slices.
     /// Used by format wrappers after converting from host-specific buffer types.
     ///
@@ -100,11 +117,25 @@ impl<'a> AudioBuffer<'a> {
     }
 
     /// Peak absolute value across an output channel.
+    ///
+    /// Returns `f32::NAN` if any sample is NaN, so meters can flag
+    /// runaway plugins instead of silently reporting "peaks within
+    /// range" while NaN poison spreads downstream. `f32::max` treats
+    /// NaN as smaller than every finite value, which used to make NaN
+    /// samples disappear from the peak.
     pub fn output_peak(&self, ch: usize) -> f32 {
         let end = self.offset + self.num_samples;
-        self.outputs[ch][self.offset..end]
-            .iter()
-            .fold(0.0f32, |a, &b| a.max(b.abs()))
+        let mut peak = 0.0f32;
+        for &b in &self.outputs[ch][self.offset..end] {
+            if b.is_nan() {
+                return f32::NAN;
+            }
+            let abs = b.abs();
+            if abs > peak {
+                peak = abs;
+            }
+        }
+        peak
     }
 
     /// Return a sub-block view covering samples `start..start+len`.
