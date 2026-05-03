@@ -6,13 +6,6 @@
 
 use std::sync::{Arc, Mutex};
 
-macro_rules! hot_debug {
-    ($($arg:tt)*) => {
-        #[cfg(feature = "hot-debug")]
-        eprintln!($($arg)*);
-    };
-}
-
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
 use truce_core::editor::{Editor, EditorBridge, EditorContext, RawWindowHandle};

@@ -6,6 +6,21 @@
 //!
 //! Platform windowing is provided by baseview.
 
+/// Crate-wide debug-print macro for GPU init / render hot-reload paths.
+/// Compiles to nothing unless the `hot-debug` feature is enabled.
+/// Defined at crate root so any module under `truce_gpu::*` can reach it
+/// without re-importing — `editor.rs` was the only initial caller, but
+/// future modules (e.g. a hypothetical `surface.rs`) shouldn't have to
+/// duplicate the definition. See `truce_loader::hot_debug` for the
+/// sibling copy used by the hot-reload shell.
+#[macro_export]
+macro_rules! hot_debug {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "hot-debug")]
+        eprintln!($($arg)*);
+    };
+}
+
 mod backend;
 pub mod editor;
 pub mod platform;

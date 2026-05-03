@@ -24,12 +24,17 @@ use truce_core::editor::{ClosureBridge, EditorContext};
 ///
 /// Used internally by `IcedEditor::screenshot()` — external callers go
 /// through `truce_test::assert_screenshot::<Plugin>(...)`.
+///
+/// Returns `None` when no wgpu adapter is available (CI runners without
+/// a GPU, headless VMs). Mirrors `WgpuBackend::headless` in `truce-gpu`
+/// and `render_with_state` in `truce-egui` so all three GPU-backed
+/// screenshot paths handle adapter-acquisition failures uniformly.
 pub(crate) fn render_to_pixels<P, M>(
     params: Arc<P>,
     size: (u32, u32),
     scale: f64,
     font: Option<(&'static str, &'static [u8])>,
-) -> (Vec<u8>, u32, u32)
+) -> Option<(Vec<u8>, u32, u32)>
 where
     P: Params + 'static,
     M: IcedPlugin<P>,
@@ -56,8 +61,7 @@ where
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None, // headless — see note above
         force_fallback_adapter: false,
-    }))
-    .expect("No GPU adapter available for screenshot rendering");
+    }))?;
 
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
@@ -67,7 +71,7 @@ where
         },
         None,
     ))
-    .expect("Failed to create wgpu device for snapshot");
+    .ok()?;
 
     // Use sRGB to match the windowed Metal surface (Bgra8UnormSrgb).
     let format = wgpu::TextureFormat::Bgra8UnormSrgb;
@@ -256,5 +260,5 @@ where
         }
     }
 
-    (rgba, w, h)
+    Some((rgba, w, h))
 }
