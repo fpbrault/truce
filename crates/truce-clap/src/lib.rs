@@ -155,6 +155,13 @@ struct ClapPluginData<P: PluginExport> {
     /// editor's logical size to physical pixels when CLAP hosts ask
     /// for the window size on Windows/Linux.
     host_scale: f64,
+    /// Persistent input/output channel-slice scratch reused across
+    /// process callbacks so the audio thread doesn't `Vec::new()` per
+    /// block. The 'static lifetime is a structural lie — same trick
+    /// `truce_core::buffer::RawBufferScratch` uses; each `process()`
+    /// rebuilds the slices and the borrow lives only for that call.
+    input_slices: Vec<&'static [f32]>,
+    output_slices: Vec<&'static mut [f32]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -665,44 +672,78 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         };
 
         // Build AudioBuffer from CLAP audio buffers.
-        // Collect input channel slices.
-        let mut input_slices: Vec<&[f32]> = Vec::new();
+        //
+        // Three soundness considerations matching the format-wrapper
+        // pattern in `RawBufferScratch::build`:
+        //
+        // 1. **No per-block heap allocation.** We reuse `data.input_slices`
+        //    and `data.output_slices` (cleared each call) so the audio
+        //    thread doesn't `Vec::new()` per process.
+        // 2. **Channel indexing preserved.** A null channel pointer
+        //    becomes an empty slice at the same flat-channel index
+        //    rather than being dropped — preserving channel layout
+        //    avoids the silent re-mapping the densifying loop used to
+        //    produce when only some channels were null.
+        // 3. **No auto input→output copy.** Earlier revisions copied
+        //    each input into the matching output as a "convenience for
+        //    in-place effects"; that clobbered the previous-block tail
+        //    of any plugin reading its own output (delay/reverb
+        //    feedback). Plugins that want pass-through must do
+        //    `output.copy_from_slice(input)` themselves.
+        debug_assert!(
+            num_frames <= data.max_block_size,
+            "host violated CLAP contract: process() got {num_frames} frames \
+             but activate() declared max {}",
+            data.max_block_size
+        );
+
+        data.input_slices.clear();
         for bus_idx in 0..proc.audio_inputs_count {
             let buf = &*proc.audio_inputs.add(bus_idx as usize);
-            if !buf.data32.is_null() {
-                for ch in 0..buf.channel_count {
-                    let ptr = *buf.data32.add(ch as usize);
-                    if !ptr.is_null() {
-                        input_slices.push(std::slice::from_raw_parts(ptr, num_frames));
-                    }
-                }
+            if buf.data32.is_null() {
+                continue;
+            }
+            for ch in 0..buf.channel_count {
+                let ptr = *buf.data32.add(ch as usize);
+                let slice: &[f32] = if ptr.is_null() {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(ptr, num_frames)
+                };
+                data.input_slices
+                    .push(std::mem::transmute::<&[f32], &'static [f32]>(slice));
             }
         }
 
-        // Collect output channel slices.
-        let mut output_slices: Vec<&mut [f32]> = Vec::new();
+        data.output_slices.clear();
         for bus_idx in 0..proc.audio_outputs_count {
             let buf = &mut *proc.audio_outputs.add(bus_idx as usize);
-            if !buf.data32.is_null() {
-                for ch in 0..buf.channel_count {
-                    let ptr = *buf.data32.add(ch as usize);
-                    if !ptr.is_null() {
-                        output_slices.push(std::slice::from_raw_parts_mut(ptr, num_frames));
-                    }
-                }
+            if buf.data32.is_null() {
+                continue;
+            }
+            for ch in 0..buf.channel_count {
+                let ptr = *buf.data32.add(ch as usize);
+                let slice: &mut [f32] = if ptr.is_null() {
+                    &mut []
+                } else {
+                    std::slice::from_raw_parts_mut(ptr, num_frames)
+                };
+                data.output_slices
+                    .push(std::mem::transmute::<&mut [f32], &'static mut [f32]>(slice));
             }
         }
 
-        // Copy input to output so effects can process in-place.
-        // This matches JUCE's behavior where processBlock receives a buffer
-        // pre-filled with input data.
-        let copy_channels = input_slices.len().min(output_slices.len());
-        for ch in 0..copy_channels {
-            output_slices[ch][..num_frames].copy_from_slice(&input_slices[ch][..num_frames]);
-        }
-
-        let mut audio_buffer =
-            AudioBuffer::from_slices(&input_slices, &mut output_slices, num_frames);
+        // Construct the AudioBuffer with a borrow scope tied to this
+        // call only. Without the transmute, the borrow checker
+        // propagates the `'static` lifetimes inside `input_slices`
+        // out to the AudioBuffer's lifetime parameter — which would
+        // pin `data` mutably for the rest of the function. Same
+        // pattern as `RawBufferScratch::build`.
+        let data_ptr: *mut ClapPluginData<P> = data;
+        let s = &mut *data_ptr;
+        let mut audio_buffer = std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
+            AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, num_frames),
+        );
 
         data.output_events.clear();
 
@@ -1633,6 +1674,8 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         needs_rescan: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
+        input_slices: Vec::new(),
+        output_slices: Vec::new(),
     });
 
     let clap = Box::new(clap_plugin {

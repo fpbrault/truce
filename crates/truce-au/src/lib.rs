@@ -30,6 +30,13 @@ struct AuInstance<P: PluginExport> {
     output_events: EventList,
     plugin_id_hash: u64,
     sample_rate: f64,
+    /// Max block size declared by the host via
+    /// `kAudioUnitProperty_MaximumFramesPerSlice` (delivered through
+    /// `cb_reset`'s `max_frames`).
+    max_block_size: usize,
+    /// Reused per-block scratch for `RawBufferScratch::build`. Lives
+    /// on the instance so the audio thread doesn't heap-allocate.
+    scratch: truce_core::buffer::RawBufferScratch,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
@@ -80,6 +87,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         output_events: EventList::new(),
         plugin_id_hash: state::hash_plugin_id(info.clap_id), // reuse CLAP ID for hashing
         sample_rate: 44100.0,
+        max_block_size: 0,
+        scratch: truce_core::buffer::RawBufferScratch::default(),
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
     });
@@ -102,6 +111,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     unsafe {
         let inst = &mut *(ctx as *mut AuInstance<P>);
         inst.sample_rate = sample_rate;
+        inst.max_block_size = max_frames as usize;
         inst.plugin.reset(sample_rate, max_frames as usize);
         inst.plugin.params().set_sample_rate(sample_rate);
         inst.plugin.params().snap_smoothers();
@@ -170,9 +180,14 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         }
         inst.event_list.sort();
 
-        // Build AudioBuffer from raw pointers (copies input→output for effects)
-        let mut scratch = truce_core::buffer::RawBufferScratch::default();
-        let mut audio_buffer = scratch.build(
+        // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
+        debug_assert!(
+            num_frames <= inst.max_block_size,
+            "host violated AU contract: render() got {num_frames} frames \
+             but kAudioUnitProperty_MaximumFramesPerSlice declared max {}",
+            inst.max_block_size
+        );
+        let mut audio_buffer = inst.scratch.build(
             inputs,
             outputs,
             num_input_channels,

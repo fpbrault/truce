@@ -124,6 +124,12 @@ struct AaxInstance<P: PluginExport> {
     output_events: EventList,
     plugin_id_hash: u64,
     sample_rate: f64,
+    /// Max block size declared by AAX in `EffectInit` (delivered
+    /// through `_reset`'s `max_frames`).
+    max_block_size: usize,
+    /// Reused per-block scratch for `RawBufferScratch::build`. Lives
+    /// on the instance so the audio thread doesn't heap-allocate.
+    scratch: truce_core::buffer::RawBufferScratch,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
@@ -495,6 +501,8 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         output_events: EventList::new(),
         plugin_id_hash: state::hash_plugin_id(info.clap_id),
         sample_rate: 44100.0,
+        max_block_size: 0,
+        scratch: truce_core::buffer::RawBufferScratch::default(),
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
         state_cache: std::sync::Mutex::new(None),
@@ -516,6 +524,7 @@ pub unsafe fn _reset<P: PluginExport>(
 ) {
     let inst = unsafe { &mut *(ctx as *mut AaxInstance<P>) };
     inst.sample_rate = sample_rate;
+    inst.max_block_size = max_frames as usize;
     inst.plugin.reset(sample_rate, max_frames as usize);
     inst.plugin.params().set_sample_rate(sample_rate);
     inst.plugin.params().snap_smoothers();
@@ -583,10 +592,17 @@ pub unsafe fn _process<P: PluginExport>(
     }
     inst.event_list.sort();
 
-    // Build AudioBuffer from raw pointers (copies input→output for effects)
+    // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
+    debug_assert!(
+        num_frames <= inst.max_block_size,
+        "host violated AAX contract: render() got {num_frames} frames \
+         but EffectInit declared max {}",
+        inst.max_block_size
+    );
     unsafe {
-        let mut scratch = truce_core::buffer::RawBufferScratch::default();
-        let mut buffer = scratch.build(inputs, outputs, num_in, num_out, num_frames as u32);
+        let mut buffer = inst
+            .scratch
+            .build(inputs, outputs, num_in, num_out, num_frames as u32);
         let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
             let t = &*transport_ptr;
             TransportInfo {

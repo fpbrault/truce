@@ -307,7 +307,25 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             return;
         }
         if n > inst.max_block_size {
-            inst.plugin.reset(inst.sample_rate, n);
+            // LV2 hosts can give us a larger block than `activate()`
+            // pre-allocated for. Earlier revisions called
+            // `plugin.reset(sr, n)` here, which wiped filter delay
+            // lines / oscillator phase / etc. mid-stream — audible
+            // click on every block-size jump. Plugins are entitled to
+            // assume `reset()` is called at quiescent points only.
+            //
+            // Instead, just grow the input scratch (the only thing
+            // *this* file pre-sized) and proceed. A plugin that
+            // genuinely allocates work buffers from `max_block_size`
+            // and indexes them past their end is technically a host-
+            // contract violation we'd want to catch in debug — but
+            // LV2 doesn't promise a max up front, so we don't have
+            // anything to assert against.
+            for buf in &mut inst.input_scratch {
+                if buf.len() < n {
+                    buf.resize(n, 0.0);
+                }
+            }
             inst.max_block_size = n;
         }
 
@@ -385,14 +403,6 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         //    `output.copy_from_slice(input)` themselves.
         inst.input_slices.clear();
         inst.output_slices.clear();
-
-        // Grow input scratch lazily if a host ever passes more
-        // samples than we sized for in `activate()`.
-        for buf in &mut inst.input_scratch {
-            if buf.len() < n {
-                buf.resize(n, 0.0);
-            }
-        }
 
         for (ch, &in_ptr) in inst.audio_inputs.iter().enumerate() {
             let sl: &[f32] = if in_ptr.is_null() {
