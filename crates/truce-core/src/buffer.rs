@@ -8,7 +8,7 @@ pub struct AudioBuffer<'a> {
 }
 
 impl<'a> AudioBuffer<'a> {
-    /// Safe wrapper around [`from_slices`] for callers that hold their
+    /// Safe wrapper around [`Self::from_slices`] for callers that hold their
     /// own owned `Vec<Vec<f32>>` (e.g. `truce-driver`'s test harness).
     /// Forwards to the unsafe constructor — the borrow checker proves
     /// the lifetime invariants the `unsafe fn` requires when both

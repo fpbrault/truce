@@ -1,7 +1,7 @@
-//! Shell-side integration: HotShell<P> and HotEditor.
+//! Shell-side integration: `HotShell<P>` and `HotEditor`.
 //!
-//! HotShell implements truce-core's Plugin + PluginExport traits,
-//! delegating all logic to the PluginLogic trait object in the
+//! `HotShell` implements truce-core's `Plugin` + `PluginExport` traits,
+//! delegating all logic to the `PluginLogic` trait object in the
 //! hot-reloadable dylib.
 
 use std::path::PathBuf;

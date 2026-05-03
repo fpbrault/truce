@@ -3,7 +3,7 @@
 //! Decodes the input WAV to channel-major buffers, hands the whole
 //! thing to [`truce_driver::PluginDriver`] as an
 //! [`InputSource::Buffer`] for a fixed duration, then writes the
-//! captured output via [`DriverResult::write_wav`]. No threads, no
+//! captured output via [`truce_driver::DriverResult::write_wav`]. No threads, no
 //! mpsc, no cpal. Disk slowness stretches render time but never
 //! causes glitches.
 //!
