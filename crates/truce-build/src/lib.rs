@@ -247,8 +247,7 @@ fn resolve_target_dir() -> Option<PathBuf> {
 /// Returns `Err(message)` rather than panicking so callers in
 /// proc-macro contexts can route the message into a `compile_error!`
 /// with a span — panicking from a proc macro produces no span and a
-/// noisy multi-line error frame. Build scripts call
-/// [`find_truce_toml_or_exit`] for the convenient cleanly-exit form.
+/// noisy multi-line error frame.
 pub fn find_truce_toml() -> Result<PathBuf, String> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map_err(|_| "CARGO_MANIFEST_DIR not set".to_string())?;
