@@ -41,8 +41,7 @@ pub(crate) use util::{
 pub(crate) use config::PackagingConfig;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use util::{
-    copy_dir_recursive, read_workspace_version, release_lib_for_target, rustup_has_target,
-    tag_info,
+    copy_dir_recursive, read_workspace_version, release_lib_for_target, rustup_has_target, tag_info,
 };
 
 // macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline.

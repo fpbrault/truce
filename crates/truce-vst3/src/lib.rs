@@ -647,8 +647,18 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                *w = (ew as f64 * inst.host_scale) as u32;
-                *h = (eh as f64 * inst.host_scale) as u32;
+                // Round-to-nearest, not truncate — `(w * scale) as u32`
+                // would round 199.9 → 199, drifting one pixel on
+                // fractional scales. Matches the CLAP / AAX / `to_physical_px`
+                // helper used elsewhere. Logical pixel sizes are bounded
+                // by `u32::MAX / scale`; in practice no editor exceeds
+                // 16384 logical pixels, so the `f64 → u32` truncation
+                // and sign casts are safe.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                {
+                    *w = (f64::from(ew) * inst.host_scale).round() as u32;
+                    *h = (f64::from(eh) * inst.host_scale).round() as u32;
+                }
             }
         }
     }

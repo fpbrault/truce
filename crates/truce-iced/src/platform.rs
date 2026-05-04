@@ -59,9 +59,10 @@ pub unsafe fn create_wgpu_surface(
             #[cfg(target_os = "linux")]
             raw_window_handle::RawWindowHandle::Xlib(h) => {
                 use raw_window_handle::HasRawDisplayHandle;
-                let display = match window.raw_display_handle() {
-                    raw_window_handle::RawDisplayHandle::Xlib(d) => d,
-                    _ => return None,
+                let raw_window_handle::RawDisplayHandle::Xlib(display) =
+                    window.raw_display_handle()
+                else {
+                    return None;
                 };
                 let display_ptr = std::ptr::NonNull::new(display.display);
                 wgpu::SurfaceTargetUnsafe::RawHandle {

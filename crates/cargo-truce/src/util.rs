@@ -628,8 +628,14 @@ pub(crate) fn write_entitlements_plist() -> PathBuf {
 /// signature and breaking notarization. Apple has been deprecating
 /// `--deep` for years anyway; enumerate ourselves to be sure.
 // On non-macOS targets the body is a no-op `Ok(())` so all three
-// args are unused — silence the warning only on those targets.
-#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+// args are unused — silence the warnings only on those targets.
+// `unnecessary_wraps` likewise fires only off-macOS where the body
+// can't actually fail; the `Result` return is required by the
+// cross-platform staging callers.
+#[cfg_attr(
+    not(target_os = "macos"),
+    allow(unused_variables, clippy::unnecessary_wraps)
+)]
 pub(crate) fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> crate::Res {
     // macOS-only: `codesign` is an Apple tool, and the entitlements plist
     // we write is consumed only by it. On Linux / Windows this is a no-op

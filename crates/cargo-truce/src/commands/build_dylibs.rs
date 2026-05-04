@@ -110,6 +110,13 @@ impl BuildFormat {
 /// either the platform isn't supported (Linux) or the SDK isn't
 /// configured (mac/Windows without `[macos|windows].aax_sdk_path`).
 /// `None` means AAX is buildable.
+// On Linux this always returns `Some(...)` (AAX isn't supported), but
+// callers consume an `Option<String>` so they can render "skipped"
+// uniformly across platforms.
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "windows")),
+    allow(clippy::unnecessary_wraps)
+)]
 fn aax_skip_reason(config: &Config) -> Option<String> {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {

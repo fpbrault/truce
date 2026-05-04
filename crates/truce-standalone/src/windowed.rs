@@ -218,6 +218,10 @@ where
         // Editor drives its own frame loop inside its child window.
     }
 
+    // The Linux `_exit` extern lives inline with its single caller
+    // (see comment block below) so the rationale doesn't get orphaned
+    // from the API name; hence the function-level allow.
+    #[allow(clippy::items_after_statements)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         // On Linux X11 + NVIDIA, letting baseview unwind the parent
         // window normally crashes inside `XCloseDisplay` — the
@@ -239,10 +243,22 @@ where
         #[cfg(target_os = "linux")]
         if matches!(event, Event::Window(baseview::WindowEvent::WillClose)) {
             vlog!("Goodbye!");
+            // The `_capture` prefix marks the field as "owned for Drop"
+            // on macOS / Windows, but on the Linux `_exit` path we *do*
+            // read it (to finalize the WAV header before bypassing
+            // Drop). Allow the leading-underscore access at this site
+            // rather than renaming the field — the Drop-only semantics
+            // on the other platforms are still the dominant case.
             #[cfg(feature = "playback")]
+            #[allow(clippy::used_underscore_binding)]
             if let Some(capture) = self._capture.take() {
                 capture.finalize();
             }
+            // The `_exit` extern is declared next to its single caller
+            // so the comment block above stays adjacent to the API
+            // it's documenting; hoisting it would orphan the rationale
+            // from the call. Hence the function-scoped allow on the
+            // outer `on_event`.
             unsafe extern "C" {
                 fn _exit(status: i32) -> !;
             }
