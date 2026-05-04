@@ -3,6 +3,7 @@ name: Docs
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -11,8 +12,8 @@ env:
   RUSTDOCFLAGS: -D warnings
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -47,17 +48,21 @@ jobs:
         run: cargo doc --workspace --no-deps
 
       - name: redirect index.html → truce
+        if: github.event_name != 'pull_request'
         run: echo '<meta http-equiv="refresh" content="0; url=truce/">' > target/doc/index.html
 
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: target/doc
 
   deploy:
     name: deploy to Pages
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     environment:
       name: github-pages

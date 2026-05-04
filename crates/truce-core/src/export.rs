@@ -50,7 +50,7 @@ pub trait PluginExport: Plugin + Sized {
     /// closes a class of platform-dependent registration bugs.
     ///
     /// Default impl prefers
-    /// [`Params::param_infos_static`](truce_params::Params::param_infos_static)
+    /// [`Params::param_infos_static`]
     /// when it returns a non-empty vec (the `#[derive(Params)]` path
     /// emits an override built from compile-time metadata) and falls
     /// back to the runtime construction otherwise — so plugins with

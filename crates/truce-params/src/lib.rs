@@ -82,7 +82,7 @@ pub trait Params: Send + Sync + 'static {
     /// Static parameter metadata, available without an instance.
     ///
     /// Format wrappers' `register_*` paths (see
-    /// [`crate::PluginExport::param_infos_static`] in `truce-core`)
+    /// `PluginExport::param_infos_static` in `truce-core`)
     /// call this to learn the parameter set without constructing a
     /// full plugin — historically each format built a throwaway
     /// instance just to read `&self.param_infos()`, paying for any

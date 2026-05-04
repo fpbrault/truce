@@ -132,7 +132,7 @@ fn linear_to_srgb_u8(lin: f32) -> u8 {
 /// Draw text into an RGBA pixel buffer.
 ///
 /// Compositing happens in linear space: destination bytes are decoded
-/// sRGB → linear via [`SRGB_TO_LINEAR`], the source color is decoded
+/// sRGB → linear via a 256-entry lookup table, the source color is decoded
 /// the same way, the Porter-Duff "over" operator runs in linear (so a
 /// half-coverage pixel against opaque white produces a perceptual
 /// midtone, not the gamma-darkened midtone of naive sRGB blending),

@@ -193,7 +193,7 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
 /// fixed 16-byte UID by spec) so renames there are independent.
 /// Callers that want format-pinned state (e.g. an AU build that
 /// shouldn't share state with the same plugin's CLAP build) should
-/// add a per-format ID field to [`PluginInfo`] and route through it
+/// add a per-format ID field to [`crate::PluginInfo`] and route through it
 /// instead.
 #[must_use]
 pub fn shared_plugin_state_hash(info: &crate::PluginInfo) -> u64 {
