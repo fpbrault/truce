@@ -123,9 +123,10 @@ pub(crate) const HOT_RELOAD_CONFIG_FILE: &str = ".truce-build-config";
 /// to decide which target subdir (`debug` / `release` / custom) the
 /// installed shell binary should look up its hot-reload logic dylib in.
 ///
-/// File format is one `key=value` per line — kept deliberately simple
-/// (not TOML) so `truce-build` doesn't need a TOML parser. Today there
-/// is one key (`logic_profile`); new keys append cleanly.
+/// File format is plain TOML — `truce-build` already pulls the `toml`
+/// crate to parse `truce.toml`, so reusing it here keeps both ends
+/// using one parser instead of an ad-hoc `key=value` reader. Today
+/// there is one key (`logic_profile`); new keys append cleanly.
 ///
 /// The file lives in `<target_dir>/.truce-build-config`. Cargo cleans
 /// it via `cargo clean`; `truce-build` rebuilds the consumer crate
@@ -135,10 +136,19 @@ pub(crate) fn write_hot_reload_config(root: &Path, logic_profile: &str) -> Resul
     fs::create_dir_all(&dir)
         .map_err(|e| -> BoxErr { format!("failed to create {}: {e}", dir.display()).into() })?;
     let path = dir.join(HOT_RELOAD_CONFIG_FILE);
-    let body = format!("logic_profile={logic_profile}\n");
+    let config = HotReloadConfig {
+        logic_profile: logic_profile.to_string(),
+    };
+    let body = toml::to_string(&config)
+        .map_err(|e| -> BoxErr { format!("failed to serialize hot-reload config: {e}").into() })?;
     fs::write(&path, body)
         .map_err(|e| -> BoxErr { format!("failed to write {}: {e}", path.display()).into() })?;
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct HotReloadConfig {
+    logic_profile: String,
 }
 
 /// Preflight check for `cargo truce install --shell` / `build --shell`:

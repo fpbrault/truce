@@ -176,20 +176,28 @@ pub fn emit_plugin_env() {
     println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
 }
 
+/// Sidecar that `cargo-truce` writes into the workspace target dir
+/// before invoking `cargo build`. Today carries the logic profile;
+/// future keys deserialize cleanly because the file is plain TOML.
+#[derive(Deserialize, Debug, Default)]
+struct HotReloadConfig {
+    #[serde(default)]
+    logic_profile: Option<String>,
+}
+
 /// Read the logic-profile sidecar that `cargo-truce` writes into
 /// `<target>/.truce-build-config` before invoking `cargo build`.
 ///
-/// One `key=value` line per setting; today only `logic_profile`.
 /// Replaces an earlier process-env → `cargo:rerun-if-env-changed`
 /// chain — cargo's env-rerun semantics didn't always invalidate the
 /// bake (audit 2026-05-02), but `cargo:rerun-if-changed=<file>` is
 /// reliable, and the file is the single source of truth for the
 /// build.
 ///
-/// Returns `None` when the sidecar isn't present — the consumer
-/// crate falls back to the default profile (`release`). Plugin
-/// authors who don't use `cargo truce install --shell` never see
-/// this file at all.
+/// Returns `None` when the sidecar isn't present or omits the key —
+/// the consumer crate falls back to the default profile (`release`).
+/// Plugin authors who don't use `cargo truce install --shell` never
+/// see this file at all.
 fn read_hot_reload_config(target_dir: Option<&std::path::Path>) -> Option<String> {
     let target_dir = target_dir?;
     let path = target_dir.join(".truce-build-config");
@@ -199,16 +207,8 @@ fn read_hot_reload_config(target_dir: Option<&std::path::Path>) -> Option<String
     // previously-released bake.
     println!("cargo:rerun-if-changed={}", path.display());
     let contents = std::fs::read_to_string(&path).ok()?;
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(value) = line.strip_prefix("logic_profile=") {
-            return Some(value.trim().to_string());
-        }
-    }
-    None
+    let config: HotReloadConfig = toml::from_str(&contents).ok()?;
+    config.logic_profile
 }
 
 /// Resolve the cargo target directory in a layout-agnostic way.
