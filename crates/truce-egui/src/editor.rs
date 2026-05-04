@@ -707,9 +707,17 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     ) -> Option<(Vec<u8>, u32, u32)> {
         let context = truce_core::editor::for_test_params(self.params.clone() as Arc<dyn Params>)
             .with_params(self.params.clone());
-        // Pin to 2.0 so screenshots are reproducible across hosts and CI
-        // regardless of any prior `set_scale_factor` from a live window.
-        let pixels_per_point = 2.0_f32;
+        // Match the live editor's content scale so the screenshot
+        // exercises the same render path the user sees, not a fixed
+        // 2× rasterization that hides scale-dependent layout bugs.
+        // `EditorScale` falls back to `backing_scale()` when the host
+        // never called `set_scale_factor`, so headless / pre-open
+        // screenshots still get a sensible value (2.0 on Retina, 1.0
+        // elsewhere). Tests that need deterministic output can
+        // override via the `--scale` CLI flag in
+        // `cargo truce screenshot` (which threads through to
+        // `set_scale_factor` before this method runs).
+        let pixels_per_point = self.scale.get() as f32;
         let ui = Arc::clone(&self.ui);
         crate::screenshot::render_with_state::<P>(
             &context,

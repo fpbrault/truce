@@ -271,18 +271,23 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         &mut self,
         _params: Arc<dyn truce_params::Params>,
     ) -> Option<(Vec<u8>, u32, u32)> {
-        // Headless render of the inner BuiltinEditor at 2× scale.
-        // Drives the same code path as production (`render_to` →
-        // wgpu RenderBackend), just with a `WgpuBackend::headless`
-        // target instead of a window-bound one. Used by
-        // `truce_test::assert_screenshot::<P>()`.
+        // Headless render of the inner BuiltinEditor at the live
+        // content scale. Drives the same code path as production
+        // (`render_to` → wgpu RenderBackend), just with a
+        // `WgpuBackend::headless` target instead of a window-bound
+        // one. Used by `truce_test::assert_screenshot::<P>()`.
         //
         // The inner BuiltinEditor was already built against the
         // plugin's `Arc<P>` (which is defaults for a fresh plugin),
         // so the `params` arg is unused.
+        //
+        // `EditorScale` falls back to `backing_scale()` for pre-open
+        // / headless calls — 2.0 on Retina, 1.0 elsewhere — so the
+        // historical "fixed 2×" behavior is preserved on the macOS
+        // hosts where reference PNGs were originally baked.
         let mut inner = self.inner.lock().ok()?;
         let (lw, lh) = inner.size();
-        let scale = 2.0_f32;
+        let scale = self.scale.get() as f32;
         let mut backend = WgpuBackend::headless(lw, lh, scale)?;
         inner.render_to(&mut backend);
         let pixels = backend.read_pixels();

@@ -507,10 +507,13 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         let state = truce_core::editor::for_test_params(self.params.clone() as Arc<dyn Params>)
             .with_params(self.params.clone());
         let setup = Arc::clone(&self.setup);
+        // Match the live editor's content scale; `EditorScale` falls
+        // back to `backing_scale()` for pre-open / headless calls.
+        let scale = self.scale.get() as f32;
         Some(crate::screenshot::render_with_state::<P>(
             &state,
             self.size,
-            2.0,
+            scale,
             move |s| setup(s.clone()),
         ))
     }

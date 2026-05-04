@@ -910,11 +910,16 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         // the `IcedPlugin::new` impl on `AutoPlugin` is `panic!("must
         // be created via from_layout")`.
         let plugin = (self.make_plugin)(Arc::clone(&self.params));
+        // Match the live editor's content scale so the screenshot
+        // exercises the same render path the user sees. `EditorScale`
+        // falls back to `backing_scale()` for pre-open / headless
+        // calls.
+        let scale = self.scale.get();
         crate::screenshot::render_to_pixels::<P, M>(
             Arc::clone(&self.params),
             plugin,
             self.size,
-            2.0,
+            scale,
             self.font,
         )
     }
