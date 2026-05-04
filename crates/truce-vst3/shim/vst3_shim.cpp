@@ -114,6 +114,12 @@ struct Vst3PluginDescriptor {
     const char* subcategories;
     uint32_t num_inputs;
     uint32_t num_outputs;
+    /* 1 if the plugin emits MIDI back to the host. Gates the
+     * `kEvent | kOutput` bus advertisement; the host only allocates
+     * `ProcessData::outputEvents` when at least one event output bus
+     * is declared, so this flag controls whether the drain loop after
+     * process() actually has somewhere to push events. */
+    int32_t has_midi_output;
 };
 
 struct Vst3ParamDescriptor {
@@ -422,7 +428,10 @@ public:
             return (dir == kInput) ? (g_desc->num_inputs > 0 ? 1 : 0) : 1;
         }
         if (type == kEvent && dir == kInput && g_desc->num_inputs == 0) {
-            return 1; // instrument: one event input bus
+            return 1; // instrument / note-effect: one event input bus
+        }
+        if (type == kEvent && dir == kOutput && g_desc->has_midi_output) {
+            return 1; // note-effect: one event output bus
         }
         return 0;
     }
@@ -432,6 +441,12 @@ public:
         if (type == kEvent && dir == kInput && index == 0 && g_desc->num_inputs == 0) {
             bus->mediaType = kEvent; bus->direction = kInput; bus->channelCount = 1;
             str_to_char16(bus->name, "Event In", 128);
+            bus->busType = kMain; bus->flags = 1; // kDefaultActive
+            return kResultOk;
+        }
+        if (type == kEvent && dir == kOutput && index == 0 && g_desc->has_midi_output) {
+            bus->mediaType = kEvent; bus->direction = kOutput; bus->channelCount = 1;
+            str_to_char16(bus->name, "Event Out", 128);
             bus->busType = kMain; bus->flags = 1; // kDefaultActive
             return kResultOk;
         }

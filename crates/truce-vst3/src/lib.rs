@@ -834,6 +834,12 @@ pub fn register_vst3<P: PluginExport>() {
     })
     .unwrap_or_default();
 
+    // NoteEffect plugins (arpeggiators, chord generators) emit MIDI
+    // back to the host. Mirrors the AU/AAX gating; instruments could
+    // in principle but it's rare enough that we'd rather make them
+    // opt in than advertise a phantom event-output bus on every synth.
+    let has_midi_output = i32::from(matches!(info.category, PluginCategory::NoteEffect));
+
     let descriptor = Box::leak(Box::new(Vst3PluginDescriptor {
         name: name.into_raw(),
         vendor: vendor.into_raw(),
@@ -845,6 +851,7 @@ pub fn register_vst3<P: PluginExport>() {
         subcategories: subcategories.into_raw(),
         num_inputs: truce_core::wrapper::default_io_channels::<P>().0,
         num_outputs: truce_core::wrapper::default_io_channels::<P>().1,
+        has_midi_output,
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {
