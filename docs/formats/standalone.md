@@ -40,10 +40,12 @@ standalone = ["dep:truce-standalone"]
 truce-standalone = { workspace = true, features = ["gui"], optional = true }
 ```
 
-`<crate_name>` is your crate's `[package].name` (e.g. `truce-example-gain`,
-yielding `truce-example-gain-standalone`). `cargo truce run` looks for the
-binary at `target/<profile>/<crate_name>-standalone(.exe)`, so the
-`[[bin]] name` must match this convention.
+`<crate_name>` is your crate's `[package].name` — the convention
+(e.g. `truce-example-gain` → `truce-example-gain-standalone`) is what
+the scaffolder emits. `cargo truce run` reads your `Cargo.toml` and
+picks the `[[bin]]` entry whose `required-features` contains
+`"standalone"`, so the actual name can be anything; the convention just
+keeps the cargo-built path predictable.
 
 **`src/main.rs`:**
 

@@ -52,6 +52,13 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     let matched = super::pick_plugins(&config, plugin_filter.as_deref())?;
     let plugin = *matched.first().ok_or("no plugins in truce.toml")?;
 
+    // Resolve the standalone `[[bin]]` name from the plugin's
+    // `Cargo.toml` so hand-written manifests with non-conventional
+    // bin names still work. Falls back to the scaffold convention
+    // (`{crate_name}-standalone`) when the manifest can't be parsed.
+    let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
+        .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
+
     let bundles_dir = crate::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
     let staged = bundles_dir.join(standalone_bundle_name(&plugin.name));
@@ -64,9 +71,9 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             dt,
         )?;
 
-        let built = standalone_built_path(&root, &plugin.crate_name);
+        let built = standalone_built_path(&root, &bin_stem);
         if !built.exists() {
-            let bin_name = standalone_bin_name(&plugin.crate_name);
+            let bin_name = bin_filename(&bin_stem);
             return Err(format!(
                 "standalone binary not found at {}. \
                  Does your plugin have a [[bin]] target named '{bin_name}'?",
@@ -83,7 +90,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         // when the user enables mic capture for the first time.
         // Other platforms get the bare binary as before.
         #[cfg(target_os = "macos")]
-        stage_macos_app_bundle(&built, &staged, plugin, &config.vendor)?;
+        stage_macos_app_bundle(&built, &staged, plugin, &bin_stem, &config.vendor)?;
         #[cfg(not(target_os = "macos"))]
         {
             fs_ctx::copy(&built, &staged)?;
@@ -92,7 +99,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let exec_path = exec_path_inside_stage(&staged, plugin);
+            let exec_path = exec_path_inside_stage(&staged, &bin_stem);
             let mut perms = std::fs::metadata(&exec_path)?.permissions();
             perms.set_mode(0o755);
             std::fs::set_permissions(&exec_path, perms)?;
@@ -112,7 +119,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         .into());
     }
 
-    let exec_path = exec_path_inside_stage(&staged, plugin);
+    let exec_path = exec_path_inside_stage(&staged, &bin_stem);
     eprintln!("Running {}...", exec_path.display());
     let status = Command::new(&exec_path).args(&extra_args).status()?;
 
@@ -140,6 +147,7 @@ fn stage_macos_app_bundle(
     built: &std::path::Path,
     staged: &std::path::Path,
     plugin: &crate::config::PluginDef,
+    bin_stem: &str,
     vendor: &crate::config::VendorConfig,
 ) -> Res {
     // staged is `<bundles>/<Plugin>.standalone.app/`. Ensure a
@@ -150,7 +158,7 @@ fn stage_macos_app_bundle(
     let macos = contents.join("MacOS");
     fs_ctx::create_dir_all(&macos)?;
 
-    let exe_name = standalone_bin_name(&plugin.crate_name);
+    let exe_name = bin_filename(bin_stem);
     fs_ctx::copy(built, macos.join(&exe_name))?;
 
     // Microphone usage description is plugin-specific so the
@@ -205,15 +213,14 @@ fn stage_macos_app_bundle(
 /// staged IS the binary.
 fn exec_path_inside_stage(
     staged: &std::path::Path,
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-    plugin: &crate::config::PluginDef,
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bin_stem: &str,
 ) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
         staged
             .join("Contents")
             .join("MacOS")
-            .join(standalone_bin_name(&plugin.crate_name))
+            .join(bin_filename(bin_stem))
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -224,12 +231,10 @@ fn exec_path_inside_stage(
 /// Cargo's output path for the standalone binary. Tracks the active
 /// build profile so `--debug` finds the bin under `target/debug/`.
 ///
-/// `crate_name` (not `bundle_id`) — the scaffold's `[[bin]]` declares
-/// `name = "{crate_name}-standalone"`, so cargo writes the binary under
-/// `target/<profile>/{crate_name}-standalone(.exe)`. Older revisions
-/// passed `bundle_id` here, which silently broke `cargo truce run`
-/// whenever a plugin's `bundle_id` differed from its cargo crate name.
-fn standalone_built_path(root: &std::path::Path, crate_name: &str) -> PathBuf {
+/// `bin_stem` is the resolved `[[bin]] name` from the plugin's
+/// `Cargo.toml` (see `read_standalone_bin_name`), with the
+/// `{crate_name}-standalone` scaffold convention as the fallback.
+fn standalone_built_path(root: &std::path::Path, bin_stem: &str) -> PathBuf {
     let profile = if crate::is_debug_profile() {
         "debug"
     } else {
@@ -237,14 +242,16 @@ fn standalone_built_path(root: &std::path::Path, crate_name: &str) -> PathBuf {
     };
     crate::target_dir(root)
         .join(profile)
-        .join(standalone_bin_name(crate_name))
+        .join(bin_filename(bin_stem))
 }
 
-fn standalone_bin_name(crate_name: &str) -> String {
+/// Append `.exe` on Windows so the cargo-output filename and the
+/// staged-bundle filename round-trip through string equality.
+fn bin_filename(stem: &str) -> String {
     if cfg!(windows) {
-        format!("{crate_name}-standalone.exe")
+        format!("{stem}.exe")
     } else {
-        format!("{crate_name}-standalone")
+        stem.to_string()
     }
 }
 

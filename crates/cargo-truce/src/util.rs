@@ -312,6 +312,43 @@ fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathB
     Some(PathBuf::from(path))
 }
 
+/// Resolve the standalone binary's `[[bin]] name` from a plugin's
+/// `Cargo.toml`. Returns the bare stem (no `.exe`).
+///
+/// Looks for a `[[bin]]` whose `required-features` contains
+/// `"standalone"`; falls back to the only `[[bin]]` if exactly one is
+/// declared. Returns `None` if no match — callers (`cargo truce run`)
+/// then default to the scaffold convention `{crate_name}-standalone`,
+/// which is also what the doc instructs hand-written plugins to use.
+pub(crate) fn read_standalone_bin_name(crate_name: &str) -> Option<String> {
+    let manifest = locate_plugin_manifest(&project_root(), crate_name)?;
+    let content = fs::read_to_string(&manifest).ok()?;
+    let doc: toml::Table = content.parse().ok()?;
+    let bins = doc.get("bin")?.as_array()?;
+
+    // Prefer the `standalone`-gated bin when there are multiple
+    // `[[bin]]` entries (e.g. a plugin shipping both standalone +
+    // shell-loader binaries).
+    for bin in bins {
+        let table = bin.as_table()?;
+        let has_standalone = table
+            .get("required-features")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|arr| arr.iter().any(|x| x.as_str() == Some("standalone")));
+        if has_standalone {
+            return table.get("name")?.as_str().map(str::to_string);
+        }
+    }
+    if bins.len() == 1 {
+        return bins[0]
+            .as_table()?
+            .get("name")?
+            .as_str()
+            .map(str::to_string);
+    }
+    None
+}
+
 /// Detect which format features to build when the user didn't pass
 /// any `--clap` / `--vst3` / etc. flags.
 ///
