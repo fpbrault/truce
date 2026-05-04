@@ -186,6 +186,45 @@ pub fn sample_count_usize(v: f64) -> usize {
     v as usize
 }
 
+/// Inverse of [`sample_count_usize`]: convert a sample/frame count
+/// to `f64` for time math (`frames / sample_rate` → seconds,
+/// `frames * ratio` → resampled length, etc.).
+///
+/// `f64`'s 52-bit mantissa holds counts exactly up to ~9 × 10¹⁵; at
+/// 192 kHz that's ~1500 years of audio, so the precision-loss
+/// warning is irrelevant in practice. Lives in `cast` because the
+/// shape repeats across the offline render and resampler in
+/// `truce-standalone`.
+#[inline]
+#[must_use]
+pub fn frame_count_f64(n: usize) -> f64 {
+    n as f64
+}
+
+/// Cast a host-supplied sample rate (`f64`) to the `u32` audio APIs
+/// (`cpal`, `hound`, Core Audio's `AudioStreamBasicDescription`) carry.
+///
+/// Audio sample rates are positive and bounded — 192 kHz is the
+/// highest in mainstream use, far below `u32::MAX`. NaN and
+/// negative inputs debug-assert; release builds clamp to `0` so a
+/// garbage host doesn't produce undefined behavior at the FFI
+/// boundary.
+#[inline]
+#[must_use]
+pub fn sample_rate_u32(rate: f64) -> u32 {
+    debug_assert!(
+        !rate.is_nan() && rate >= 0.0,
+        "sample_rate_u32: invalid rate {rate} — host sample rate is uninitialized?",
+    );
+    if rate.is_nan() || rate < 0.0 {
+        return 0;
+    }
+    if rate >= f64::from(u32::MAX) {
+        return u32::MAX;
+    }
+    rate as u32
+}
+
 /// Map a discrete index in `[0, count - 1]` to a normalized value
 /// in `[0.0, 1.0]`. Returns `0.0` when `count <= 1` — there's only
 /// one valid index, so any input collapses to the bottom of the
@@ -376,6 +415,39 @@ mod tests {
         assert_eq!(sample_count_usize(f64::NAN), 0);
         assert_eq!(sample_count_usize(f64::INFINITY), usize::MAX);
         assert_eq!(sample_count_usize(f64::NEG_INFINITY), 0);
+    }
+
+    #[test]
+    fn frame_count_f64_basic() {
+        assert_eq!(frame_count_f64(0), 0.0);
+        assert_eq!(frame_count_f64(48_000), 48_000.0);
+        // round-trip through sample_count_usize for an exact-rep value
+        assert_eq!(sample_count_usize(frame_count_f64(192_000)), 192_000);
+    }
+
+    #[test]
+    fn sample_rate_u32_basic() {
+        assert_eq!(sample_rate_u32(44_100.0), 44_100);
+        assert_eq!(sample_rate_u32(48_000.0), 48_000);
+        assert_eq!(sample_rate_u32(192_000.0), 192_000);
+    }
+
+    #[test]
+    fn sample_rate_u32_saturates() {
+        assert_eq!(sample_rate_u32(f64::INFINITY), u32::MAX);
+        assert_eq!(sample_rate_u32(f64::from(u32::MAX) * 2.0), u32::MAX);
+    }
+
+    #[test]
+    fn sample_rate_u32_collapses_invalid_in_release() {
+        // Debug builds debug_assert; release returns 0. Tests run in
+        // debug, so guard the assertion behind `cfg(not(debug_assertions))`.
+        #[cfg(not(debug_assertions))]
+        {
+            assert_eq!(sample_rate_u32(-1.0), 0);
+            assert_eq!(sample_rate_u32(f64::NAN), 0);
+            assert_eq!(sample_rate_u32(f64::NEG_INFINITY), 0);
+        }
     }
 
     #[test]

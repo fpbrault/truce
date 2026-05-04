@@ -213,9 +213,9 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         let gpu = truce_gpu::GpuEditor::new_shared(Arc::clone(&inner));
         Some(Box::new(HotEditor::new_builtin(
             gpu,
-            inner,
-            Arc::clone(&self.loader),
-            Arc::clone(&self.params),
+            &inner,
+            &self.loader,
+            &self.params,
         )))
     }
 
@@ -273,9 +273,9 @@ impl<P: Params> Drop for HotEditor<P> {
 impl<P: Params + 'static> HotEditor<P> {
     fn new_builtin(
         gpu: truce_gpu::GpuEditor<P>,
-        inner: Arc<std::sync::Mutex<truce_gui::editor::BuiltinEditor<P>>>,
-        loader: Arc<Mutex<NativeLoader>>,
-        params: Arc<P>,
+        inner: &Arc<std::sync::Mutex<truce_gui::editor::BuiltinEditor<P>>>,
+        loader: &Arc<Mutex<NativeLoader>>,
+        params: &Arc<P>,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -307,17 +307,18 @@ impl<P: Params + 'static> HotEditor<P> {
         // calls `reload()` itself when `is_reload_pending`). When the
         // counter advances without the watcher having driven reload,
         // it just rebuilds the GUI to match.
-        let inner_for_thread = Arc::clone(&inner);
-        let params_for_thread = Arc::clone(&params);
-        let loader_for_thread = Arc::clone(&loader);
+        let inner_for_thread = Arc::clone(inner);
+        let params_for_thread = Arc::clone(params);
+        let loader_for_thread = Arc::clone(loader);
         let stop_flag = Arc::clone(&stop);
         let watcher = std::thread::Builder::new()
             .name("truce-gui-reload".into())
             .spawn(move || {
-                hot_debug!("[truce-gui-reload] watcher thread started");
                 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
                 const STOP_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
                 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+
+                hot_debug!("[truce-gui-reload] watcher thread started");
                 // Both constants are sub-second; the u128 → u32 cast
                 // is bounded.
                 #[allow(clippy::cast_possible_truncation)]

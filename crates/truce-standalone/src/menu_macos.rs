@@ -61,7 +61,12 @@ struct MenuState {
 /// `is_effect` controls whether mic-input and input-device items
 /// appear — input-side controls are useless for instruments and
 /// analyzers since the runner feeds them silence.
-pub fn install(app_name: &str, is_effect: bool, input: InputController, output: OutputController) {
+pub fn install(
+    app_name: &str,
+    is_effect: bool,
+    input: &InputController,
+    output: &OutputController,
+) {
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
 
@@ -293,6 +298,12 @@ static REGISTER_CLASS: Once = Once::new();
 
 const STATE_IVAR: &str = "_truce_menu_state";
 
+// `extern "C" fn` action callbacks are declared inside `call_once`
+// so they live in scope where `decl.add_method` can take their
+// address; hoisting them out loses access to the surrounding
+// `add_method` registration pattern. Hence the function-level
+// `items_after_statements` allow.
+#[allow(clippy::items_after_statements)]
 fn ensure_class() -> &'static Class {
     REGISTER_CLASS.call_once(|| unsafe {
         let superclass = class!(NSObject);
@@ -302,7 +313,7 @@ fn ensure_class() -> &'static Class {
         decl.add_ivar::<*mut c_void>(STATE_IVAR);
 
         // Mic toggle.
-        extern "C" fn toggle_input_action(this: &Object, _: Sel, _sender: *mut Object) {
+        extern "C" fn toggle_input_action(this: &Object, _: Sel, sender: *mut Object) {
             unsafe {
                 let Some(state) = state_from(this) else {
                     return;
@@ -314,7 +325,7 @@ fn ensure_class() -> &'static Class {
                     if want { "ON" } else { "OFF" }
                 );
                 let new_state: BOOL = if want { YES } else { NO };
-                let _: () = msg_send![_sender, setState: i64::from(new_state)];
+                let _: () = msg_send![sender, setState: i64::from(new_state)];
             }
         }
         decl.add_method(
@@ -323,7 +334,7 @@ fn ensure_class() -> &'static Class {
         );
 
         // Output mute toggle.
-        extern "C" fn toggle_output_action(this: &Object, _: Sel, _sender: *mut Object) {
+        extern "C" fn toggle_output_action(this: &Object, _: Sel, sender: *mut Object) {
             unsafe {
                 let Some(state) = state_from(this) else {
                     return;
@@ -335,7 +346,7 @@ fn ensure_class() -> &'static Class {
                     if want { "ON" } else { "OFF" }
                 );
                 let new_state: BOOL = if want { YES } else { NO };
-                let _: () = msg_send![_sender, setState: i64::from(new_state)];
+                let _: () = msg_send![sender, setState: i64::from(new_state)];
             }
         }
         decl.add_method(

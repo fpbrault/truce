@@ -46,7 +46,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use truce_core::buffer::AudioBuffer;
-use truce_core::cast::{len_u32, sample_count_usize};
+use truce_core::cast::{len_u32, sample_count_usize, sample_rate_u32};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -326,11 +326,12 @@ impl<P: PluginExport> DriverResult<P> {
             ));
         }
         // Channel counts are < u16::MAX in practice (typical: 1-8);
-        // sample rate is < u32::MAX (typical: ≤ 192000).
+        // sample rate goes through `cast::sample_rate_u32` which
+        // debug-asserts the (positive, ≤ u32::MAX) preconditions.
         #[allow(clippy::cast_possible_truncation)]
         let spec = hound::WavSpec {
             channels: self.output.len() as u16,
-            sample_rate: self.sample_rate as u32,
+            sample_rate: sample_rate_u32(self.sample_rate),
             bits_per_sample: 32,
             sample_format: hound::SampleFormat::Float,
         };

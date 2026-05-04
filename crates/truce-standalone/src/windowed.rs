@@ -140,12 +140,7 @@ where
         // (input is silent for instruments / analyzers without
         // input routing).
         #[cfg(target_os = "macos")]
-        crate::menu_macos::install(
-            P::info().name,
-            is_effect,
-            input_ctrl.clone(),
-            output_ctrl.clone(),
-        );
+        crate::menu_macos::install(P::info().name, is_effect, &input_ctrl, &output_ctrl);
 
         // Windows: same idea, but the menu bar lives inside the
         // window's non-client area, so the install path also grows
@@ -255,7 +250,7 @@ where
         }
 
         match event {
-            Event::Keyboard(kb) => self.handle_keyboard(kb),
+            Event::Keyboard(kb) => self.handle_keyboard(&kb),
             _ => EventStatus::Ignored,
         }
     }
@@ -265,9 +260,9 @@ impl<P: PluginExport + 'static> StandaloneHandler<P>
 where
     P::Params: 'static,
 {
-    fn handle_keyboard(&mut self, kb: keyboard_types::KeyboardEvent) -> EventStatus {
+    fn handle_keyboard(&mut self, kb: &keyboard_types::KeyboardEvent) -> EventStatus {
         // Ctrl-S / Cmd-S → save state
-        if kb.state == KeyState::Down && kb.code == Code::KeyS && is_mod_pressed(&kb.modifiers) {
+        if kb.state == KeyState::Down && kb.code == Code::KeyS && is_mod_pressed(kb.modifiers) {
             self.save_state_via_picker();
             return EventStatus::Captured;
         }
@@ -296,7 +291,7 @@ where
         // expose) and a guard on macOS. Capture both Down and Up
         // so the note-handler below never sees a stray modifier+I
         // Up that would emit a NoteOff for a note we never played.
-        if kb.code == Code::KeyI && self.is_effect && is_mod_pressed(&kb.modifiers) {
+        if kb.code == Code::KeyI && self.is_effect && is_mod_pressed(kb.modifiers) {
             if kb.state == KeyState::Down {
                 let want = !self.input_ctrl.is_enabled();
                 self.input_ctrl.set_enabled(want);
@@ -317,7 +312,7 @@ where
         // baseview doesn't expose. Capture both Down and Up so the
         // note-handler below never sees a stray modifier+O Up that
         // would emit a NoteOff for a note we never played.
-        if kb.code == Code::KeyO && is_mod_pressed(&kb.modifiers) {
+        if kb.code == Code::KeyO && is_mod_pressed(kb.modifiers) {
             if kb.state == KeyState::Down {
                 let want = !self.output_ctrl.is_enabled();
                 self.output_ctrl.set_enabled(want);
@@ -444,7 +439,7 @@ fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathB
 }
 
 /// macOS uses Cmd (`meta`); Linux/Windows use Ctrl.
-fn is_mod_pressed(mods: &Modifiers) -> bool {
+fn is_mod_pressed(mods: Modifiers) -> bool {
     if cfg!(target_os = "macos") {
         mods.contains(Modifiers::META)
     } else {

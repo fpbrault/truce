@@ -22,6 +22,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use truce_core::cast::frame_count_f64;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_driver::{InputSource, PluginDriver};
@@ -82,7 +83,7 @@ where
 
     let input_buf = decode_wav_channel_major(input_path, sample_rate, channels)?;
     let total_frames = input_buf.first().map_or(0, std::vec::Vec::len);
-    let duration = Duration::from_secs_f64(total_frames as f64 / sample_rate);
+    let duration = Duration::from_secs_f64(frame_count_f64(total_frames) / sample_rate);
 
     let started = Instant::now();
 
@@ -104,7 +105,7 @@ where
         .map_err(|e| format!("WAV write failed: {e}"))?;
 
     let elapsed = started.elapsed();
-    let render_secs = total_frames as f64 / sample_rate;
+    let render_secs = frame_count_f64(total_frames) / sample_rate;
     let speedup = render_secs / elapsed.as_secs_f64().max(1e-9);
     eprintln!(
         "Offline render: wrote {} frames in {:.2}s ({:.1}× real-time)",
