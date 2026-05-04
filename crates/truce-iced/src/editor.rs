@@ -702,7 +702,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                 baseview::EventStatus::Captured
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
-                truce_gui::platform::note_linux_scale_factor(info.scale());
+                crate::platform::note_linux_scale_factor(info.scale());
                 // Mirror the OS-reported scale into the shared cell
                 // (so a follow-up `set_scale_factor` from the host
                 // reads a fresh baseline) and bump `last_applied_scale`
@@ -727,71 +727,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             }
             _ => baseview::EventStatus::Ignored,
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Bridge baseview's raw-window-handle 0.5 to a wgpu 0.6 SurfaceTargetUnsafe
-// ---------------------------------------------------------------------------
-//
-// truce-iced keeps its own surface bridge (instead of re-using
-// `truce_gui::platform::create_wgpu_surface`) because `iced_wgpu` is
-// pinned to wgpu 0.19 and `truce-gui` is on wgpu 24 — the two crates
-// resolve to different `wgpu::Surface` types in this workspace's
-// dep graph, so the canonical helper produces a surface `iced_wgpu`
-// can't ingest. This is the only call site that has to stay
-// duplicated; the other GUI crates (gpu / egui / slint) all share
-// truce-gui's wgpu version.
-
-unsafe fn create_wgpu_surface(
-    instance: &wgpu::Instance,
-    window: &baseview::Window,
-) -> Option<wgpu::Surface<'static>> {
-    unsafe {
-        use raw_window_handle::HasRawWindowHandle;
-        let rwh = window.raw_window_handle();
-        let target = match rwh {
-            #[cfg(target_os = "macos")]
-            raw_window_handle::RawWindowHandle::AppKit(h) => {
-                let ns_view = std::ptr::NonNull::new(h.ns_view)?;
-                wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: wgpu::rwh::RawDisplayHandle::AppKit(
-                        wgpu::rwh::AppKitDisplayHandle::new(),
-                    ),
-                    raw_window_handle: wgpu::rwh::RawWindowHandle::AppKit(
-                        wgpu::rwh::AppKitWindowHandle::new(ns_view),
-                    ),
-                }
-            }
-            #[cfg(target_os = "windows")]
-            raw_window_handle::RawWindowHandle::Win32(h) => wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: wgpu::rwh::RawDisplayHandle::Windows(
-                    wgpu::rwh::WindowsDisplayHandle::new(),
-                ),
-                raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(
-                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(h.hwnd as isize)?),
-                ),
-            },
-            #[cfg(target_os = "linux")]
-            raw_window_handle::RawWindowHandle::Xlib(h) => {
-                use raw_window_handle::HasRawDisplayHandle;
-                let display = match window.raw_display_handle() {
-                    raw_window_handle::RawDisplayHandle::Xlib(d) => d,
-                    _ => return None,
-                };
-                let display_ptr = std::ptr::NonNull::new(display.display);
-                wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: wgpu::rwh::RawDisplayHandle::Xlib(
-                        wgpu::rwh::XlibDisplayHandle::new(display_ptr, display.screen),
-                    ),
-                    raw_window_handle: wgpu::rwh::RawWindowHandle::Xlib(
-                        wgpu::rwh::XlibWindowHandle::new(h.window as std::ffi::c_ulong),
-                    ),
-                }
-            }
-            _ => return None,
-        };
-        instance.create_surface_unsafe(target).ok()
     }
 }
 
@@ -841,7 +776,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             font: self.font,
         });
 
-        let parent_wrapper = truce_gui::platform::ParentWindow(parent);
+        let parent_wrapper = crate::platform::ParentWindow(parent);
         let options = baseview::WindowOpenOptions {
             title: String::from("truce-iced"),
             size: baseview::Size::new(w as f64, h as f64),
@@ -859,7 +794,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                     ..Default::default()
                 });
 
-                let surface = unsafe { create_wgpu_surface(&instance, window) };
+                let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) };
 
                 if let Some(surface) = surface {
                     let editor = unsafe { &mut *(editor_addr as *mut IcedEditor<P, M>) };

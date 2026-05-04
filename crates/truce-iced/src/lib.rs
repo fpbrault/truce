@@ -31,6 +31,7 @@ pub mod editor;
 pub mod font;
 pub mod param_cache;
 pub mod param_message;
+pub mod platform;
 mod screenshot;
 pub mod theme;
 pub mod widgets;

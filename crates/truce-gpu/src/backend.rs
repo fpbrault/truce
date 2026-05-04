@@ -283,10 +283,6 @@ pub struct WgpuBackend {
     /// rebuilds the texture if these no longer match the target view.
     msaa_width: u32,
     msaa_height: u32,
-    /// True if `clear()` was called on this frame. `finish()` uses this to
-    /// decide between `LoadOp::Clear` and `LoadOp::Load`. Reset after each
-    /// render pass.
-    clear_pending: bool,
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     /// Ordered list of bind-group switches within the current frame. Always
@@ -306,7 +302,18 @@ pub struct WgpuBackend {
     images: Vec<Option<ImageEntry>>,
     viewport_buffer: wgpu::Buffer,
     viewport_bind_group: wgpu::BindGroup,
-    clear_color: wgpu::Color,
+    /// Pending clear request for the next render pass. `Some(c)` means
+    /// the next `finish()` clears the target to `c`; `None` means it
+    /// loads existing contents (the common case when widgets overlay a
+    /// custom render). Set by [`RenderBackend::clear`] and consumed by
+    /// `finish()` / `present()`.
+    clear_color: Option<wgpu::Color>,
+    /// Fallback clear color for the present path (which can't `Load` —
+    /// the swap-chain texture would surface stale prior-frame content).
+    /// Used when `clear_color` is `None`. The Metal layer path defaults
+    /// to `TRANSPARENT` so the host's compositor sees through; other
+    /// backends default to `BLACK`.
+    present_clear_default: wgpu::Color,
     width: u32,
     height: u32,
     /// Scale factor: logical points × scale = physical pixels.
@@ -357,11 +364,18 @@ impl WgpuBackend {
         let device = Arc::new(device);
         let queue = Arc::new(queue);
 
+        // Prefer `Rgba8Unorm` so the surface format matches
+        // `read_pixels` and the headless screenshot path; fall back to
+        // any non-sRGB format the surface advertises, then to whatever
+        // the surface lists first. Keeping the format aligned across
+        // windowed and headless paths means the same shader-side
+        // gamma/blend assumptions hold.
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
             .formats
             .iter()
-            .find(|f| !f.is_srgb())
+            .find(|f| **f == wgpu::TextureFormat::Rgba8Unorm)
+            .or_else(|| surface_caps.formats.iter().find(|f| !f.is_srgb()))
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
@@ -572,7 +586,6 @@ impl WgpuBackend {
             msaa_texture,
             msaa_width: width,
             msaa_height: height,
-            clear_pending: false,
             vertices: Vec::with_capacity(4096),
             indices: Vec::with_capacity(8192),
             batches: Vec::new(),
@@ -585,7 +598,8 @@ impl WgpuBackend {
             images: Vec::new(),
             viewport_buffer,
             viewport_bind_group,
-            clear_color: wgpu::Color::BLACK,
+            clear_color: None,
+            present_clear_default: wgpu::Color::BLACK,
             width,
             height,
             scale,
@@ -872,7 +886,6 @@ impl WgpuBackend {
             msaa_texture,
             msaa_width: width,
             msaa_height: height,
-            clear_pending: false,
             vertices: Vec::with_capacity(4096),
             indices: Vec::with_capacity(8192),
             batches: Vec::new(),
@@ -885,7 +898,8 @@ impl WgpuBackend {
             images: Vec::new(),
             viewport_buffer,
             viewport_bind_group,
-            clear_color: wgpu::Color::TRANSPARENT,
+            clear_color: None,
+            present_clear_default: wgpu::Color::TRANSPARENT,
             width,
             height,
             scale,
@@ -908,7 +922,7 @@ impl WgpuBackend {
         self.vertices.clear();
         self.indices.clear();
         self.batches.clear();
-        self.clear_pending = false;
+        self.clear_color = None;
 
         if phys_w != self.width || phys_h != self.height {
             self.width = phys_w;
@@ -959,7 +973,7 @@ impl WgpuBackend {
         self.flush_atlas();
 
         if self.indices.is_empty() {
-            self.clear_pending = false;
+            self.clear_color = None;
             return;
         }
 
@@ -984,13 +998,9 @@ impl WgpuBackend {
         // undefined contents). With a `resolve_target` set, `Discard` is
         // standard for MSAA — but it's only well-defined when we also
         // `Clear` on entry, since a fresh load after a discard is UB.
-        let (load, store) = if self.clear_pending {
-            (
-                wgpu::LoadOp::Clear(self.clear_color),
-                wgpu::StoreOp::Discard,
-            )
-        } else {
-            (wgpu::LoadOp::Load, wgpu::StoreOp::Store)
+        let (load, store) = match self.clear_color {
+            Some(c) => (wgpu::LoadOp::Clear(c), wgpu::StoreOp::Discard),
+            None => (wgpu::LoadOp::Load, wgpu::StoreOp::Store),
         };
 
         {
@@ -1041,7 +1051,7 @@ impl WgpuBackend {
             }
         }
 
-        self.clear_pending = false;
+        self.clear_color = None;
     }
 
     /// Access the shared `wgpu::Device` used by this backend.
@@ -1237,16 +1247,15 @@ impl WgpuBackend {
 /// Font glyphs are rasterized at physical resolution for sharp text.
 impl RenderBackend for WgpuBackend {
     fn clear(&mut self, color: Color) {
-        self.clear_color = wgpu::Color {
+        self.clear_color = Some(wgpu::Color {
             r: color.r as f64,
             g: color.g as f64,
             b: color.b as f64,
             a: color.a as f64,
-        };
+        });
         self.vertices.clear();
         self.indices.clear();
         self.batches.clear();
-        self.clear_pending = true;
         // If a previous frame hit atlas overflow, do the eviction at the
         // frame boundary now — past frames' vertex buffers are gone, so
         // dropping the UV cache is safe. Glyphs re-rasterize lazily as
@@ -1534,10 +1543,13 @@ impl RenderBackend for WgpuBackend {
 }
 
 impl WgpuBackend {
-    /// Issue a render pass that only clears the surface to `clear_color`.
-    /// Used by `present()` when there is no geometry — without it the swap
-    /// chain would show stale buffer contents.
+    /// Issue a render pass that only clears the surface. Used by
+    /// `present()` when there is no geometry — without it the swap chain
+    /// would show stale buffer contents. Always clears (`Load` would
+    /// surface prior-frame garbage), falling back to
+    /// `present_clear_default` when no `clear()` was requested.
     fn clear_only_pass(&mut self, resolve_target: &wgpu::TextureView) {
+        let clear_color = self.clear_color.unwrap_or(self.present_clear_default);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1550,7 +1562,7 @@ impl WgpuBackend {
                     view: &self.msaa_texture,
                     resolve_target: Some(resolve_target),
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Discard,
                     },
                 })],
@@ -1564,6 +1576,7 @@ impl WgpuBackend {
 
     /// Render accumulated geometry to a texture view (shared by present + headless).
     fn render_pass(&mut self, resolve_target: &wgpu::TextureView) {
+        let clear_color = self.clear_color.unwrap_or(self.present_clear_default);
         let vertex_buffer = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1593,7 +1606,7 @@ impl WgpuBackend {
                     view: &self.msaa_texture,
                     resolve_target: Some(resolve_target),
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Discard,
                     },
                 })],
@@ -1882,7 +1895,6 @@ impl WgpuBackend {
             msaa_texture: msaa_view,
             msaa_width: phys_w,
             msaa_height: phys_h,
-            clear_pending: false,
             vertices: Vec::with_capacity(4096),
             indices: Vec::with_capacity(8192),
             batches: Vec::new(),
@@ -1895,7 +1907,8 @@ impl WgpuBackend {
             images: Vec::new(),
             viewport_buffer,
             viewport_bind_group,
-            clear_color: wgpu::Color::BLACK,
+            clear_color: None,
+            present_clear_default: wgpu::Color::BLACK,
             width: phys_w,
             height: phys_h,
             scale,
