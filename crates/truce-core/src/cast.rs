@@ -286,14 +286,14 @@ mod tests {
 
     #[test]
     fn size_of_u32_basic() {
-        assert_eq!(size_of_u32::<u8>(), 1);
-        assert_eq!(size_of_u32::<u32>(), 4);
-        assert_eq!(size_of_u32::<u64>(), 8);
         #[repr(C)]
         struct AbiStruct {
             _a: u32,
             _b: u64,
         }
+        assert_eq!(size_of_u32::<u8>(), 1);
+        assert_eq!(size_of_u32::<u32>(), 4);
+        assert_eq!(size_of_u32::<u64>(), 8);
         assert_eq!(size_of_u32::<AbiStruct>(), 16);
     }
 

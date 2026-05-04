@@ -11,6 +11,7 @@ use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 use crate::util::fs_ctx;
 use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
+use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
 
 pub(crate) fn cmd_build(args: &[String]) -> Res {
     let config = load_config()?;
@@ -125,7 +126,6 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // path (`_clap`, `_vst3`, `_vst2`, ...) that the stage/install
     // steps read from. Platform gates (AU is macOS-only, AAX is
     // macOS/Windows + SDK-configured) live inside the helper.
-    use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
     let format_selection: &[(bool, BuildFormat)] = &[
         (clap, BuildFormat::Clap),
         (vst3, BuildFormat::Vst3),
