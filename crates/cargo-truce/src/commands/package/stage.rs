@@ -29,6 +29,8 @@ pub(crate) fn lv2_slug(name: &str) -> String {
 /// `plugin.ttl`.
 pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
     use std::ffi::{CString, c_char};
+    type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+
     let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
     if !built.exists() {
         return Err(format!("Missing: {}", built.display()).into());
@@ -55,7 +57,6 @@ pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
     unsafe {
         let lib = libloading::Library::new(&bin_path)
             .map_err(|e| format!("load {} failed: {e}", bin_path.display()))?;
-        type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
         let emit: libloading::Symbol<EmitFn> =
             lib.get(b"__truce_lv2_emit_bundle\0").map_err(|e| {
                 format!(

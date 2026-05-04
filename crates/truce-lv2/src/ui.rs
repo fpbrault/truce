@@ -433,6 +433,16 @@ unsafe fn decode_notify_atom<P: PluginExport>(
     unsafe {
         use crate::atom::{Atom, AtomSequence, AtomSequenceBody};
 
+        // Synthetic single-event sequence laid out on the per-instance
+        // scratch. Reuse keeps `time:Position` (60–180×/sec) off the
+        // UI thread's allocator.
+        #[repr(C)]
+        struct OneEvent {
+            seq_header: AtomSequence,
+            event_time: i64,
+            event_body: Atom,
+        }
+
         let header_size = core::mem::size_of::<Atom>();
         if (buffer_size as usize) < header_size {
             return;
@@ -447,16 +457,6 @@ unsafe fn decode_notify_atom<P: PluginExport>(
             return;
         }
 
-        // Reuse the per-instance scratch (re-allocates only when the
-        // requested size grows past the current capacity). Hosts emit
-        // `time:Position` 60-180×/sec, and a fresh `Vec<u8>` per notify
-        // is ~10k allocations/min on the UI thread.
-        #[repr(C)]
-        struct OneEvent {
-            seq_header: AtomSequence,
-            event_time: i64,
-            event_body: Atom,
-        }
         let needed = core::mem::size_of::<OneEvent>() + body_size + 8;
         // `try_borrow_mut` instead of `borrow_mut` so a re-entrant
         // `port_event` (which the LV2 spec forbids — UI thread only —
@@ -680,9 +680,6 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
 #[cfg(target_os = "macos")]
 unsafe fn resize_ns_view(view: *mut c_void, width: u32, height: u32) {
     use objc::{class, msg_send, sel, sel_impl};
-    if view.is_null() {
-        return;
-    }
     // Objective-C `setFrameSize:` takes an NSSize (two doubles on
     // 64-bit platforms). We avoid linking AppKit directly by using
     // `msg_send!` on a known responder.
@@ -690,6 +687,9 @@ unsafe fn resize_ns_view(view: *mut c_void, width: u32, height: u32) {
     struct NSSize {
         width: f64,
         height: f64,
+    }
+    if view.is_null() {
+        return;
     }
     let size = NSSize {
         width: f64::from(width),
@@ -724,15 +724,20 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
     use objc::runtime::{Class, Object, Sel, class_addMethod};
     use objc::{class, msg_send, sel, sel_impl};
 
-    if parent.is_null() {
-        return;
-    }
-
     extern "C" fn cursor_update(_this: &Object, _sel: Sel, _event: *mut Object) {
         unsafe {
             let cursor: *mut Object = msg_send![class!(NSCursor), arrowCursor];
             let _: () = msg_send![cursor, set];
         }
+    }
+
+    // objc's `class_addMethod` takes an untyped function pointer.
+    // Transmute through an intermediate `extern "C" fn()` to keep
+    // the ABI intact while satisfying the cast.
+    type ImpFn = unsafe extern "C" fn();
+
+    if parent.is_null() {
+        return;
     }
 
     let subviews: *mut Object = msg_send![parent.cast::<Object>(), subviews];
@@ -752,10 +757,6 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
         let selector = sel!(cursorUpdate:);
         // `v@:@` → void (id self, SEL _cmd, id event).
         let type_encoding = c"v@:@".as_ptr();
-        // objc's `class_addMethod` takes an untyped function pointer.
-        // Transmute through an intermediate `extern "C" fn()` to keep
-        // the ABI intact while satisfying the cast.
-        type ImpFn = unsafe extern "C" fn();
         // SAFETY: `cursor_update` has the canonical Cocoa `IMP` ABI
         // (self, _cmd, sender) and `class_addMethod` is documented
         // to accept any function with that calling convention.
