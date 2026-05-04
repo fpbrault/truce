@@ -9,6 +9,7 @@
 //! `atom`/`midi` when the plugin has MIDI, plus `state` always. No
 //! `presets`, no `patch`, no `extension` chains until a host asks.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -134,6 +135,7 @@ fn write_plugin_ttl(
     meter_ids: &[u32],
     so_name: &str,
 ) -> std::io::Result<()> {
+    let symbols = resolve_param_symbols(params);
     let mut f = fs::File::create(bundle_dir.join(ttl_basename))?;
 
     writeln!(f, "@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .")?;
@@ -191,7 +193,7 @@ fn write_plugin_ttl(
         for i in 0..total_ports {
             let sep = if i == 0 { " " } else { ",\n        " };
             write!(f, "{sep}[")?;
-            emit_port(&mut f, i, layout, params, meter_ids)?;
+            emit_port(&mut f, i, layout, params, &symbols, meter_ids)?;
             write!(f, "    ]")?;
         }
         writeln!(f, " .")?;
@@ -207,6 +209,7 @@ fn emit_port(
     index: u32,
     layout: &PortLayout,
     params: &[ParamInfo],
+    param_symbols: &[String],
     meter_ids: &[u32],
 ) -> std::io::Result<()> {
     writeln!(f)?;
@@ -223,8 +226,9 @@ fn emit_port(
         writeln!(f, "        lv2:symbol \"out_{ch}\" ;")?;
         writeln!(f, "        lv2:name \"Audio Out {}\" ;", ch + 1)?;
     } else if index < layout.meter_start() {
-        let p = &params[(index - layout.control_start()) as usize];
-        emit_control_port(f, index, p)?;
+        let slot = (index - layout.control_start()) as usize;
+        let p = &params[slot];
+        emit_control_port(f, index, p, &param_symbols[slot])?;
     } else if index < layout.meter_start() + layout.num_meters {
         let slot = (index - layout.meter_start()) as usize;
         let id = meter_ids[slot];
@@ -291,10 +295,15 @@ fn emit_meter_port(f: &mut fs::File, index: u32, slot: usize, id: u32) -> std::i
     Ok(())
 }
 
-fn emit_control_port(f: &mut fs::File, index: u32, p: &ParamInfo) -> std::io::Result<()> {
+fn emit_control_port(
+    f: &mut fs::File,
+    index: u32,
+    p: &ParamInfo,
+    symbol: &str,
+) -> std::io::Result<()> {
     writeln!(f, "        a lv2:InputPort, lv2:ControlPort ;")?;
     writeln!(f, "        lv2:index {index} ;")?;
-    writeln!(f, "        lv2:symbol \"{}\" ;", param_symbol(p.id, p.name))?;
+    writeln!(f, "        lv2:symbol \"{symbol}\" ;")?;
     writeln!(f, "        lv2:name \"{}\" ;", escape_turtle(p.name))?;
     writeln!(f, "        lv2:minimum {} ;", p.range.min())?;
     writeln!(f, "        lv2:maximum {} ;", p.range.max())?;
@@ -337,7 +346,37 @@ fn emit_control_port(f: &mut fs::File, index: u32, p: &ParamInfo) -> std::io::Re
     Ok(())
 }
 
-fn param_symbol(id: u32, name: &str) -> String {
+/// Resolve every param's display name to an LV2 symbol, ensuring
+/// uniqueness across the param set.
+///
+/// LV2 symbols must be `[A-Za-z_][A-Za-z0-9_]*` and must be unique
+/// within the plugin. The single-symbol sanitizer can't catch
+/// collisions on its own — `"Gain"` and `"gain"` both sanitize to
+/// `"Gain"` (after the alpha-leading prepend). On collision, fall
+/// back to `p_<id>` for the *later* offender (the first occurrence
+/// keeps the readable form).
+fn resolve_param_symbols(params: &[ParamInfo]) -> Vec<String> {
+    let mut out = Vec::with_capacity(params.len());
+    let mut seen: HashSet<String> = HashSet::with_capacity(params.len());
+    for p in params {
+        let candidate = param_symbol_candidate(p.id, p.name);
+        let resolved = if seen.insert(candidate.clone()) {
+            candidate
+        } else {
+            // Collision (or repeated `p_<id>` fallback): use a
+            // disambiguator that's guaranteed unique because every
+            // param ID is unique and `p_<id>` doesn't appear in any
+            // other resolution path that would land on this number.
+            let fallback = format!("p_{}", p.id);
+            seen.insert(fallback.clone());
+            fallback
+        };
+        out.push(resolved);
+    }
+    out
+}
+
+fn param_symbol_candidate(id: u32, name: &str) -> String {
     // LV2 symbols must be [A-Za-z_][A-Za-z0-9_]*. Sanitize from the display
     // name; fall back to p_<id> if nothing usable remains.
     let mut s = String::with_capacity(name.len() + 2);

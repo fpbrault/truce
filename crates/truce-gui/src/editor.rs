@@ -295,7 +295,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 Some(i) => i,
                 None => return Vec::new(),
             };
-            let count = (info.range.step_count().max(1) as usize) + 1;
+            let count = info.range.step_count().map_or(1, |n| n.get() as usize) + 1;
             (0..count)
                 .map(|i| {
                     let norm = if count <= 1 {

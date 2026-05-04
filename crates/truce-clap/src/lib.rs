@@ -151,11 +151,20 @@ struct ClapPluginData<P: PluginExport> {
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
     /// Host-reported GUI scale (via `clap_plugin_gui::set_scale`).
-    /// Defaults to 1.0 on macOS where AppKit handles DPI automatically
-    /// and hosts generally don't set a scale. Used to convert the
-    /// editor's logical size to physical pixels when CLAP hosts ask
-    /// for the window size on Windows/Linux.
+    /// Sources of truth, by platform:
+    /// - **macOS**: ignored at `gui_get_size` (AppKit handles backing
+    ///   scale through the parent NSView; we report logical points
+    ///   and let the OS scale). Stored only for editors that consume
+    ///   it directly via `set_scale_factor`.
+    /// - **Windows / Linux**: used at `gui_get_size` to convert
+    ///   logical→physical. Default `1.0` is correct for hosts that
+    ///   never call `set_scale` (which by convention are non-DPI-aware
+    ///   and want logical points anyway). HiDPI-aware hosts call
+    ///   `set_scale` before `gui_get_size`; `host_scale_set_by_host`
+    ///   records that and stops a stray future re-init from clobbering
+    ///   the host-supplied value.
     host_scale: f64,
+    host_scale_set_by_host: bool,
     /// Persistent input/output channel-slice scratch reused across
     /// process callbacks so the audio thread doesn't `Vec::new()` per
     /// block. The 'static lifetime is a structural lie — same trick
@@ -1486,6 +1495,7 @@ unsafe extern "C" fn gui_set_scale<P: PluginExport>(
         }
         let data = data_from_plugin::<P>(plugin);
         data.host_scale = scale;
+        data.host_scale_set_by_host = true;
         if let Some(ref mut editor) = data.editor {
             editor.set_scale_factor(scale);
         }
@@ -1866,6 +1876,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         needs_rescan: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
+        host_scale_set_by_host: false,
         input_slices: Vec::new(),
         output_slices: Vec::new(),
     });

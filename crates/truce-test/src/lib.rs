@@ -356,10 +356,10 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
     let plugin = P::create();
     let infos = plugin.params().param_infos();
     for pi in &infos {
-        let steps = pi.range.step_count();
-        let (test_values, tolerance) = if steps > 0 {
+        let (test_values, tolerance) = if let Some(steps) = pi.range.step_count() {
             // Discrete param: test exact step positions. Tolerance
             // sized for one-step quantization (half a step).
+            let steps = steps.get();
             let v: Vec<f64> = (0..=steps).map(|i| i as f64 / steps as f64).collect();
             (v, (0.5 / steps as f64).max(1e-6))
         } else {
@@ -551,7 +551,7 @@ pub struct ScreenshotTest<P: PluginExport> {
     state_bytes: Option<Vec<u8>>,
     /// `.set_param(id, v)` shortcuts — applied after state load,
     /// before the `setup` closure.
-    param_overrides: Vec<(u32, f32)>,
+    param_overrides: Vec<(u32, f64)>,
     /// Optional plugin mutation between `P::create()` and render.
     setup: Option<SetupFn<P>>,
 }
@@ -598,7 +598,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// closure but written as one builder call. Multiple `.set_param`
     /// calls compose; they apply after `.state_file` (if any) and
     /// before `.setup`.
-    pub fn set_param(mut self, id: impl Into<u32>, normalized: f32) -> Self {
+    pub fn set_param(mut self, id: impl Into<u32>, normalized: f64) -> Self {
         self.param_overrides.push((id.into(), normalized));
         self
     }
@@ -669,7 +669,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
             plugin.load_state(bytes);
         }
         for (id, value) in &param_overrides {
-            plugin.params().set_normalized(*id, *value as f64);
+            plugin.params().set_normalized(*id, *value);
         }
         plugin.params().snap_smoothers();
         if let Some(f) = setup {

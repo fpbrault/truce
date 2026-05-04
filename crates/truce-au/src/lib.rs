@@ -260,7 +260,7 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
             desc.min = info.range.min();
             desc.max = info.range.max();
             desc.default_value = info.default_plain;
-            desc.step_count = info.range.step_count();
+            desc.step_count = info.range.step_count().map_or(0, |n| n.get());
             desc.unit = unit.into_raw();
             desc.group = group.into_raw();
         }
@@ -328,7 +328,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
 
         let len = blob.len();
-        let ptr = libc_malloc(len) as *mut u8;
+        let ptr = malloc(len) as *mut u8;
         if ptr.is_null() {
             // malloc failed — tell the host we wrote nothing rather
             // than leaving `*out_data` as a stale value while
@@ -372,7 +372,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
     unsafe {
         if !_data.is_null() {
-            libc_free(_data as *mut std::ffi::c_void);
+            free(_data as *mut std::ffi::c_void);
         }
     }
 }
@@ -628,14 +628,6 @@ unsafe extern "C" {
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
 }
 
-unsafe fn libc_malloc(size: usize) -> *mut std::ffi::c_void {
-    unsafe { malloc(size) }
-}
-
-unsafe fn libc_free(ptr: *mut std::ffi::c_void) {
-    unsafe { free(ptr) }
-}
-
 // ---------------------------------------------------------------------------
 // Registration: called once from the export_au! macro
 // ---------------------------------------------------------------------------
@@ -668,7 +660,7 @@ pub fn register_au<P: PluginExport>() {
             min: pi.range.min(),
             max: pi.range.max(),
             default_value: pi.default_plain,
-            step_count: pi.range.step_count(),
+            step_count: pi.range.step_count().map_or(0, |n| n.get()),
             unit: cs.unit.into_raw(),
             group: cs.group.into_raw(),
         });

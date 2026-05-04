@@ -98,9 +98,19 @@ impl ParamRange {
         }
     }
 
-    /// Number of discrete steps (0 = continuous).
-    pub fn step_count(&self) -> u32 {
-        match self {
+    /// Number of discrete steps for a quantized range.
+    ///
+    /// `None` means continuous (Linear / Logarithmic). `Some(n)` means
+    /// the range covers `n + 1` distinct values (a step count of 3 →
+    /// 4 picker positions). Cross-format wrappers that serialize a
+    /// `0 = continuous` sentinel into a C struct should call
+    /// `.map(NonZeroU32::get).unwrap_or(0)` at the FFI boundary.
+    ///
+    /// Discrete / Enum variants with degenerate bounds (`min > max`,
+    /// or `count <= 1`) return `None` — semantically continuous,
+    /// because there's nothing to step through.
+    pub fn step_count(&self) -> Option<std::num::NonZeroU32> {
+        let raw: u32 = match self {
             Self::Linear { .. } | Self::Logarithmic { .. } => 0,
             // `max - min` as `i64` is fine, but `as u32` wraps for
             // `min > max` or steps > u32::MAX. Saturate instead so a
@@ -110,7 +120,8 @@ impl ParamRange {
                 (max.saturating_sub(*min)).max(0).min(u32::MAX as i64) as u32
             }
             Self::Enum { count } => (*count as u32).saturating_sub(1),
-        }
+        };
+        std::num::NonZeroU32::new(raw)
     }
 }
 

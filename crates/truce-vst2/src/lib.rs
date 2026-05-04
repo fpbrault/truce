@@ -416,7 +416,7 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
             desc.min = info.range.min();
             desc.max = info.range.max();
             desc.default_value = info.default_plain;
-            desc.step_count = info.range.step_count();
+            desc.step_count = info.range.step_count().map_or(0, |n| n.get());
             desc.unit = unit.into_raw();
             desc.group = group.into_raw();
         }
@@ -842,7 +842,7 @@ pub fn register_vst2<P: PluginExport>() {
             min: pi.range.min(),
             max: pi.range.max(),
             default_value: pi.default_plain,
-            step_count: pi.range.step_count(),
+            step_count: pi.range.step_count().map_or(0, |n| n.get()),
             unit: cs.unit.into_raw(),
             group: cs.group.into_raw(),
         });

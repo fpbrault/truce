@@ -203,10 +203,10 @@ impl Script {
     /// accurate at the cursor's offset. The plugin sees a
     /// `ParamChange` event in its event list — same delivery path
     /// CLAP / VST3 / AU automation lanes use.
-    pub fn set_param(&mut self, id: impl Into<u32>, normalized: f32) {
+    pub fn set_param(&mut self, id: impl Into<u32>, normalized: f64) {
         self.push(EventBody::ParamChange {
             id: id.into(),
-            value: normalized as f64,
+            value: normalized,
         });
     }
 
@@ -217,11 +217,22 @@ impl Script {
     }
 
     /// Advance the cursor by `ms` milliseconds at the run's sample
-    /// rate. `wait_ms(0)` is a no-op (subsequent events land at the
-    /// same offset). Resolves correctly only after `Script::sample_rate`
-    /// is filled in by `PluginDriver::run` — call sites can rely on
-    /// the driver wiring it before scanning the script.
+    /// rate. Resolves correctly only after `Script::sample_rate` is
+    /// filled in by `PluginDriver::run` — call sites can rely on the
+    /// driver wiring it before scanning the script.
+    ///
+    /// `wait_ms(0)` is *almost always* a copy-paste artifact and
+    /// trips a `debug_assert` in dev builds. If you genuinely want
+    /// "schedule the next event at the current cursor", that's the
+    /// implicit default — drop the call. If you want a typed no-op
+    /// for clarity (e.g. mirroring a user-supplied delay variable
+    /// that *can* be zero), use `wait_samples(0)` which doesn't
+    /// trip the assertion.
     pub fn wait_ms(&mut self, ms: u64) {
+        debug_assert!(
+            ms != 0,
+            "wait_ms(0) is a no-op — drop the call, or use wait_samples(0) if you mean it"
+        );
         let sr = if self.sample_rate > 0.0 {
             self.sample_rate
         } else {
@@ -394,7 +405,7 @@ pub struct PluginDriver<P: PluginExport> {
     manifest_dir: PathBuf,
     /// `.set_param(id, v)` shortcuts — applied after state load,
     /// before the `setup` closure.
-    param_overrides: Vec<(u32, f32)>,
+    param_overrides: Vec<(u32, f64)>,
     /// `&mut P` closure run after state load + param overrides.
     setup: Option<SetupFn<P>>,
 
@@ -501,7 +512,7 @@ impl<P: PluginExport> PluginDriver<P> {
     /// For automation *during* a run, use `.script(|s| s.set_param(...))`
     /// — that emits a sample-accurate `ParamChange` event the plugin
     /// processes inline.
-    pub fn set_param(mut self, id: impl Into<u32>, normalized: f32) -> Self {
+    pub fn set_param(mut self, id: impl Into<u32>, normalized: f64) -> Self {
         self.param_overrides.push((id.into(), normalized));
         self
     }
@@ -608,7 +619,7 @@ impl<P: PluginExport> PluginDriver<P> {
 
         // 2. Param overrides (the `.set_param(...)` shortcuts).
         for (id, value) in &self.param_overrides {
-            plugin.params().set_normalized(*id, *value as f64);
+            plugin.params().set_normalized(*id, *value);
         }
         plugin.params().snap_smoothers();
 

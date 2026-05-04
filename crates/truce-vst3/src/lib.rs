@@ -782,7 +782,8 @@ pub fn register_vst3<P: PluginExport>() {
         if pi.flags.contains(truce_params::ParamFlags::IS_BYPASS) {
             flags |= 1 << 16;
         }
-        if pi.range.step_count() > 0 {
+        let step_count = pi.range.step_count();
+        if step_count.is_some() {
             flags |= 1 << 8;
         }
 
@@ -794,7 +795,7 @@ pub fn register_vst3<P: PluginExport>() {
             min: pi.range.min(),
             max: pi.range.max(),
             default_normalized: pi.range.normalize(pi.default_plain),
-            step_count: pi.range.step_count() as i32,
+            step_count: step_count.map_or(0, |n| n.get() as i32),
             flags,
             group: cs.group.into_raw(),
         });

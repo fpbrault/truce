@@ -284,7 +284,7 @@ pub fn register_aax<P: PluginExport>() {
                 min: pi.range.min(),
                 max: pi.range.max(),
                 default_value: pi.default_plain,
-                step_count: pi.range.step_count(),
+                step_count: pi.range.step_count().map_or(0, |n| n.get()),
                 unit: cs.unit.as_ptr(),
             };
             params.push(StaticParamInfo {

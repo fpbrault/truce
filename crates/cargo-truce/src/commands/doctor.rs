@@ -151,6 +151,9 @@ pub(crate) fn cmd_doctor() -> Res {
     // Validation tools
     eprintln!();
     eprintln!("  Validation Tools");
+    // `auval` ships with Audio Toolbox on macOS; no equivalent exists on
+    // Linux / Windows, so the check would always FAIL on those hosts.
+    #[cfg(target_os = "macos")]
     check_cmd("auval", &["-h"], "auval");
     check_which_with_env("pluginval", Some("PLUGINVAL"));
     check_which_with_env("clap-validator", Some("CLAP_VALIDATOR"));

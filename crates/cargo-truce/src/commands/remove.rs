@@ -97,6 +97,13 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--stale" => stale = true,
             "--user" => set_cli_install_scope(&mut cli_scope, InstallScope::User)?,
             "--system" => set_cli_install_scope(&mut cli_scope, InstallScope::System)?,
+            "--ask" => {
+                return Err(
+                    "--ask is not valid for `cargo truce remove` (no end user to prompt). \
+                     Use --user or --system."
+                        .into(),
+                );
+            }
             "-p" => {
                 i += 1;
                 crate_filter = Some(

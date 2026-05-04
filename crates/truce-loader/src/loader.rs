@@ -8,7 +8,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
 
-/// Global counter so each NativeLoader instance gets a unique ID for temp files.
+/// Process-wide counter assigning a unique `instance_id` to each
+/// `NativeLoader` constructed in this process. Used as a tiebreaker
+/// in temp-file names so two plugins hot-reloading the same dylib
+/// path (multi-instance / dual-bus session) can't collide on a
+/// `<stem>-truce<id>.so` filename.
+///
+/// A truly per-instance counter wouldn't help: each NativeLoader
+/// needs an ID *unique among other NativeLoaders in the same
+/// process*, and only a process-scoped atomic can guarantee that.
+/// `Relaxed` ordering is sufficient — the only consumer is the
+/// owning `NativeLoader`, which reads the value back from its own
+/// `instance_id` field, never via a re-load of `LOADER_ID`.
 static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};

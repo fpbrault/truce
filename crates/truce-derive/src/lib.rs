@@ -24,6 +24,7 @@ use std::collections::HashSet;
 use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Expr, Fields, Lit, Type, TypePath, UnOp};
 use truce_build::{Config, PluginDef};
+use truce_params::METER_ID_BASE;
 
 /// Resolve `truce.toml` and pull out the `[[plugin]]` entry for the
 /// current crate. Routes every failure mode through `Result<…, String>`
@@ -429,6 +430,11 @@ fn parse_default_expr(expr: &Expr) -> Option<f64> {
         Expr::Lit(syn::ExprLit { lit, .. }) => match lit {
             Lit::Float(lit) => lit.base10_parse::<f64>().ok(),
             Lit::Int(lit) => lit.base10_parse::<i64>().ok().map(|n| n as f64),
+            // `default = true` / `default = false` for BoolParam map to
+            // exactly 1.0 / 0.0; `BoolParam::new` panics on anything
+            // else, so this is the only path that produces a valid
+            // bool default.
+            Lit::Bool(lit) => Some(if lit.value { 1.0 } else { 0.0 }),
             _ => None,
         },
         Expr::Unary(syn::ExprUnary {
@@ -506,6 +512,11 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         let Ok(max) = parts[1].parse::<f64>() else {
             return bad(format!("linear range max `{}` is not a number", parts[1]));
         };
+        if min >= max {
+            return bad(format!(
+                "linear range needs min < max, got `linear({min}, {max})`"
+            ));
+        }
         return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
     }
     if let Some(inner) = range.strip_prefix("log(").and_then(|s| s.strip_suffix(')')) {
@@ -521,6 +532,16 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         let Ok(max) = parts[1].parse::<f64>() else {
             return bad(format!("log range max `{}` is not a number", parts[1]));
         };
+        if min <= 0.0 || max <= 0.0 {
+            return bad(format!(
+                "log range needs strictly positive bounds, got `log({min}, {max})`"
+            ));
+        }
+        if min >= max {
+            return bad(format!(
+                "log range needs min < max, got `log({min}, {max})`"
+            ));
+        }
         return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
     }
     if let Some(inner) = range
@@ -545,6 +566,11 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 parts[1]
             ));
         };
+        if min >= max {
+            return bad(format!(
+                "discrete range needs min < max, got `discrete({min}, {max})`"
+            ));
+        }
         return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
     }
     if let Some(inner) = range
@@ -557,6 +583,11 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 inner.trim()
             ));
         };
+        if count < 2 {
+            return bad(format!(
+                "enum range needs at least 2 variants, got `enum({count})`"
+            ));
+        }
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
     bad(format!(
@@ -819,11 +850,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // Meters live in a dedicated high-range starting at 2^24 so they
     // can never collide with auto-assigned param IDs (which fill from
     // 0 upward). Storage indexes as `meter_array[id - METER_ID_BASE]`.
-    //
-    // Keep this in sync with `truce_params::METER_ID_BASE`. The
-    // proc-macro can't read the constant from truce-params at
-    // expansion time, so the literal is duplicated here.
-    const METER_ID_BASE: u32 = 1 << 24;
+    // `METER_ID_BASE` is imported from `truce_params` at proc-macro
+    // build time so the value can't drift between crates.
     for (next_meter, m) in (METER_ID_BASE..).zip(meter_fields.iter_mut()) {
         m.id = Some(next_meter);
     }

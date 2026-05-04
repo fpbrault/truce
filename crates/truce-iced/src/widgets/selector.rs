@@ -28,7 +28,7 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
         let info = infos.iter().find(|i| i.id == id);
 
         let (options, selected) = if let Some(info) = info {
-            let count = info.range.step_count().max(1) as usize;
+            let count = info.range.step_count().map_or(1, |n| n.get() as usize);
             let opts: Vec<String> = (0..count)
                 .map(|i| {
                     let norm = if count <= 1 {

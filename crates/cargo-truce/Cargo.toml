@@ -29,6 +29,7 @@ tinytemplate = "1.2"
 png = "0.18"
 truce-shim-types = { workspace = true }
 truce-build = { workspace = true }
+truce-core = { workspace = true }
 
 [dependencies.libloading]
 version = "0.9"

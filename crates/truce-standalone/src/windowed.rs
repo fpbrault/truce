@@ -376,7 +376,7 @@ where
         // few-second dialog wait is enough to glitch playback.
         drop(plugin);
 
-        let plugin_slug = slugify(P::info().name);
+        let plugin_slug = truce_core::slugify(P::info().name);
         let Some(path) = pick_save_path::<P>(&plugin_slug) else {
             return; // user cancelled, or no fallback dir on Linux
         };
@@ -392,14 +392,6 @@ where
 }
 
 /// Plugin-name → filesystem-friendly slug. Lowercase, ASCII
-/// alphanumerics passed through, everything else collapsed to `-`.
-fn slugify(name: &str) -> String {
-    name.to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
-}
-
 /// Resolve a destination path for Cmd-S. Native dialog on macOS /
 /// Windows; default-path fallback on Linux. Returns `None` if the
 /// user cancels (native picker) or if `data_local_dir` /

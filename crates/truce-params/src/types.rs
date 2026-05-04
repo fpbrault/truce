@@ -100,14 +100,25 @@ pub struct BoolParam {
 }
 
 impl BoolParam {
+    /// # Panics
+    ///
+    /// Panics if `info.default_plain` isn't exactly `0.0` or `1.0`.
+    /// Bool params don't have a "halfway" default; `0.5` previously
+    /// would have silently been read as `true` via a threshold check.
+    /// The derive macro's `parse_default_expr` accepts only `true` /
+    /// `false` literals for bool params (which it emits as `0.0` /
+    /// `1.0`), so this assertion fires only when a user constructs
+    /// a `BoolParam` from hand-rolled `ParamInfo`.
     pub fn new(info: ParamInfo) -> Self {
-        // `>= 0.5` matches the midpoint convention used everywhere else
-        // (the derive's `set_plain_arms` uses `value > 0.5`; CLAP /
-        // VST3 hosts' bool→f64 round-trips center on 0.5). Previous
-        // form `!= 0.0` would have read `default_plain = 0.5` as
-        // `true`, which is consistent with the post-load behavior but
-        // a little surprising.
-        let default = info.default_plain >= 0.5;
+        let default = match info.default_plain {
+            v if v == 0.0 => false,
+            v if v == 1.0 => true,
+            other => panic!(
+                "BoolParam '{}' default {} must be exactly 0.0 (false) \
+                 or 1.0 (true) — bool params have no halfway value",
+                info.name, other,
+            ),
+        };
         Self {
             info,
             value: AtomicBool::new(default),

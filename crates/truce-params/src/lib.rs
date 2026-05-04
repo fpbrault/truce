@@ -40,12 +40,14 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
         ParamUnit::Percent => format!("{:.0}%", value * 100.0),
         ParamUnit::Semitones => format!("{:.1} st", value),
         ParamUnit::Pan => {
-            if value.abs() < 0.01 {
-                "C".to_string()
-            } else if value < 0.0 {
-                format!("{:.0}L", -value * 100.0)
-            } else {
-                format!("{:.0}R", value * 100.0)
+            // Convention: pan params are normalized to [-1.0, 1.0]. Round
+            // to nearest integer percent first so the dead-zone test and
+            // L/R label agree (e.g. -0.004 → 0% → "C", -0.006 → -1% → "1L").
+            let pct = (value * 100.0).round() as i32;
+            match pct.cmp(&0) {
+                std::cmp::Ordering::Equal => "C".to_string(),
+                std::cmp::Ordering::Less => format!("{}L", -pct),
+                std::cmp::Ordering::Greater => format!("{}R", pct),
             }
         }
         ParamUnit::None => format!("{:.2}", value),
@@ -197,5 +199,48 @@ pub trait Params: Send + Sync + 'static {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::range::ParamRange;
+
+    fn pan_info() -> ParamInfo {
+        ParamInfo {
+            id: 0,
+            name: "Pan",
+            short_name: "Pan",
+            group: "",
+            range: ParamRange::Linear { min: -1.0, max: 1.0 },
+            default_plain: 0.0,
+            flags: ParamFlags::empty(),
+            unit: ParamUnit::Pan,
+        }
+    }
+
+    #[test]
+    fn pan_centre() {
+        let info = pan_info();
+        assert_eq!(format_param_value(&info, 0.0), "C");
+        assert_eq!(format_param_value(&info, 0.004), "C");
+        assert_eq!(format_param_value(&info, -0.004), "C");
+    }
+
+    #[test]
+    fn pan_left() {
+        let info = pan_info();
+        assert_eq!(format_param_value(&info, -0.5), "50L");
+        assert_eq!(format_param_value(&info, -1.0), "100L");
+        assert_eq!(format_param_value(&info, -0.006), "1L");
+    }
+
+    #[test]
+    fn pan_right() {
+        let info = pan_info();
+        assert_eq!(format_param_value(&info, 0.5), "50R");
+        assert_eq!(format_param_value(&info, 1.0), "100R");
+        assert_eq!(format_param_value(&info, 0.006), "1R");
     }
 }
