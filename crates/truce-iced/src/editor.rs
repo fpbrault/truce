@@ -607,6 +607,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Drop for IcedBaseviewHandler<P, M> {
     }
 }
 
+// The explicit `Idle | None => Default` arm documents iced's known
+// no-cursor states; the trailing `_ => Default` keeps forward-compat
+// against future iced enum variants. Both intentionally share the
+// value.
+#[allow(clippy::match_same_arms)]
 fn iced_interaction_to_cursor(interaction: iced::mouse::Interaction) -> baseview::MouseCursor {
     use iced::mouse::Interaction;
     match interaction {

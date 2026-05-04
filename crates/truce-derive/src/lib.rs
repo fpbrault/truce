@@ -1043,9 +1043,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let get_plain_arms: Vec<_> = param_fields.iter().map(|f| {
         let ident = &f.ident;
         match f.kind {
-            ParamKind::Float => quote! { x if x == self.#ident.id() => Some(self.#ident.value() as f64), },
+            ParamKind::Float | ParamKind::Int => quote! { x if x == self.#ident.id() => Some(self.#ident.value() as f64), },
             ParamKind::Bool => quote! { x if x == self.#ident.id() => Some(if self.#ident.value() { 1.0 } else { 0.0 }), },
-            ParamKind::Int => quote! { x if x == self.#ident.id() => Some(self.#ident.value() as f64), },
             ParamKind::Enum => quote! { x if x == self.#ident.id() => Some(self.#ident.index() as f64), },
         }
     }).collect();
@@ -1074,9 +1073,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .map(|f| {
             let ident = &f.ident;
             let plain_expr = match f.kind {
-                ParamKind::Float => quote! { self.#ident.value() as f64 },
+                ParamKind::Float | ParamKind::Int => quote! { self.#ident.value() as f64 },
                 ParamKind::Bool => quote! { if self.#ident.value() { 1.0 } else { 0.0 } },
-                ParamKind::Int => quote! { self.#ident.value() as f64 },
                 ParamKind::Enum => quote! { self.#ident.index() as f64 },
             };
             quote! {

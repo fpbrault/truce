@@ -43,6 +43,10 @@ impl Voice {
     }
 
     pub fn render(&mut self, waveform: u32, cutoff: f64, resonance: f64, sample_rate: f64) -> f64 {
+        // Explicit listing of the 0..=3 → sine/saw/square/triangle
+        // mapping doubles as documentation; saw is also the default
+        // so the explicit `1` arm and the wildcard share a body.
+        #[allow(clippy::match_same_arms)]
         let osc = match waveform {
             0 => self.osc_sine(),
             1 => self.osc_saw(),

@@ -46,23 +46,19 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                 format_str = Some(args.get(i).cloned().ok_or("--formats requires a value")?);
             }
             "--no-notarize" => no_notarize = true,
-            "--no-pace-sign" => no_pace_sign = true,
+            // `--no-sign` skips all signing including PACE. Apple codesign
+            // on macOS is not actually skippable today (we always pass
+            // through the configured identity, ad-hoc when none), so on
+            // this platform `--no-sign` is treated as `--no-pace-sign`.
+            "--no-pace-sign" | "--no-sign" => no_pace_sign = true,
             "--user" => set_cli_scope(&mut cli_scope, PkgScope::User)?,
             "--system" => set_cli_scope(&mut cli_scope, PkgScope::System)?,
             "--ask" => set_cli_scope(&mut cli_scope, PkgScope::Ask)?,
-            // Universal is the default on macOS — accept the flag explicitly
-            // as a no-op so cross-platform CI scripts (that also hit Windows)
-            // keep working.
-            "--universal" => {}
+            // `--universal` is the default on macOS; `--no-installer` is a
+            // Windows-only flag. Accept both as no-ops so cross-platform CI
+            // scripts that also hit Windows keep working.
+            "--universal" | "--no-installer" => {}
             "--host-only" => host_only = true,
-            // --no-sign implies skipping all signing, including PACE. Apple
-            // codesign on macOS is not actually skippable today (we always
-            // pass through the configured identity, ad-hoc when none), but
-            // PACE is — accept the flag and treat it as `--no-pace-sign`.
-            "--no-sign" => no_pace_sign = true,
-            // --no-installer is a Windows-only flag; accept and ignore so
-            // cross-platform CI scripts don't break.
-            "--no-installer" => {}
             other => return Err(format!("unknown flag: {other}").into()),
         }
         i += 1;

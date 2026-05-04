@@ -16,6 +16,12 @@ use crate::widgets::WidgetType;
 /// (meaning "infer from param range") stays as Knob — callers that
 /// need inference overwrite `widget_type` after calling
 /// `build_regions_*`.
+//
+// `Some(Knob) => Knob` and `None => Knob` share a value but mean
+// different things — explicit user-specified Knob vs. an
+// inference-pending placeholder. Keep the arms separate so the
+// distinction is greppable.
+#[allow(clippy::match_same_arms)]
 fn widget_kind_to_type(kind: Option<WidgetKind>) -> WidgetType {
     match kind {
         Some(WidgetKind::Knob) => WidgetType::Knob,

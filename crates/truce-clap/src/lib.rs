@@ -222,9 +222,9 @@ impl DescriptorHolder {
                 ]
             }
             PluginCategory::NoteEffect => vec![CLAP_PLUGIN_FEATURE_NOTE_EFFECT],
-            PluginCategory::Effect => vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT],
-            PluginCategory::Analyzer => vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT],
-            PluginCategory::Tool => vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT],
+            PluginCategory::Effect | PluginCategory::Analyzer | PluginCategory::Tool => {
+                vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT]
+            }
         };
 
         let mut features: Vec<*const c_char> =

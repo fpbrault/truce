@@ -212,6 +212,11 @@ pub fn register_aax<P: PluginExport>() {
         let category = if info.category == PluginCategory::Instrument {
             AAX_CAT_SW_GENERATORS
         } else {
+            // Explicit `Some("EQ")` arm keeps the supported-strings table
+            // complete next to Dynamics/Reverb/etc.; the wildcard default
+            // also returns EQ (always-visible category) for unknown
+            // strings. Both arms intentionally share the value.
+            #[allow(clippy::match_same_arms)]
             match info.aax_category {
                 Some("EQ") => AAX_CAT_EQ,
                 Some("Dynamics") => AAX_CAT_DYNAMICS,

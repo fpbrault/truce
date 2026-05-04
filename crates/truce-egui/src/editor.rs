@@ -334,6 +334,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         match event {
             Event::Mouse(mouse) => {
                 use baseview::MouseEvent::{CursorMoved, ButtonPressed, ButtonReleased, WheelScrolled, CursorEntered, CursorLeft};
+                // The explicit `CursorEntered => Ignored` arm signals the
+                // event was considered and intentionally ignored (vs.
+                // `CursorLeft` which we forward as `PointerGone`); the
+                // wildcard absorbs future baseview MouseEvent variants.
+                #[allow(clippy::match_same_arms)]
                 match mouse {
                     CursorMoved {
                         position,
