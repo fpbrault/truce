@@ -11,12 +11,67 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::export::PluginExport;
 use crate::plugin::Plugin;
 
-/// Drive a fresh plugin through `Editor::screenshot()` and return raw
-/// RGBA pixels + physical dimensions. No PNG save.
+/// Default scale factor used by all screenshot rendering when no
+/// explicit override is supplied. Pinned to a `HiDPI` value so a
+/// reference PNG baked on one host (CI runner, dev machine, headless
+/// container) renders at the same physical dimensions on any other.
+/// Without a pin, `truce_gui::backing_scale()` would return whatever
+/// the host's main-screen DPI happens to be — 1.0 on a virtualized
+/// CI runner, 2.0 on a Retina `MacBook` — and reference PNGs would
+/// mismatch across machines.
+pub const DEFAULT_SCREENSHOT_SCALE: f64 = 2.0;
+
+/// Process-wide screenshot scale override (f64 bits). Zero means "no
+/// override active"; any non-zero value is consulted by
+/// `truce_gui::backing_scale()` ahead of the platform query so the
+/// editor backends construct their `EditorScale` at the override.
+static SCREENSHOT_SCALE_BITS: AtomicU64 = AtomicU64::new(0);
+
+/// Read the active screenshot-scale override, if any. `truce-gui`
+/// consults this from `backing_scale()` before falling back to the
+/// per-OS main-screen DPI query.
+#[must_use]
+pub fn override_scale() -> Option<f64> {
+    let bits = SCREENSHOT_SCALE_BITS.load(Ordering::Relaxed);
+    if bits == 0 {
+        return None;
+    }
+    let v = f64::from_bits(bits);
+    (v.is_finite() && v > 0.0).then_some(v)
+}
+
+/// Scoped screenshot-scale override. Drop clears the override so live
+/// (non-screenshot) editor construction afterwards goes back to the
+/// host's main-screen DPI. Panic-safe: the override is cleared even
+/// if rendering panics partway through.
+struct ScreenshotScaleGuard;
+
+impl ScreenshotScaleGuard {
+    fn set(scale: f64) -> Self {
+        let bits = if scale.is_finite() && scale > 0.0 {
+            scale.to_bits()
+        } else {
+            0
+        };
+        SCREENSHOT_SCALE_BITS.store(bits, Ordering::Relaxed);
+        Self
+    }
+}
+
+impl Drop for ScreenshotScaleGuard {
+    fn drop(&mut self) {
+        SCREENSHOT_SCALE_BITS.store(0, Ordering::Relaxed);
+    }
+}
+
+/// Drive a fresh plugin through `Editor::screenshot()` at the
+/// default screenshot scale. See [`render_pixels_for_at_scale`] for
+/// an explicit-scale entry point.
 #[must_use]
 pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
@@ -25,20 +80,53 @@ pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
 }
 
 /// Construct `P`, optionally apply a saved-state blob (`.pluginstate`
-/// bytes), then render. Used by the `__truce_screenshot` FFI so
-/// `cargo truce screenshot --state` can capture the editor under
-/// arbitrary pre-saved state without needing a test harness.
+/// bytes), then render at the default screenshot scale. Used by the
+/// `__truce_screenshot` FFI so `cargo truce screenshot --state` can
+/// capture the editor under arbitrary pre-saved state without needing
+/// a test harness.
 #[must_use]
 pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32, u32) {
+    render_with_state_at_scale::<P>(state, DEFAULT_SCREENSHOT_SCALE)
+}
+
+/// `render_with_state` variant that pins the render to an explicit
+/// scale. Plumbed through the `__truce_screenshot` FFI so the CLI's
+/// `--scale` flag and `ScreenshotTest::scale` can both reach the
+/// editor's construction-time `EditorScale`.
+#[must_use]
+pub fn render_with_state_at_scale<P: PluginExport>(
+    state: Option<&[u8]>,
+    scale: f64,
+) -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();
     if let Some(bytes) = state {
         plugin.load_state(bytes);
     }
-    render_pixels_for::<P>(&mut plugin)
+    render_pixels_for_at_scale::<P>(&mut plugin, scale)
 }
 
-/// Render the given (already-mutated) plugin's editor.
+/// Render the given (already-mutated) plugin's editor at the
+/// default screenshot scale. See [`render_pixels_for_at_scale`] for
+/// an explicit-scale entry point.
+///
+/// # Panics
+///
+/// Panics if `Plugin::editor()` returns `None` or the editor's
+/// `screenshot()` method returns `None`. Both panics name the
+/// concrete `P` and point at the trait method to implement.
+pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
+    render_pixels_for_at_scale::<P>(plugin, DEFAULT_SCREENSHOT_SCALE)
+}
+
+/// Render the given (already-mutated) plugin's editor at an explicit
+/// scale. The scale is published via [`override_scale`] for the
+/// duration of the call so the editor's `EditorScale` (initialized
+/// from `truce_gui::backing_scale()` during `Plugin::editor()`)
+/// picks up the screenshot value rather than the host's main-screen
+/// DPI. The override is cleared on return — including on panic — so
+/// any subsequent live-editor construction sees the regular
+/// platform scale.
 ///
 /// Lets callers prepare plugin state — set params, load a state
 /// blob, drive a `process()` block to populate meters — before the
@@ -51,7 +139,11 @@ pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32
 /// Panics if `Plugin::editor()` returns `None` or the editor's
 /// `screenshot()` method returns `None`. Both panics name the
 /// concrete `P` and point at the trait method to implement.
-pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
+pub fn render_pixels_for_at_scale<P: PluginExport>(
+    plugin: &mut P,
+    scale: f64,
+) -> (Vec<u8>, u32, u32) {
+    let _scale_guard = ScreenshotScaleGuard::set(scale);
     let mut editor = <P as Plugin>::editor(plugin).unwrap_or_else(|| {
         panic!(
             "plugin {} returned no editor: Plugin::editor() returned None. \

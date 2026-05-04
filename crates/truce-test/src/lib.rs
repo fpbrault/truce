@@ -647,6 +647,11 @@ pub struct ScreenshotTest<P: PluginExport> {
     param_overrides: Vec<(u32, f64)>,
     /// Optional plugin mutation between `P::create()` and render.
     setup: Option<SetupFn<P>>,
+    /// Render scale override. `None` uses
+    /// [`truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE`] so a
+    /// test PNG baked on one host renders at identical dimensions on
+    /// another.
+    scale: Option<f64>,
 }
 
 impl<P: PluginExport> ScreenshotTest<P> {
@@ -671,6 +676,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
             state_bytes: None,
             param_overrides: Vec::new(),
             setup: None,
+            scale: None,
         }
     }
 
@@ -750,6 +756,19 @@ impl<P: PluginExport> ScreenshotTest<P> {
         self
     }
 
+    /// Override the render scale used for the screenshot. Without
+    /// this, [`truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE`] is
+    /// used so the reference PNG renders at the same physical
+    /// dimensions on every host. Set this when you specifically want
+    /// to bake a 1× / 3× / fractional reference; the same value must
+    /// be passed to `cargo truce screenshot --scale` when (re)generating
+    /// the baseline.
+    #[must_use]
+    pub fn scale(mut self, scale: f64) -> Self {
+        self.scale = Some(scale);
+        self
+    }
+
     /// Build the plugin (with `state_file`/`set_param`/`setup`
     /// applied if present, in that order), render, and compare
     /// against the reference at the supplied path:
@@ -766,6 +785,9 @@ impl<P: PluginExport> ScreenshotTest<P> {
         let state_bytes = self.state_bytes;
         let param_overrides = self.param_overrides;
         let setup = self.setup;
+        let scale = self
+            .scale
+            .unwrap_or(truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE);
 
         let mut plugin = P::create();
         plugin.init();
@@ -779,7 +801,8 @@ impl<P: PluginExport> ScreenshotTest<P> {
         if let Some(f) = setup {
             f(&mut plugin);
         }
-        let (pixels, w, h) = truce_core::screenshot::render_pixels_for::<P>(&mut plugin);
+        let (pixels, w, h) =
+            truce_core::screenshot::render_pixels_for_at_scale::<P>(&mut plugin, scale);
         compare_against_reference(
             &pixels,
             w,

@@ -131,12 +131,19 @@ macro_rules! __plugin_impl {
         ///
         /// **Signature must stay byte-identical to
         /// `cargo-truce::commands::screenshot::ScreenshotFn`:**
-        /// `unsafe extern "C" fn(*const u8, usize, *const u8, usize) -> u32`.
+        /// `unsafe extern "C" fn(*const u8, usize, *const u8, usize, f64) -> u32`.
         /// The CLI dlopens this plugin's cdylib and casts the
         /// `__truce_screenshot` symbol to that type — any drift (extra
         /// arg, reordered args, return-type change) becomes silent UB
         /// at the call site rather than a link-time error. Update both
         /// sides together.
+        ///
+        /// `scale` is the render scale factor. `0.0` (or any
+        /// non-finite / `<= 0` value) is the sentinel for "use the
+        /// default": rendering falls back to
+        /// `truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE` (2.0)
+        /// so reference PNGs render at identical physical
+        /// dimensions on every host.
         ///
         /// # Safety
         /// - `state_ptr` may be null when `state_len == 0`.
@@ -152,6 +159,7 @@ macro_rules! __plugin_impl {
             state_len: usize,
             out_path_ptr: *const u8,
             out_path_len: usize,
+            scale: f64,
         ) -> u32 {
             let state: Option<&[u8]> = if state_len == 0 {
                 None
@@ -172,8 +180,16 @@ macro_rules! __plugin_impl {
             if let Some(parent) = path.parent() {
                 let _ = ::std::fs::create_dir_all(parent);
             }
+            let resolved_scale = if scale.is_finite() && scale > 0.0 {
+                scale
+            } else {
+                $crate::core::screenshot::DEFAULT_SCREENSHOT_SCALE
+            };
             let (pixels, w, h) =
-                $crate::core::screenshot::render_with_state::<Plugin>(state);
+                $crate::core::screenshot::render_with_state_at_scale::<Plugin>(
+                    state,
+                    resolved_scale,
+                );
             $crate::core::screenshot::save_png(path, &pixels, w, h);
             0
         }
