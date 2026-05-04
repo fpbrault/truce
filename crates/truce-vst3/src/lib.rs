@@ -780,8 +780,8 @@ fn vst3_cid(id: &str) -> [u8; 16] {
     // bytes that produced a deterministic but non-FNV hash with long zero
     // runs in the multiplier; sessions saved against a truce-built plugin
     // before that fix will see a different CID and need to re-bind.)
-    const FNV_OFFSET_BASIS: u128 = 0x6C62272E07BB014262B821756295C58D;
-    const FNV_PRIME: u128 = 0x0000000001000000000000000000013B;
+    const FNV_OFFSET_BASIS: u128 = 0x6C62_272E_07BB_0142_62B8_2175_6295_C58D;
+    const FNV_PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013B;
     let mut hash = FNV_OFFSET_BASIS;
     for byte in id.bytes() {
         hash ^= u128::from(byte);

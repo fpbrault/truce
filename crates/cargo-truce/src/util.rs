@@ -686,12 +686,12 @@ fn is_mach_o_file(path: &Path) -> bool {
     let magic_be = u32::from_be_bytes(buf);
     matches!(
         magic_be,
-        0xFEEDFACE      // thin Mach-O 32-bit, BE
-        | 0xFEEDFACF    // thin Mach-O 64-bit, BE
-        | 0xCEFAEDFE    // thin Mach-O 32-bit, LE
-        | 0xCFFAEDFE    // thin Mach-O 64-bit, LE
-        | 0xCAFEBABE    // FAT/universal, BE
-        | 0xBEBAFECA // FAT/universal, LE
+        0xFEED_FACE      // thin Mach-O 32-bit, BE
+        | 0xFEED_FACF    // thin Mach-O 64-bit, BE
+        | 0xCEFA_EDFE    // thin Mach-O 32-bit, LE
+        | 0xCFFA_EDFE    // thin Mach-O 64-bit, LE
+        | 0xCAFE_BABE    // FAT/universal, BE
+        | 0xBEBA_FECA // FAT/universal, LE
     )
 }
 

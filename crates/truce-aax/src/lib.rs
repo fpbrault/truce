@@ -67,19 +67,19 @@ pub struct TruceAaxGuiCallbacks {
 }
 
 // AAX plugin categories (matches AAX_Enums.h)
-pub const AAX_CAT_NONE: u32 = 0x00000000;
-pub const AAX_CAT_EQ: u32 = 0x00000001;
-pub const AAX_CAT_DYNAMICS: u32 = 0x00000002;
-pub const AAX_CAT_PITCH_SHIFT: u32 = 0x00000004;
-pub const AAX_CAT_REVERB: u32 = 0x00000008;
-pub const AAX_CAT_DELAY: u32 = 0x00000010;
-pub const AAX_CAT_MODULATION: u32 = 0x00000020;
-pub const AAX_CAT_HARMONIC: u32 = 0x00000040;
-pub const AAX_CAT_NOISE_REDUCTION: u32 = 0x00000080;
-pub const AAX_CAT_DITHER: u32 = 0x00000100;
-pub const AAX_CAT_SOUND_FIELD: u32 = 0x00000200;
-pub const AAX_CAT_SW_GENERATORS: u32 = 0x00000800;
-pub const AAX_CAT_EFFECT: u32 = 0x00002000;
+pub const AAX_CAT_NONE: u32 = 0x0000_0000;
+pub const AAX_CAT_EQ: u32 = 0x0000_0001;
+pub const AAX_CAT_DYNAMICS: u32 = 0x0000_0002;
+pub const AAX_CAT_PITCH_SHIFT: u32 = 0x0000_0004;
+pub const AAX_CAT_REVERB: u32 = 0x0000_0008;
+pub const AAX_CAT_DELAY: u32 = 0x0000_0010;
+pub const AAX_CAT_MODULATION: u32 = 0x0000_0020;
+pub const AAX_CAT_HARMONIC: u32 = 0x0000_0040;
+pub const AAX_CAT_NOISE_REDUCTION: u32 = 0x0000_0080;
+pub const AAX_CAT_DITHER: u32 = 0x0000_0100;
+pub const AAX_CAT_SOUND_FIELD: u32 = 0x0000_0200;
+pub const AAX_CAT_SW_GENERATORS: u32 = 0x0000_0800;
+pub const AAX_CAT_EFFECT: u32 = 0x0000_2000;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -255,7 +255,7 @@ pub fn register_aax<P: PluginExport>() {
             manufacturer_id: fourcc(&info.au_manufacturer),
             product_id: fourcc(&info.fourcc),
             // plugin_id must differ from product_id — XOR with a salt
-            plugin_id: fourcc(&info.fourcc) ^ 0x01010101,
+            plugin_id: fourcc(&info.fourcc) ^ 0x0101_0101,
             is_instrument: i32::from(is_instrument),
             category,
             has_editor: 0,             // filled below

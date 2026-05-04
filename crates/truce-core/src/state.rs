@@ -211,10 +211,10 @@ pub fn shared_plugin_state_hash(info: &crate::PluginInfo) -> u64 {
 /// place.
 #[must_use] 
 pub fn hash_plugin_id(id: &str) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325; // FNV-1a offset basis
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV-1a offset basis
     for byte in id.bytes() {
         hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3); // FNV prime
+        hash = hash.wrapping_mul(0x0100_0000_01b3); // FNV prime
     }
     hash
 }

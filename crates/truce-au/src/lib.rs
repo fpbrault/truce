@@ -705,7 +705,7 @@ pub fn register_au<P: PluginExport>() {
         component_manufacturer: info.au_manufacturer,
         name: name.into_raw(),
         vendor: vendor.into_raw(),
-        version: 0x00010000, // 1.0.0
+        version: 0x0001_0000, // 1.0.0
         num_inputs: truce_core::wrapper::default_io_channels::<P>().0,
         num_outputs: truce_core::wrapper::default_io_channels::<P>().1,
         bypass_param_id,

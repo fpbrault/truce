@@ -121,7 +121,7 @@ fn srgb_f32_to_linear(s: f32) -> f32 {
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn linear_to_srgb_u8(lin: f32) -> u8 {
     let lin = lin.clamp(0.0, 1.0);
-    let s = if lin <= 0.0031308 {
+    let s = if lin <= 0.003_130_8 {
         12.92 * lin
     } else {
         1.055 * lin.powf(1.0 / 2.4) - 0.055
