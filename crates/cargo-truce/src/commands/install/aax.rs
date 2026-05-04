@@ -49,7 +49,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     {
         use std::sync::{Mutex, OnceLock};
         static MEMO: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
-        let set = MEMO.get_or_init(|| Mutex::new(Default::default()));
+        let set = MEMO.get_or_init(|| Mutex::new(std::collections::HashSet::default()));
         if set.lock().is_ok_and(|s| s.contains(&memo_key)) {
             return Ok(());
         }
