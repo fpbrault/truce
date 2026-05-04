@@ -25,8 +25,11 @@ use crate::{
 use std::path::{Path, PathBuf};
 
 /// FFI signature emitted by `truce::plugin!`'s `__truce_screenshot`.
-/// `(state_ptr, state_len, out_path_ptr, out_path_len) -> u32` — 0
-/// on success, non-zero on failure (logged to stderr by the plugin).
+/// `(state_ptr, state_len, out_path_ptr, out_path_len, scale) -> u32`
+/// — 0 on success, non-zero on failure (logged to stderr by the
+/// plugin). `scale` is the render scale (default 2.0); `<= 0` falls
+/// back to [`truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE`] inside
+/// the plugin.
 ///
 /// **Must stay byte-identical to the `__truce_screenshot` definition in
 /// `crates/truce/src/plugin_macro.rs`.** This typedef is what the CLI
@@ -34,7 +37,7 @@ use std::path::{Path, PathBuf};
 /// to cross-check against, so a mismatch (extra arg, reordered args,
 /// return-type change) becomes silent UB at the first call rather than
 /// a build failure. Update both sides together.
-type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize) -> u32;
+type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize, f64) -> u32;
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
@@ -43,6 +46,12 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let mut state_path: Option<PathBuf> = None;
     let mut check_mode = false;
     let mut debug = false;
+    // `0.0` is the FFI sentinel for "use the plugin's default
+    // screenshot scale". Override via `--scale <f64>` to pin a
+    // specific value; tests that opt out of the default via
+    // `ScreenshotTest::scale` should pass the same value here when
+    // re-baking their reference PNG.
+    let mut scale: f64 = 0.0;
 
     let mut i = 0;
     while i < args.len() {
@@ -66,6 +75,16 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
                 state_path = Some(PathBuf::from(
                     args.get(i).cloned().ok_or("--state requires a path")?,
                 ));
+            }
+            "--scale" => {
+                i += 1;
+                let raw = args.get(i).ok_or("--scale requires an f64 value")?;
+                scale = raw
+                    .parse::<f64>()
+                    .map_err(|e| format!("--scale: {raw:?} is not a valid f64: {e}"))?;
+                if !scale.is_finite() || scale <= 0.0 {
+                    return Err(format!("--scale: must be finite and > 0 (got {scale})").into());
+                }
             }
             "--check" => check_mode = true,
             "--debug" => debug = true,
@@ -156,10 +175,10 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
                 .file_name()
                 .unwrap_or_else(|| std::ffi::OsStr::new(&fallback_name)),
         );
-        unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &render_path)? };
+        unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &render_path, scale)? };
         check_against_reference(&render_path, &resolved_out, &plugin.crate_name)?;
     } else {
-        unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &resolved_out)? };
+        unsafe { call_screenshot(&lib_path, state_bytes.as_deref(), &resolved_out, scale)? };
         eprintln!("Wrote {}", resolved_out.display());
     }
     Ok(())
@@ -192,6 +211,7 @@ unsafe fn call_screenshot(
     lib_path: &Path,
     state: Option<&[u8]>,
     out_path: &Path,
+    scale: f64,
 ) -> Result<(), crate::BoxErr> {
     unsafe {
         let lib = libloading::Library::new(lib_path)
@@ -211,7 +231,13 @@ unsafe fn call_screenshot(
             Some(s) => (s.as_ptr(), s.len()),
             None => (std::ptr::null(), 0),
         };
-        let rc = screenshot(state_ptr, state_len, path_bytes.as_ptr(), path_bytes.len());
+        let rc = screenshot(
+            state_ptr,
+            state_len,
+            path_bytes.as_ptr(),
+            path_bytes.len(),
+            scale,
+        );
         if rc != 0 {
             return Err(format!("__truce_screenshot returned non-zero ({rc})").into());
         }
@@ -286,7 +312,8 @@ fn print_help() {
     eprintln!(
         "\
 Usage: cargo truce screenshot --out <path> [-p <crate>]
-                              [--state <path.pluginstate>] [--check] [--debug]
+                              [--state <path.pluginstate>] [--check]
+                              [--scale <f64>] [--debug]
 
 Render a plugin's editor headlessly and save a PNG. The CLI is
 self-contained — works on any crate built with `truce::plugin!`,
@@ -302,6 +329,12 @@ Options:
   --state <path>   Load a `.pluginstate` blob (the file format the
                    standalone host's Cmd+S / Ctrl+S writes) before
                    rendering. CWD-relative or absolute.
+  --scale <f64>    Render scale. Defaults to the plugin's
+                   `DEFAULT_SCREENSHOT_SCALE` (currently 2.0) so
+                   reference PNGs render at identical dimensions on
+                   every host. Override only if a specific test
+                   bakes its baseline at a different scale via
+                   `ScreenshotTest::scale`.
   --check          Diff against the existing baseline at <path>;
                    exit non-zero on regression. Strict pixel match —
                    bake the baseline on the host you gate from.

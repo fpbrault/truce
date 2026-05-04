@@ -29,8 +29,18 @@ pub use render::{ImageId, RenderBackend};
 pub use snapshot::ParamSnapshot;
 pub use theme::Theme;
 
-/// Get the platform's display scale factor (Retina = 2.0, normal = 1.0).
+/// Get the display scale factor used to size the next editor.
+///
+/// Screenshot rendering pins this to a deterministic value via
+/// [`truce_core::screenshot::override_scale`] (default 2.0) so a
+/// reference PNG baked on one host renders at the same physical
+/// dimensions on any other. Outside screenshot rendering the
+/// override is unset and we return the platform's main-screen DPI
+/// query (Retina = 2.0, normal = 1.0).
 #[must_use]
 pub fn backing_scale() -> f64 {
+    if let Some(s) = truce_core::screenshot::override_scale() {
+        return s;
+    }
     platform::main_screen_scale()
 }
