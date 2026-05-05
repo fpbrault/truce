@@ -23,6 +23,7 @@ use truce_params::{ParamFlags, Params};
 
 use ffi::{AuCallbacks, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor, AuTransportSnapshot};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper — one per plugin instance, stored as the opaque ctx
@@ -37,6 +38,15 @@ type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct AuInstance<P: PluginExport> {
     plugin: P,
+    /// Stable handle to the params Arc, set once at instance creation.
+    /// Host-thread callbacks (`cb_param_*`, `cb_state_save`) read params
+    /// through this handle so they never form a `&inst.plugin`
+    /// reference. Params are atomic-backed and `Sync`.
+    params_arc: Arc<P::Params>,
+    /// Atomic snapshots of the plugin's most recent `latency()` /
+    /// `tail()`. Updated by the audio thread (or `cb_reset`).
+    latency_cache: AtomicU32,
+    tail_cache: AtomicU32,
     event_list: EventList,
     output_events: EventList,
     plugin_id_hash: u64,
@@ -98,8 +108,14 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
     let info = P::info();
+    let params_arc = plugin.params_arc();
+    let latency_cache = AtomicU32::new(plugin.latency());
+    let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(AuInstance::<P> {
         plugin,
+        params_arc,
+        latency_cache,
+        tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         plugin_id_hash: state::shared_plugin_state_hash(&info),
@@ -133,6 +149,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         inst.plugin.reset(sample_rate, max_frames as usize);
         inst.plugin.params().set_sample_rate(sample_rate);
         inst.plugin.params().snap_smoothers();
+        inst.latency_cache
+            .store(inst.plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
     }
 }
 
@@ -262,13 +281,19 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
         inst.plugin
             .process(&mut audio_buffer, &inst.event_list, &mut context);
+
+        // Refresh latency / tail caches so the host's main-thread
+        // queries don't have to call into `inst.plugin`.
+        inst.latency_cache
+            .store(inst.plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
     }
 }
 
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        len_u32(inst.plugin.params().count())
+        len_u32(inst.params_arc.count())
     }
 }
 
@@ -278,7 +303,7 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
 ) -> f64 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        inst.plugin.params().get_plain(id).unwrap_or(0.0)
+        inst.params_arc.get_plain(id).unwrap_or(0.0)
     }
 }
 
@@ -289,7 +314,7 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        inst.plugin.params().set_plain(id, value);
+        inst.params_arc.set_plain(id, value);
     }
 }
 
@@ -308,7 +333,7 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
             return 0;
         }
         let inst = &*ctx.cast::<AuInstance<P>>();
-        match inst.plugin.params().format_value(id, value) {
+        match inst.params_arc.format_value(id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
                 let len = bytes.len().min((out_len as usize) - 1);
@@ -328,7 +353,9 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        let (ids, values) = inst.plugin.params().collect_values();
+        let (ids, values) = inst.params_arc.collect_values();
+        // `plugin.save_state()` still goes through the plugin reference;
+        // see the matching note in `truce-vst3::cb_state_save`.
         let extra = inst.plugin.save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
 

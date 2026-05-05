@@ -38,6 +38,17 @@ impl ParamRange {
                 if *min <= 0.0 || *max <= 0.0 || min == max {
                     return 0.0;
                 }
+                // `plain.ln()` returns NaN for `plain <= 0`; the
+                // post-clamp leaves the NaN intact and a host that
+                // briefly overshoots automation below `min` ends up
+                // with a NaN normalized value flowing into saved
+                // state and the GUI round-trip.
+                if plain <= *min {
+                    return 0.0;
+                }
+                if plain >= *max {
+                    return 1.0;
+                }
                 let min_log = min.ln();
                 let max_log = max.ln();
                 ((plain.ln() - min_log) / (max_log - min_log)).clamp(0.0, 1.0)

@@ -48,6 +48,11 @@ pub struct HotShell<P: Params> {
     /// `loader.load_counter()` until `process()` runs `plugin.reset()`
     /// to match the new instance.
     last_seen_load_counter: u64,
+    /// Atomic snapshots of the plugin's most recent `latency()` /
+    /// `tail()`. Updated by the audio thread on each `process()` so
+    /// the host's main-thread queries don't block on the loader mutex.
+    latency_cache: AtomicU32,
+    tail_cache: AtomicU32,
 }
 
 unsafe impl<P: Params> Send for HotShell<P> {}
@@ -69,6 +74,8 @@ impl<P: Params + 'static> HotShell<P> {
             sample_rate: 44100.0,
             max_block_size: 1024,
             last_seen_load_counter: initial_counter,
+            latency_cache: AtomicU32::new(0),
+            tail_cache: AtomicU32::new(0),
         }
     }
 
@@ -120,9 +127,19 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         self.max_block_size = max_block_size;
         self.params.set_sample_rate(sample_rate);
 
-        let mut loader = self.loader.lock();
+        // CLAP / VST3 may call `reset` on the audio thread; same
+        // priority-inversion concern as `process`. The watcher's hold
+        // window is bounded; if we miss this reset, the next
+        // `process` call will still pick up the new sample rate via
+        // the `last_seen_load_counter` path. So a missed reset here
+        // is recoverable, while a blocked audio thread is not.
+        let Some(mut loader) = self.loader.try_lock() else {
+            return;
+        };
         if let Some(plugin) = loader.plugin_mut() {
             plugin.reset(sample_rate, max_block_size);
+            self.latency_cache.store(plugin.latency(), Ordering::Relaxed);
+            self.tail_cache.store(plugin.tail(), Ordering::Relaxed);
         }
     }
 
@@ -132,7 +149,18 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        let mut loader = self.loader.lock();
+        // Lock-free on the audio thread: if the watcher thread holds
+        // the loader (reload in flight — codesign + dlopen + canary
+        // probe takes 100s of ms on a 5–20 MB dylib), skip this block
+        // rather than block. A skipped block is silent for one buffer
+        // (`Normal` returns the host's already-zeroed output) — better
+        // than parking the audio thread under priority inversion. The
+        // watcher takes the lock briefly per reload (mtime poll loop's
+        // `try_lock_for(50ms)`), so contention is bounded to the
+        // reload window itself.
+        let Some(mut loader) = self.loader.try_lock() else {
+            return ProcessStatus::Normal;
+        };
 
         // The watcher thread drives reload directly; the audio thread
         // only observes the swap and resets the new plugin to the
@@ -179,7 +207,15 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 
-        plugin.process(buffer, events, &mut ctx)
+        let status = plugin.process(buffer, events, &mut ctx);
+
+        // Refresh latency / tail caches so host-thread queries don't
+        // have to take the loader lock (and don't dispatch through
+        // `&PluginLogic` while audio holds `&mut PluginLogic`).
+        self.latency_cache.store(plugin.latency(), Ordering::Relaxed);
+        self.tail_cache.store(plugin.tail(), Ordering::Relaxed);
+
+        status
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -227,15 +263,15 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     }
 
     fn latency(&self) -> u32 {
-        let loader = self.loader.lock();
-        loader
-            .plugin()
-            .map_or(0, super::traits::PluginLogic::latency)
+        // Read the audio-thread-updated atomic snapshot rather than
+        // dispatching through `&PluginLogic` (which would race with
+        // the audio thread's `&mut PluginLogic` and require the
+        // loader lock).
+        self.latency_cache.load(Ordering::Relaxed)
     }
 
     fn tail(&self) -> u32 {
-        let loader = self.loader.lock();
-        loader.plugin().map_or(0, super::traits::PluginLogic::tail)
+        self.tail_cache.load(Ordering::Relaxed)
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {

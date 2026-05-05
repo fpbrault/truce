@@ -15,7 +15,7 @@ use std::mem;
 use std::os::raw::c_char;
 use std::ptr;
 use std::slice;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use truce_core::bus::BusLayout;
@@ -157,6 +157,16 @@ type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct AaxInstance<P: PluginExport> {
     plugin: P,
+    /// Stable handle to the params Arc, set once at instance creation.
+    /// Host-thread callbacks (`_get_param`, `_set_param`,
+    /// `_format_value`, `_save_state`'s param walk) read params through
+    /// this handle so they never form a `&inst.plugin` reference.
+    /// Params are atomic-backed and `Sync`.
+    params_arc: Arc<P::Params>,
+    /// Atomic snapshots of the plugin's most recent `latency()` /
+    /// `tail()`. Updated by the audio thread (or `_reset`).
+    latency_cache: AtomicU32,
+    tail_cache: AtomicU32,
     event_list: EventList,
     output_events: EventList,
     plugin_id_hash: u64,
@@ -609,8 +619,14 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
     let info = P::info();
+    let params_arc = plugin.params_arc();
+    let latency_cache = AtomicU32::new(plugin.latency());
+    let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(AaxInstance::<P> {
         plugin,
+        params_arc,
+        latency_cache,
+        tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         plugin_id_hash: state::shared_plugin_state_hash(&info),
@@ -645,6 +661,9 @@ pub unsafe fn _reset<P: PluginExport>(
     inst.plugin.reset(sample_rate, max_frames as usize);
     inst.plugin.params().set_sample_rate(sample_rate);
     inst.plugin.params().snap_smoothers();
+    inst.latency_cache
+        .store(inst.plugin.latency(), Ordering::Relaxed);
+    inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -772,6 +791,12 @@ pub unsafe fn _process<P: PluginExport>(
 
         inst.plugin
             .process(&mut buffer, &inst.event_list, &mut context);
+
+        // Refresh latency / tail caches so the host's main-thread
+        // queries don't have to call into `inst.plugin`.
+        inst.latency_cache
+            .store(inst.plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
     }
 }
 
@@ -862,12 +887,12 @@ pub unsafe fn _output_event_at<P: PluginExport>(
 
 pub unsafe fn _get_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32) -> f64 {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    inst.plugin.params().get_plain(id).unwrap_or(0.0)
+    inst.params_arc.get_plain(id).unwrap_or(0.0)
 }
 
 pub unsafe fn _set_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, value: f64) {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    inst.plugin.params().set_plain(id, value);
+    inst.params_arc.set_plain(id, value);
     // Bump the revision counter so the next `_save_state` notices the
     // change. `Release` synchronizes with the `Acquire` load in
     // `_save_state` — anyone seeing the bumped revision also sees the
@@ -888,7 +913,7 @@ pub unsafe fn _format_param<P: PluginExport>(
         return;
     }
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    if let Some(text) = inst.plugin.params().format_value(id, value) {
+    if let Some(text) = inst.params_arc.format_value(id, value) {
         let bytes = text.as_bytes();
         let len = bytes.len().min((out_len as usize) - 1);
         unsafe {
@@ -926,7 +951,9 @@ pub unsafe fn _save_state<P: PluginExport>(
     let revision_before = inst.state_revision.load(Ordering::Acquire);
 
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
-        let (ids, values) = inst.plugin.params().collect_values();
+        let (ids, values) = inst.params_arc.collect_values();
+        // `plugin.save_state()` still goes through the plugin reference;
+        // see the matching note in `truce-vst3::cb_state_save`.
         let extra = inst.plugin.save_state();
         state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref())
     };

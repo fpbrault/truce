@@ -26,6 +26,7 @@ use std::marker::PhantomData;
 use std::mem::transmute;
 use std::ptr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use clap_sys::events::{
     CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF,
@@ -124,6 +125,20 @@ type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 struct ClapPluginData<P: PluginExport> {
     /// The user's plugin instance.
     plugin: P,
+    /// Stable handle to the params Arc, set once at instance creation.
+    /// Host-thread callbacks (`params_get_value`, `params_value_to_text`,
+    /// `params_text_to_value`, `state_save`) read params through this
+    /// handle so they never form a `&data.plugin` reference — the audio
+    /// thread's `&mut data.plugin` would otherwise let LLVM deduce
+    /// noalias on the plugin field and reorder loads past the audio
+    /// thread's stores. Params are atomic-backed and `Sync`.
+    params_arc: Arc<P::Params>,
+    /// Atomic snapshots of the plugin's most recent `latency()` /
+    /// `tail()`. Updated by the audio thread (or `init`/`reset`) so
+    /// `latency_get` / `tail_get` read the value without touching
+    /// `data.plugin`.
+    latency_cache: AtomicU32,
+    tail_cache: AtomicU32,
     /// Re-usable event list for converting CLAP events each process call.
     event_list: EventList,
     /// Re-usable output event list for the process context.
@@ -157,7 +172,7 @@ struct ClapPluginData<P: PluginExport> {
     /// "cast to `&mut` from the GUI thread" pattern produced.
     pending_state: Arc<StateLoadQueue>,
     /// Flag: GUI changed params, need rescan on main thread.
-    needs_rescan: Arc<std::sync::atomic::AtomicBool>,
+    needs_rescan: Arc<AtomicBool>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
     /// Host-reported GUI scale (via `clap_plugin_gui::set_scale`).
@@ -385,7 +400,7 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
         let data = data_from_plugin::<P>(plugin);
         if data
             .needs_rescan
-            .swap(false, std::sync::atomic::Ordering::Relaxed)
+            .swap(false, Ordering::Relaxed)
             && !data.host_params.is_null()
             && !data.host.is_null()
             && let Some(rescan) = (*data.host_params).rescan
@@ -857,6 +872,12 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             .plugin
             .process(&mut audio_buffer, &data.event_list, &mut context);
 
+        // Refresh latency / tail caches so the host's main-thread
+        // queries don't have to call into `data.plugin`.
+        data.latency_cache
+            .store(data.plugin.latency(), Ordering::Relaxed);
+        data.tail_cache.store(data.plugin.tail(), Ordering::Relaxed);
+
         // Flush GUI-initiated param changes to host output events
         flush_gui_changes::<P>(data, proc.out_events);
 
@@ -1116,7 +1137,7 @@ unsafe extern "C" fn params_get_value<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        match data.plugin.params().get_plain(param_id) {
+        match data.params_arc.get_plain(param_id) {
             Some(v) => {
                 *out_value = v;
                 true
@@ -1144,7 +1165,7 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
             return false;
         }
         let data = data_from_plugin::<P>(plugin);
-        match data.plugin.params().format_value(param_id, value) {
+        match data.params_arc.format_value(param_id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
                 let cap = out_buffer_capacity as usize;
@@ -1172,7 +1193,7 @@ unsafe extern "C" fn params_text_to_value<P: PluginExport>(
         let Ok(text) = CStr::from_ptr(param_value_text).to_str() else {
             return false;
         };
-        match data.plugin.params().parse_value(param_id, text) {
+        match data.params_arc.parse_value(param_id, text) {
             Some(v) => {
                 *out_value = v;
                 true
@@ -1218,7 +1239,12 @@ unsafe extern "C" fn state_save<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let (ids, values) = data.plugin.params().collect_values();
+        let (ids, values) = data.params_arc.collect_values();
+        // `plugin.save_state()` still goes through the plugin reference;
+        // see the matching note in `truce-vst3::cb_state_save` — user
+        // impls that mutate non-atomic state from `process` while also
+        // reading it from `save_state` race here. Most impls return
+        // `None` or copy from atomic params and are fine.
         let extra = data.plugin.save_state();
         let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, extra.as_deref());
 
@@ -1693,7 +1719,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     // null; the deref below would crash inside the
                     // GUI thread.
                     let host_ptr = host_for_callback.as_ptr();
-                    if !needs_rescan.swap(true, std::sync::atomic::Ordering::Relaxed)
+                    if !needs_rescan.swap(true, Ordering::Relaxed)
                         && !host_ptr.is_null()
                         && let Some(req_cb) = (*host_ptr).request_callback
                     {
@@ -1793,14 +1819,14 @@ struct Extensions<P: PluginExport> {
 unsafe extern "C" fn latency_get<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.plugin.latency()
+        data.latency_cache.load(Ordering::Relaxed)
     }
 }
 
 unsafe extern "C" fn tail_get<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.plugin.tail()
+        data.tail_cache.load(Ordering::Relaxed)
     }
 }
 
@@ -1904,6 +1930,9 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
     let info = P::info();
     let plugin_id_hash = state::hash_plugin_id(info.clap_id);
     let param_infos = instance.params().param_infos();
+    let params_arc = instance.params_arc();
+    let latency_cache = AtomicU32::new(instance.latency());
+    let tail_cache = AtomicU32::new(instance.tail());
 
     // Pre-size the per-block channel-slice scratch from the worst-case
     // bus layout the plugin advertises. Without this, the first
@@ -1924,6 +1953,9 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
 
     let data = Box::new(ClapPluginData::<P> {
         plugin: instance,
+        params_arc,
+        latency_cache,
+        tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
@@ -1937,7 +1969,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         host_params: ptr::null(),
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         pending_state: Arc::new(StateLoadQueue::new(1)),
-        needs_rescan: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        needs_rescan: Arc::new(AtomicBool::new(false)),
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
         host_scale_set_by_host: false,

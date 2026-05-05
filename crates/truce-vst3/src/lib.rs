@@ -22,6 +22,7 @@ use truce_params::Params;
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper
@@ -36,6 +37,13 @@ type StateLoadQueue = crossbeam_queue::ArrayQueue<state::DeserializedState>;
 
 struct Vst3Instance<P: PluginExport> {
     plugin: P,
+    /// Stable handle to the params Arc, set once at instance creation.
+    /// Host-thread callbacks (`cb_param_*`, `cb_state_save`) read params
+    /// through this handle so they never form a `&Inst.plugin` reference
+    /// — the audio thread's `&mut Inst.plugin` would otherwise let LLVM
+    /// deduce noalias on the plugin field and reorder loads past the
+    /// audio thread's stores. Params are atomic-backed and `Sync`.
+    params_arc: Arc<P::Params>,
     event_list: EventList,
     output_events: EventList,
     plugin_id_hash: u64,
@@ -71,6 +79,13 @@ struct Vst3Instance<P: PluginExport> {
     /// `cb_process` and calls [`state::apply_state`]
     /// under its exclusive `&mut plugin`.
     pending_state: Arc<StateLoadQueue>,
+    /// Atomic snapshots of the plugin's most recent `latency()` /
+    /// `tail()` reports. Updated by the audio thread (or `cb_reset`)
+    /// so host-thread callbacks (`cb_get_latency`, `cb_get_tail`) read
+    /// the value without forming a `&Inst.plugin` reference. Initial
+    /// value is whatever the plugin reports immediately after `init()`.
+    latency_cache: AtomicU32,
+    tail_cache: AtomicU32,
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +115,12 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         .collect();
     // Sort by id so `binary_search_by_key` works in the hot lookups.
     param_ranges.sort_by_key(|(id, _)| *id);
+    let params_arc = plugin.params_arc();
+    let latency_cache = AtomicU32::new(plugin.latency());
+    let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(Vst3Instance::<P> {
         plugin,
+        params_arc,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         plugin_id_hash: state::hash_plugin_id(info.vst3_id),
@@ -113,6 +132,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
         pending_state: Arc::new(StateLoadQueue::new(1)),
+        latency_cache,
+        tail_cache,
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
@@ -137,6 +158,9 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         inst.plugin.reset(sample_rate, max_frames as usize);
         inst.plugin.params().set_sample_rate(sample_rate);
         inst.plugin.params().snap_smoothers();
+        inst.latency_cache
+            .store(inst.plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
     }
 }
 
@@ -327,6 +351,12 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
         inst.plugin
             .process(&mut audio_buffer, &inst.event_list, &mut context);
+
+        // Refresh latency / tail caches so the host's main-thread
+        // queries don't have to call into `inst.plugin`.
+        inst.latency_cache
+            .store(inst.plugin.latency(), Ordering::Relaxed);
+        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
     }
 }
 
@@ -348,7 +378,7 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
 ) -> f64 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        inst.plugin.params().get_plain(id).unwrap_or(0.0)
+        inst.params_arc.get_plain(id).unwrap_or(0.0)
     }
 }
 
@@ -359,7 +389,7 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        inst.plugin.params().set_plain(id, value);
+        inst.params_arc.set_plain(id, value);
     }
 }
 
@@ -407,7 +437,7 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
             return 0;
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        match inst.plugin.params().format_value(id, value) {
+        match inst.params_arc.format_value(id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
                 let len = bytes.len().min((out_len as usize) - 1);
@@ -427,7 +457,14 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        let (ids, values) = inst.plugin.params().collect_values();
+        let (ids, values) = inst.params_arc.collect_values();
+        // `plugin.save_state()` still goes through the plugin reference;
+        // user impls that mutate non-atomic state from `process` while
+        // also reading it from `save_state` race here. The contract is
+        // "save_state must be safe to call concurrently with process";
+        // most impls return `None` or copy from atomic params and are
+        // fine. A future audit pass will hand this to the audio thread
+        // via a return-channel SPSC if real plugins start hitting it.
         let extra = inst.plugin.save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
         let len = blob.len();
@@ -499,14 +536,14 @@ unsafe fn libc_free(ptr: *mut std::ffi::c_void) {
 unsafe extern "C" fn cb_get_latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        inst.plugin.latency()
+        inst.latency_cache.load(Ordering::Relaxed)
     }
 }
 
 unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        inst.plugin.tail()
+        inst.tail_cache.load(Ordering::Relaxed)
     }
 }
 
