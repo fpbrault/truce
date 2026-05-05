@@ -126,12 +126,9 @@ impl BoolParam {
     /// # Panics
     ///
     /// Panics if `info.default_plain` isn't exactly `0.0` or `1.0`.
-    /// Bool params don't have a "halfway" default; `0.5` previously
-    /// would have silently been read as `true` via a threshold check.
-    /// The derive macro's `parse_default_expr` accepts only `true` /
-    /// `false` literals for bool params (which it emits as `0.0` /
-    /// `1.0`), so this assertion fires only when a user constructs
-    /// a `BoolParam` from hand-rolled `ParamInfo`.
+    /// Bool params have no halfway value; the derive emits `0.0` /
+    /// `1.0` only, so this fires only when a user constructs a
+    /// `BoolParam` from hand-rolled `ParamInfo`.
     #[must_use]
     pub fn new(info: ParamInfo) -> Self {
         let default = match info.default_plain {

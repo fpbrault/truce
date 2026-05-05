@@ -441,22 +441,15 @@ fn file_mtime(path: &std::path::Path) -> SystemTime {
 
 /// Streaming CRC32 fingerprint of `path`'s contents.
 ///
-/// Reads through an 8 KiB buffer instead of slurping the whole dylib
-/// into memory. A 5–20 MB dylib, polled every 500 ms, used to allocate
-/// and free its full contents on every poll cycle; this keeps the working
-/// set bounded and lets the kernel page-cache do the actual I/O work.
-///
-/// Uses `crc32fast`, which is already in the workspace dep graph
-/// transitively (via `png`/`image` etc.) and is roughly 30× faster
-/// than the table-free byte-at-a-time implementation we previously
-/// inlined to avoid adding an explicit dep.
+/// Reads through an 8 KiB buffer so a 5–20 MB dylib polled every
+/// 500 ms doesn't allocate its full contents per poll cycle.
 ///
 /// Returns `None` on `open` / `read` failure (file missing,
-/// permissions, mid-write interruption). An empty file successfully
-/// hashes to `Some(0)` (CRC of empty input) — distinct from the I/O
-/// failure case so callers can log the two differently. The previous
-/// signature collapsed both into `0`, which then aliased the initial
-/// `last_hash = 0` and silently treated unreadable files as "unchanged".
+/// permissions, mid-write interruption — the compiler's mid-write
+/// window is the common case). An empty file successfully hashes
+/// to `Some(0)` — distinct from the I/O failure case so a caller
+/// can't conflate "unreadable" with "unchanged" against an initial
+/// `last_hash = 0`.
 fn crc32_file(path: &std::path::Path) -> Option<u32> {
     use std::io::Read;
     let mut file = std::fs::File::open(path).ok()?;

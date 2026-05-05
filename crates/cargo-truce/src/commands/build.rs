@@ -99,7 +99,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     let root = project_root();
     let dt = &deployment_target();
-    let bundles_dir = crate::target_dir(&root).join("bundles");
+    let bundles_dir = truce_build::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
 
     let extra_features: Vec<&str> = if shell_mode { vec!["shell"] } else { vec![] };

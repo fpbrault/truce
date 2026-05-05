@@ -88,16 +88,6 @@ pub(crate) fn shared_lib_name(stem: &str) -> String {
     }
 }
 
-/// Resolve cargo's effective target directory for a given workspace
-/// root. Thin re-export of `truce_build::target_dir` so cargo-truce
-/// callers can stay on a `crate::target_dir` import; the actual
-/// resolution logic (`CARGO_TARGET_DIR` → `.cargo/config.toml`'s
-/// `[build].target-dir` → `<root>/target`) lives in truce-build,
-/// shared with truce-test.
-pub(crate) fn target_dir(root: &Path) -> PathBuf {
-    truce_build::target_dir(root)
-}
-
 // Process-scoped active build profile. Drives both `cargo build`'s
 // `--release` / `--profile <name>` flag selection and the
 // `release_lib*` path resolvers (which read `target/<profile>/...`).
@@ -162,7 +152,7 @@ pub(crate) fn verify_shell_profile_declared() -> Result<(), BoxErr> {
              [profile.shell]\n\
              inherits = \"release\"\n\
          \n\
-         (Plugins scaffolded with truce 0.13.x or later already include this.)",
+         (Scaffolded plugins already include this.)",
         cargo_toml.display()
     )
     .into())
@@ -192,7 +182,7 @@ fn profile_subdir() -> String {
 /// profile (`--debug` → `"debug"`, shell-mode builds → `"shell"`)
 /// move the resolution accordingly.
 pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
-    target_dir(root)
+    truce_build::target_dir(root)
         .join(profile_subdir())
         .join(shared_lib_name(stem))
 }
@@ -203,7 +193,7 @@ pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
     match target {
-        Some(t) => target_dir(root)
+        Some(t) => truce_build::target_dir(root)
             .join(t)
             .join(profile_subdir())
             .join(shared_lib_name(stem)),
@@ -604,7 +594,7 @@ pub(crate) fn is_production_identity(identity: &str) -> bool {
 
 /// Return the project-local temp directory (`<target>/tmp/`), creating it if needed.
 pub(crate) fn tmp_dir() -> PathBuf {
-    let dir = target_dir(&project_root()).join("tmp");
+    let dir = truce_build::target_dir(&project_root()).join("tmp");
     let _ = fs::create_dir_all(&dir);
     dir
 }
@@ -899,9 +889,10 @@ pub(crate) fn which_unix(name: &str) -> std::result::Result<PathBuf, std::io::Er
 /// which is what notarization wants. Apple-signing afterwards would be
 /// detected as PACE tampering at load time.
 ///
-/// Must be the **last** step that touches the bundle. PACE 2.4+ inserts a
-/// symlink for backwards compatibility; `cp -r` (and most copy helpers
-/// without `-H`) convert it to a regular file and break the digital seal.
+/// Must be the **last** step that touches the bundle: the signed
+/// bundle contains a symlink that `cp -r` (and most copy helpers
+/// without `-H`) silently turn into a regular file, which breaks the
+/// digital seal at load time.
 #[cfg(target_os = "macos")]
 pub(crate) fn pace_sign_aax_macos(bundle: &Path) -> crate::Res {
     let Some(wraptool) = locate_wraptool_macos() else {

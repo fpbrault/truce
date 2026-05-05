@@ -524,16 +524,13 @@ fn walk_cargo_toml(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Line-based rewrite:
 ///
 /// ```text
-/// <key> = { git = "https://github.com/truce-audio/truce"[, branch = "..."][, ...] }
+/// <key> = { git = "https://github.com/truce-audio/truce"[, tag = "..."][, ...] }
 ///                           ↓
 /// <key> = { path = "<crates>/<key>"[, ...] }
 /// ```
 ///
-/// `tag = "..."` (and `branch = "..."` for legacy fixtures) are
-/// stripped because path deps reject both keys. Current scaffolds
-/// emit `tag = "vX.Y.Z"`; the rewriter handles branch pins too so
-/// older fixtures and back-compat tests keep working without
-/// special-casing.
+/// `tag = "..."` is stripped because path deps reject the key.
+/// Scaffolds emit `tag = "vX.Y.Z"` exclusively.
 ///
 /// Skips commented-out lines (so the workspace `[workspace.dependencies]`
 /// block's commented "Uncomment to opt in" entries pass through
@@ -558,16 +555,13 @@ fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
         let key = line[..eq_idx].trim();
         let replacement = format!(r#"{{ path = "{crates_dir}/{key}""#);
         let mut rewritten = line.replacen(NEEDLE, &replacement, 1);
-        // Strip `, branch = "..."` or `, tag = "..."` if present —
-        // both are invalid on path deps. The scaffold emits at most
-        // one of these fields per line, immediately after the URL.
-        for needle in [r#", branch = ""#, r#", tag = ""#] {
-            if let Some(start) = rewritten.find(needle) {
-                let after = start + needle.len();
-                if let Some(end_quote) = rewritten[after..].find('"') {
-                    rewritten.replace_range(start..=(after + end_quote), "");
-                }
-                break; // at most one applies per line
+        // Strip `, tag = "..."` if present — invalid on path deps.
+        // Scaffolds emit it immediately after the URL.
+        let needle = r#", tag = ""#;
+        if let Some(start) = rewritten.find(needle) {
+            let after = start + needle.len();
+            if let Some(end_quote) = rewritten[after..].find('"') {
+                rewritten.replace_range(start..=(after + end_quote), "");
             }
         }
         out.push_str(&rewritten);
@@ -1004,19 +998,6 @@ truce-standalone = { git = "https://github.com/truce-audio/truce", features = ["
 "#;
     let expected = r#"truce-clap = { path = "/abs/crates/truce-clap", optional = true }
 truce-standalone = { path = "/abs/crates/truce-standalone", features = ["gui"] }
-"#;
-    assert_eq!(rewrite_git_refs(input, "/abs/crates"), expected);
-}
-
-#[test]
-fn rewrite_strips_branch_pin() {
-    let input = r#"truce = { git = "https://github.com/truce-audio/truce", branch = "preview/0.15" }
-truce-clap = { git = "https://github.com/truce-audio/truce", branch = "preview/0.15", optional = true }
-truce-standalone = { git = "https://github.com/truce-audio/truce", branch = "preview/0.15", features = ["gui"], optional = true }
-"#;
-    let expected = r#"truce = { path = "/abs/crates/truce" }
-truce-clap = { path = "/abs/crates/truce-clap", optional = true }
-truce-standalone = { path = "/abs/crates/truce-standalone", features = ["gui"], optional = true }
 "#;
     assert_eq!(rewrite_git_refs(input, "/abs/crates"), expected);
 }

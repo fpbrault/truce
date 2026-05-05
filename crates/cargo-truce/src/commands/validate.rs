@@ -492,7 +492,7 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
         return 0;
     }
 
-    let test_bin = crate::target_dir(&root).join("vst2_binary_smoke");
+    let test_bin = truce_build::target_dir(&root).join("vst2_binary_smoke");
     let cc_status = match Command::new("cc")
         .args(["-o", test_bin.to_str().unwrap(), test_src.to_str().unwrap()])
         .status()
@@ -550,7 +550,7 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
             continue;
         }
 
-        let dylib = crate::target_dir(&root).join(format!("release/lib{}.dylib", p.dylib_stem()));
+        let dylib = truce_build::target_dir(&root).join(format!("release/lib{}.dylib", p.dylib_stem()));
         // AU type tag is the same code path that drives plugin-kind
         // detection elsewhere: `aumu` → synth, `aumi` → MIDI/note
         // effect, anything else → audio effect.

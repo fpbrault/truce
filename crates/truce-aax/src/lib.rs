@@ -84,7 +84,6 @@ pub struct TruceAaxGuiCallbacks {
 }
 
 // AAX plugin categories (matches AAX_Enums.h)
-pub const AAX_CAT_NONE: u32 = 0x0000_0000;
 pub const AAX_CAT_EQ: u32 = 0x0000_0001;
 pub const AAX_CAT_DYNAMICS: u32 = 0x0000_0002;
 pub const AAX_CAT_PITCH_SHIFT: u32 = 0x0000_0004;
