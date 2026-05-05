@@ -575,7 +575,7 @@ impl GridLayout {
     /// widget count (extended to fit any explicitly-positioned
     /// widget), and `cell_size` defaults to
     /// [`GRID_DEFAULT_CELL_SIZE`]. Override any of those via
-    /// [`Self::with_header`] / [`Self::with_cols`] /
+    /// [`Self::with_titles`] / [`Self::with_cols`] /
     /// [`Self::with_cell_size`].
     ///
     /// Each entry is either a `Section` (created with `section("LABEL", vec![...])`)
@@ -708,16 +708,6 @@ impl GridLayout {
         self.width = w;
         self.height = h;
         self
-    }
-
-    /// Add a title / version header band above the grid.
-    #[must_use]
-    #[deprecated(
-        since = "0.33.0",
-        note = "use .with_titles(HeaderTitles::pair(title, subtitle)), or .with_title(...) / .with_subtitle(...) for one slot at a time"
-    )]
-    pub fn with_header(self, title: &'static str, version: &'static str) -> Self {
-        self.with_titles(HeaderTitles::pair(title, version))
     }
 
     /// Pixel height of the header band, or `0.0` when neither

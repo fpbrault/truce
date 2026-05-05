@@ -53,9 +53,6 @@ pub mod headless;
 
 pub use truce_core::export::PluginExport;
 
-/// Re-export for backward compatibility.
-pub use truce_core::export::PluginExport as StandaloneExport;
-
 // ---------------------------------------------------------------------------
 // Verbose state — set once from CLI / env, read everywhere via `vlog!`.
 // ---------------------------------------------------------------------------

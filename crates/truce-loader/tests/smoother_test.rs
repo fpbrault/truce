@@ -7,7 +7,6 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
-#[allow(unused_imports)]
 use truce_derive::Params;
 use truce_gui::layout::GridLayout;
 use truce_params::Params;

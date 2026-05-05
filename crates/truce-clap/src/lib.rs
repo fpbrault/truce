@@ -80,9 +80,6 @@ use truce_core::state;
 use truce_params::Params;
 use truce_params::{ParamFlags, ParamInfo, ParamRange};
 
-/// Re-export for backward compatibility.
-pub use truce_core::export::PluginExport as ClapExport;
-
 // ---------------------------------------------------------------------------
 // GUI → host parameter change queue
 // ---------------------------------------------------------------------------
