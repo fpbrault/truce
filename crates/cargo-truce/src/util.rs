@@ -262,21 +262,25 @@ fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathB
         return None;
     }
     // Cheap substring parse — avoids depending on serde_json here. We
-    // only need `"name":"crate_name"` and the adjacent `"manifest_path"`.
+    // only need `"name":"crate_name"` and the package's `"manifest_path"`.
+    //
+    // `cargo metadata` emits each package as
+    // `{"name":..., "version":..., ..., "manifest_path":..., ...}` —
+    // `manifest_path` is always *after* `name` within the same object,
+    // and only appears at the package level (not in `dependencies` /
+    // `targets`). So scanning forward from the matched `name` lands on
+    // the right package's path. The earlier symmetric window scan
+    // could see the *previous* package's `manifest_path` (which sits
+    // right before the next `name` field) and silently return it.
     let text = String::from_utf8_lossy(&out.stdout);
     let name_needle = format!("\"name\":\"{crate_name}\"");
     let idx = text.find(&name_needle)?;
-    // Find the enclosing package object by scanning for the nearest
-    // `"manifest_path":"..."` within a bounded window.
-    let window_end = (idx + 2048).min(text.len());
-    let window_start = idx.saturating_sub(2048);
-    let window = &text[window_start..window_end];
+    let after = &text[idx + name_needle.len()..];
     let mp_marker = "\"manifest_path\":\"";
-    let mp_idx = window.find(mp_marker)?;
-    let rest = &window[mp_idx + mp_marker.len()..];
+    let mp_idx = after.find(mp_marker)?;
+    let rest = &after[mp_idx + mp_marker.len()..];
     let end = rest.find('"')?;
-    let path = &rest[..end];
-    Some(PathBuf::from(path))
+    Some(PathBuf::from(&rest[..end]))
 }
 
 /// Resolve the standalone binary's `[[bin]] name` from a plugin's

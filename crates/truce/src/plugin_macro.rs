@@ -96,9 +96,15 @@ macro_rules! __plugin_impl {
             // they resolve from inside the synthetic module.
             use super::*;
 
-            // --- Static mode (default) ---
+            // --- Static mode (default, and always under `cfg(test)`) ---
             // Embed the logic directly. Zero overhead.
-            #[cfg(not(feature = "shell"))]
+            //
+            // `cfg(test)` forces static mode even when the `shell` feature
+            // is on: shell mode loads from a release dylib that doesn't
+            // exist during `cargo test`, so the runtime would have no
+            // logic to delegate to and `editor()` / `process()` would
+            // silently no-op. Tests need the in-process logic.
+            #[cfg(any(not(feature = "shell"), test))]
             $crate::__reexport::export_static! {
                 params: $params,
                 info: $crate::prelude::plugin_info!(),
@@ -108,7 +114,7 @@ macro_rules! __plugin_impl {
 
             // --- Shell mode (hot-reload) ---
             // Load the logic from a dylib. Same crate, debug build.
-            #[cfg(feature = "shell")]
+            #[cfg(all(feature = "shell", not(test)))]
             $crate::__plugin_hot_reload!($params, [$($layout),*]);
         }
 
