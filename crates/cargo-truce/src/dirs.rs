@@ -35,6 +35,10 @@ pub fn home_dir() -> Option<PathBuf> {
 /// helpers (those signatures predate the Result-form and threading
 /// the error through every call site is a bigger refactor than the
 /// helper deserves). New callers should prefer `?`-propagation.
+///
+/// Windows callers go through `require_local_appdata` / `require_appdata`
+/// instead; gate accordingly so the function isn't dead-code on Windows.
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn require_home_dir() -> Result<PathBuf, crate::BoxErr> {
     home_dir().ok_or_else(|| -> crate::BoxErr {
         if cfg!(windows) {

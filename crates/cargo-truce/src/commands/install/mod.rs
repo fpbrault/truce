@@ -5,11 +5,11 @@ use crate::format::Format;
 use crate::install_scope::{InstallScope, effective_scope, note_once, set_cli_install_scope};
 use crate::util::fs_ctx;
 use crate::{
-    Config, PluginDef, Res, codesign_bundle, deployment_target, detect_default_features, dirs,
-    load_config, project_root, release_lib, run_sudo, tmp_dir,
+    Config, PluginDef, Res, deployment_target, detect_default_features, load_config, project_root,
+    release_lib, run_sudo, tmp_dir,
 };
-#[cfg(target_os = "windows")]
-use crate::{common_program_files, program_files};
+#[cfg(target_os = "macos")]
+use crate::{codesign_bundle, dirs};
 use std::fs;
 use std::path::Path;
 
