@@ -31,7 +31,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 
 use truce_core::buffer::AudioBuffer;
-use truce_core::events::{Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::process::ProcessContext;
@@ -254,8 +254,8 @@ pub unsafe fn instantiate<P: PluginExport>(
 
             last_control: vec![None; control_port_count],
 
-            event_list: EventList::default(),
-            output_events: EventList::default(),
+            event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+            output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
 
             urid_map,
 
