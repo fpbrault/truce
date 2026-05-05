@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_core::cast::param_f32;
+use truce_core::cast::sample_f32;
 use truce_gui::layout::{GridLayout, dropdown, knob, section, widgets};
 
 mod voice;
@@ -180,7 +180,7 @@ impl PluginLogic for Synth {
             }
             sample *= volume;
 
-            let out = param_f32(sample).clamp(-1.0, 1.0);
+            let out = sample_f32(sample).clamp(-1.0, 1.0);
             buffer.output(0)[i] = out;
             buffer.output(1)[i] = out;
         }

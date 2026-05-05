@@ -142,6 +142,34 @@ pub fn param_f32(v: f64) -> f32 {
     v as f32
 }
 
+/// Narrow an `f64` audio sample to the `f32` the output buffer holds.
+///
+/// Audio output buffers are `f32`; some DSP (synthesis with phase
+/// accumulators, biquad filter state, anything sensitive to denormals
+/// or cumulative round-off) runs in `f64` for headroom and writes
+/// each sample back through this helper. Distinct from
+/// [`param_f32`]: that one narrows host-facing parameter values; this
+/// one narrows per-sample audio. The signatures match but the
+/// contracts differ — keeping them separate stops a reviewer from
+/// having to infer which is which from the surrounding code.
+///
+/// `f32` carries ~7 decimals of precision, far below any audible
+/// threshold for sample values in `[-1.0, 1.0]`. NaN debug-asserts
+/// (a NaN sample would silently produce a NaN buffer that downstream
+/// hosts handle inconsistently); release round-trips through `as`
+/// (which preserves NaN). Inf passes through unchanged. The helper
+/// does **not** clamp to `[-1.0, 1.0]` — saturation policy is the
+/// caller's choice (hard clip vs. soft clip vs. let-it-blow-up).
+#[inline]
+#[must_use]
+pub fn sample_f32(v: f64) -> f32 {
+    debug_assert!(
+        !v.is_nan(),
+        "sample_f32: NaN audio sample — DSP loop produced an undefined value?",
+    );
+    v as f32
+}
+
 /// Convert a host-supplied sample-position `f64` to the `i64` truce's
 /// `TransportInfo::position_samples` carries.
 ///
@@ -388,6 +416,16 @@ mod tests {
         assert_eq!(param_f32(0.5), 0.5_f32);
         assert!(param_f32(f64::INFINITY).is_infinite());
         assert!(param_f32(f64::NEG_INFINITY).is_infinite());
+    }
+
+    #[test]
+    fn sample_f32_basic() {
+        assert_eq!(sample_f32(0.0), 0.0_f32);
+        assert_eq!(sample_f32(1.0), 1.0_f32);
+        assert_eq!(sample_f32(-1.0), -1.0_f32);
+        assert!(sample_f32(f64::INFINITY).is_infinite());
+        // Helper does not clamp — values outside [-1, 1] pass through.
+        assert_eq!(sample_f32(2.5), 2.5_f32);
     }
 
     #[test]

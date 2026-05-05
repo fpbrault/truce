@@ -4,7 +4,7 @@
 //! multi-parameter DSP, filter state management, and parameter groups.
 
 use truce::prelude::*;
-use truce_core::cast::param_f32;
+use truce_core::cast::sample_f32;
 use truce_gui::layout::{GridLayout, knob, section, widgets};
 
 mod biquad;
@@ -186,7 +186,7 @@ impl PluginLogic for Eq {
                 for band in &mut self.filters[ch] {
                     sample = band.process(sample);
                 }
-                out[i] = param_f32(sample * output);
+                out[i] = sample_f32(sample * output);
             }
         }
 
