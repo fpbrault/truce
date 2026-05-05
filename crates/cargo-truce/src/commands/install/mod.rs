@@ -125,10 +125,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // Filter plugins if -p specified
     let plugins: Vec<&PluginDef> = super::pick_plugins(&config, plugin_filter.as_deref())?;
 
-    // Logic profile (the dylib the shell dlopens at runtime). Baked
-    // into the shell binary via `TRUCE_LOGIC_PROFILE` so the runtime
-    // path lookup doesn't need to read env. Only meaningful when
-    // shell_mode is on.
+    // Profile of the logic dylib that the shell dlopens at runtime.
+    // Only meaningful when `shell_mode` is on.
     let logic_profile = if debug { "debug" } else { "release" };
 
     // For shell-mode builds the per-format cargo invocation uses the
@@ -175,8 +173,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
 
         // Shell mode: also build the logic dylibs the installed shells
-        // dlopen at runtime. Built in the profile baked into the shell
-        // (release by default, debug when `--debug` was passed).
+        // dlopen at runtime. Profile follows `--debug` (release otherwise).
         if shell_mode {
             build_logic_dylibs(&plugins, logic_profile, dt)?;
         }

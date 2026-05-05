@@ -2,9 +2,7 @@
 //!
 //! `cargo truce install --shell` writes one of these per plugin; the
 //! shell binary loaded by the DAW reads it at first hot-reload to find
-//! the matching logic dylib. Replaces the older `option_env!`-baked
-//! `TRUCE_TARGET_DIR` / `TRUCE_LOGIC_PROFILE` pair, which required the
-//! plugin crate to ship a `build.rs`.
+//! the matching logic dylib.
 //!
 //! ## Path layout
 //!

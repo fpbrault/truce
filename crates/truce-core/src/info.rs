@@ -70,10 +70,3 @@ pub const fn fourcc(s: &[u8]) -> [u8; 4] {
     assert!(s.len() == 4, "FourCC must be exactly 4 bytes");
     [s[0], s[1], s[2], s[3]]
 }
-
-// The historical `truce_core::plugin_info!` macro_rules form lived
-// here and was driven by `TRUCE_*` env vars emitted by a build
-// script. The proc-macro version (`truce_derive::plugin_info`,
-// re-exported through the prelude as `truce::plugin_info!`) reads
-// `truce.toml` directly at compile time — no build.rs, no env-var
-// hop — and is what every plugin and every in-tree example uses.
