@@ -158,13 +158,13 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
 
     build_all_formats(&plugins, &formats, &archs, &root)?;
 
-    let dist_dir = crate::target_dir(&root).join("dist");
+    let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
 
     for p in &plugins {
         eprintln!("\n=== Packaging: {} ({}) ===", p.name, archs_label(&archs));
 
-        let staging = crate::target_dir(&root)
+        let staging = truce_build::target_dir(&root)
             .join("package/windows")
             .join(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);

@@ -20,7 +20,7 @@
 //! - `--debug` — cargo dev profile (faster compile).
 
 use crate::{
-    Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root, target_dir,
+    Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root,
 };
 use std::path::{Path, PathBuf};
 
@@ -160,7 +160,7 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
         // `target_dir` honours `CARGO_TARGET_DIR` and the workspace's
         // `.cargo/config.toml`'s `[build].target-dir` so the artifact
         // landing path tracks where cargo actually builds.
-        let render_dir = target_dir(&root).join("screenshots");
+        let render_dir = truce_build::target_dir(&root).join("screenshots");
         let fallback_name = format!("{}.png", plugin.crate_name);
         let render_path = render_dir.join(
             resolved_out
@@ -182,7 +182,7 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
 fn cdylib_path(root: &Path, crate_name: &str, debug: bool) -> PathBuf {
     let normalized = crate_name.replace('-', "_");
     let profile_dir = if debug { "debug" } else { "release" };
-    let dir = crate::target_dir(root).join(profile_dir);
+    let dir = truce_build::target_dir(root).join(profile_dir);
     if cfg!(target_os = "macos") {
         dir.join(format!("lib{normalized}.dylib"))
     } else if cfg!(target_os = "windows") {

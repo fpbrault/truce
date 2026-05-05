@@ -74,7 +74,7 @@ pub(crate) fn emit_au_v3_bundle(
         return Err("emit_au_v3_bundle: empty archs list".into());
     }
 
-    let bundles_dir = crate::target_dir(root).join("bundles");
+    let bundles_dir = truce_build::target_dir(root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
 
     for p in plugins {
@@ -155,7 +155,7 @@ fn build_rust_framework_dylib(
         .iter()
         .map(|a| release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple())))
         .collect();
-    let lipo_dst = crate::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
+    let lipo_dst = truce_build::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
     lipo_into(&fw_inputs, &lipo_dst)?;
     Ok(lipo_dst)
 }
@@ -500,7 +500,7 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
 
     for p in plugins {
         let app_name = p.au3_app_name();
-        let final_app = crate::target_dir(root)
+        let final_app = truce_build::target_dir(root)
             .join("bundles")
             .join(format!("{app_name}.app"));
         if !final_app.exists() {

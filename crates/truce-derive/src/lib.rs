@@ -8,13 +8,6 @@
 //! - `#[derive(Params)]`, `#[derive(ParamEnum)]`, `#[derive(State)]`
 //!   generate the parameter-discovery / state-roundtrip glue every
 //!   plugin needs. Pure syn + quote.
-//!
-//! Both used to live in separate crates (`truce-derive` +
-//! `truce-params-derive`) — merged in 0.13.x once we confirmed the
-//! "compile cost is universal" / "loader uses one but not the
-//! other" rationale for the split was wrong (the loader's only use
-//! of the param derive was a `[dev-dependencies]`-scoped test
-//! fixture).
 
 #![forbid(unsafe_code)]
 

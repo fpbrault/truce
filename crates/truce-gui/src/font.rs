@@ -1,9 +1,7 @@
 //! Font rendering using fontdue (TrueType rasterization).
 //!
 //! The bundled `JetBrains` Mono ships in the dedicated `truce-font`
-//! crate; this module re-exports it at the historical
-//! `truce_gui::font::JETBRAINS_MONO` path so existing callers keep
-//! working. Advanced users can override the bundled font via Cargo's
+//! crate. Advanced users can override the bundled font via Cargo's
 //! `[patch]` table on `truce-font` instead of forking `truce-gui`.
 
 use std::cell::RefCell;
@@ -13,9 +11,8 @@ use std::sync::LazyLock;
 use truce_core::cast::len_u32;
 
 /// `JetBrains` Mono Regular TrueType bytes — re-exported from
-/// [`truce_font`] for backwards compatibility. Prefer
-/// `truce_font::JETBRAINS_MONO` in new code; both refer to the same
-/// `&'static [u8]`.
+/// [`truce_font`] for callers that already reach for
+/// `truce_gui::font`.
 pub use truce_font::JETBRAINS_MONO;
 
 /// Cached rasterized glyph.

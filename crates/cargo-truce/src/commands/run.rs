@@ -54,7 +54,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
         .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
 
-    let bundles_dir = crate::target_dir(&root).join("bundles");
+    let bundles_dir = truce_build::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
     let staged = bundles_dir.join(standalone_bundle_name(&plugin.name));
 
@@ -235,7 +235,7 @@ fn standalone_built_path(root: &std::path::Path, bin_stem: &str) -> PathBuf {
     } else {
         "release"
     };
-    crate::target_dir(root)
+    truce_build::target_dir(root)
         .join(profile)
         .join(bin_filename(bin_stem))
 }

@@ -309,7 +309,7 @@ fn write_shell_sidecar(root: &std::path::Path, crate_name: &str, logic_profile: 
     use std::fs;
 
     let stem = crate_name.replace('-', "_");
-    let dylib_path = crate::target_dir(root)
+    let dylib_path = truce_build::target_dir(root)
         .join(logic_profile)
         .join(crate::util::shared_lib_name(&stem));
     let canonical = dylib_path.canonicalize().unwrap_or(dylib_path);

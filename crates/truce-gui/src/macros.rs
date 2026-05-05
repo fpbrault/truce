@@ -244,30 +244,6 @@ macro_rules! grid {
             .with_grid($cols, $cell)
             .with_subtitle($subtitle)
     }};
-
-    // --- Legacy positional form: `grid!("TITLE", "SUBTITLE", ...)`.
-    // Kept so out-of-tree plugins built against 0.32.x keep
-    // compiling. New code should use the `title:` / `subtitle:`
-    // kwarg arms above. ---
-    ($title:expr, $subtitle:expr, { $($body:tt)* }) => {{
-        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
-            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
-    }};
-    ($title:expr, $subtitle:expr, cols: $cols:expr, { $($body:tt)* }) => {{
-        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
-            .with_cols($cols)
-            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
-    }};
-    ($title:expr, $subtitle:expr, cell: $cell:expr, { $($body:tt)* }) => {{
-        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
-            .with_cell_size($cell)
-            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
-    }};
-    ($title:expr, $subtitle:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
-        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
-            .with_grid($cols, $cell)
-            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
-    }};
 }
 
 #[macro_export]
