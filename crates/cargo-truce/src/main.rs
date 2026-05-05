@@ -354,7 +354,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, Box<dyn std::error::Error>
                 let (pname, kind_str) = rest.split_once('=').ok_or_else(|| {
                     format!("Invalid --type flag: {s} (expected --type:<plugin>=<kind>)")
                 })?;
-                let kind = PluginKind::parse(kind_str)?;
+                let kind: PluginKind = kind_str.parse()?;
                 type_overrides.push((pname.to_string(), kind));
             }
             s if s.starts_with('-') => {

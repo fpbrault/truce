@@ -60,6 +60,22 @@ pub(crate) mod fs_ctx {
     }
 }
 
+/// Consume the next CLI arg as the value for `flag`. Advances `*i`
+/// past the consumed slot. Used by every per-subcommand arg loop in
+/// `cargo-truce` (`build`/`install`/`uninstall`/`run`/`screenshot`/
+/// `validate`/`package`/Windows-packaging) so the
+/// "<flag> requires a value" error message stays uniform.
+pub(crate) fn arg_value<'a>(
+    args: &'a [String],
+    i: &mut usize,
+    flag: &str,
+) -> Result<&'a str, BoxErr> {
+    *i += 1;
+    args.get(*i)
+        .map(String::as_str)
+        .ok_or_else(|| format!("{flag} requires a value").into())
+}
+
 /// Return the platform-specific shared library filename for a given stem.
 /// macOS: `lib{stem}.dylib`, Windows: `{stem}.dll`, Linux: `lib{stem}.so`
 pub(crate) fn shared_lib_name(stem: &str) -> String {
@@ -93,16 +109,19 @@ pub(crate) fn target_dir(root: &Path) -> PathBuf {
 //   - "debug"    → `cargo build`,             `target/debug/...`
 //   - "shell"    → `cargo build --profile shell`, `target/shell/...`
 //   - any other  → `cargo build --profile <name>`, `target/<name>/...`
-static PROFILE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+// Each `cargo truce <command>` invocation sets the profile at most
+// once (in arg parsing, before any build), then reads it many times.
+// `OnceLock` matches that lifecycle: `set_build_profile` calls
+// `OnceLock::set` (idempotent if the same profile is set twice — the
+// second call's value is discarded), and reads never wait on a lock.
+static PROFILE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// Set the active cargo profile by name. `"release"` / `"debug"` map
 /// to cargo's built-in profiles; any other name maps to a custom
 /// profile defined in the user's `Cargo.toml` (e.g. `[profile.shell]
 /// inherits = "release"` for the shell-mode build).
 pub(crate) fn set_build_profile(name: &str) {
-    let mut g = PROFILE.lock().unwrap();
-    g.clear();
-    g.push_str(name);
+    let _ = PROFILE.set(name.to_string());
 }
 
 /// Convenience wrapper for the common boolean-debug case. Equivalent
@@ -152,12 +171,10 @@ pub(crate) fn verify_shell_profile_declared() -> Result<(), BoxErr> {
 /// Read the active build profile name, defaulting to `"release"` when
 /// no command has set one.
 pub(crate) fn build_profile_name() -> String {
-    let g = PROFILE.lock().unwrap();
-    if g.is_empty() {
-        "release".to_string()
-    } else {
-        g.clone()
-    }
+    PROFILE
+        .get()
+        .cloned()
+        .unwrap_or_else(|| "release".to_string())
 }
 
 /// Whether the current xtask invocation is operating in debug mode.

@@ -1,5 +1,8 @@
 /// Defines how a parameter maps between plain and normalized values.
-#[derive(Clone, Debug)]
+///
+/// `Copy` because every variant is POD (two scalar fields). Lets format
+/// wrappers pass `info.range` by value without `clone()` noise.
+#[derive(Clone, Copy, Debug)]
 pub enum ParamRange {
     Linear { min: f64, max: f64 },
     Logarithmic { min: f64, max: f64 },

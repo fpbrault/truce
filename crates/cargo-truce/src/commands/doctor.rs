@@ -1,9 +1,8 @@
 //! `cargo truce doctor` — environment diagnostics: Rust toolchain, code
 //! signing tools, AAX SDK, installed plugins.
 
-#![allow(unused_imports)]
-
 use crate::config::read_cargo_config_env;
+use crate::format::Format;
 use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
 use crate::locate_wraptool_macos;
@@ -22,7 +21,6 @@ use crate::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 // ---------------------------------------------------------------------------
 // doctor — environment diagnostics
@@ -218,7 +216,7 @@ pub(crate) fn cmd_doctor() -> Res {
 
 #[derive(Clone, Copy)]
 struct PathFormat {
-    label: &'static str,
+    format: Format,
     /// File extension or bundle suffix. Used to count plug-ins in
     /// the directory and to detect cross-scope collisions in
     /// `cargo truce validate`.
@@ -227,61 +225,61 @@ struct PathFormat {
 
 const PATH_FORMATS_MACOS: &[PathFormat] = &[
     PathFormat {
-        label: "CLAP",
+        format: Format::Clap,
         ext: "clap",
     },
     PathFormat {
-        label: "VST3",
+        format: Format::Vst3,
         ext: "vst3",
     },
     PathFormat {
-        label: "VST2",
+        format: Format::Vst2,
         ext: "vst",
     },
     PathFormat {
-        label: "LV2",
+        format: Format::Lv2,
         ext: "lv2",
     },
     PathFormat {
-        label: "AU v2",
+        format: Format::Au2,
         ext: "component",
     },
 ];
 
 const PATH_FORMATS_WINDOWS: &[PathFormat] = &[
     PathFormat {
-        label: "CLAP",
+        format: Format::Clap,
         ext: "clap",
     },
     PathFormat {
-        label: "VST3",
+        format: Format::Vst3,
         ext: "vst3",
     },
     PathFormat {
-        label: "VST2",
+        format: Format::Vst2,
         ext: "dll",
     },
     PathFormat {
-        label: "LV2",
+        format: Format::Lv2,
         ext: "lv2",
     },
 ];
 
 const PATH_FORMATS_LINUX: &[PathFormat] = &[
     PathFormat {
-        label: "CLAP",
+        format: Format::Clap,
         ext: "clap",
     },
     PathFormat {
-        label: "VST3",
+        format: Format::Vst3,
         ext: "vst3",
     },
     PathFormat {
-        label: "VST2",
+        format: Format::Vst2,
         ext: "so",
     },
     PathFormat {
-        label: "LV2",
+        format: Format::Lv2,
         ext: "lv2",
     },
 ];
@@ -296,8 +294,12 @@ fn show_scope_paths() {
     };
 
     for f in formats {
-        let user_path = scope_path_for(f.label, InstallScope::User);
-        let system_path = scope_path_for(f.label, InstallScope::System);
+        let Some(user_path) = f.format.dir(InstallScope::User) else {
+            continue;
+        };
+        let Some(system_path) = f.format.dir(InstallScope::System) else {
+            continue;
+        };
         report_scope_line(f, "user", InstallScope::User, &user_path);
         // Linux's user and system dirs resolve to the same path —
         // skip the duplicate row to keep the matrix readable.
@@ -337,23 +339,8 @@ fn show_scope_paths() {
     }
 }
 
-/// Resolve the same path the install / remove / package commands use
-/// for `(format, scope)`. Falls through to user-scope on Linux for the
-/// unsupported `system` arm (Linux is user-only).
-fn scope_path_for(label: &str, scope: InstallScope) -> PathBuf {
-    match label {
-        "CLAP" => scope.clap_dir(),
-        "VST3" => scope.vst3_dir(),
-        "VST2" => scope.vst2_dir(),
-        "LV2" => scope.lv2_dir(),
-        #[cfg(target_os = "macos")]
-        "AU v2" => scope.au_v2_dir(),
-        _ => PathBuf::new(),
-    }
-}
-
 fn report_scope_line(f: &PathFormat, scope_label: &str, scope: InstallScope, path: &Path) {
-    let label = format!("{} {}:", f.label, scope_label);
+    let label = format!("{} {}:", f.format.label(), scope_label);
     report_path_line(&label, scope.needs_sudo(), path, f.ext);
 }
 

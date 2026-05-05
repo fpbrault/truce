@@ -1,21 +1,17 @@
 //! `cargo truce install` — build per-format dylibs and install into the
 //! standard plug-in directories.
 
-#![allow(unused_imports)]
-
-use crate::install_scope::{
-    Format, InstallScope, effective_scope, note_once, set_cli_install_scope,
-};
+use crate::format::Format;
+use crate::install_scope::{InstallScope, effective_scope, note_once, set_cli_install_scope};
 use crate::util::fs_ctx;
 use crate::{
-    Config, PluginDef, Res, cargo_build, codesign_bundle, deployment_target,
-    detect_default_features, dirs, load_config, project_root, release_lib, run_sudo, tmp_dir,
+    Config, PluginDef, Res, codesign_bundle, deployment_target, detect_default_features, dirs,
+    load_config, project_root, release_lib, run_sudo, tmp_dir,
 };
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, program_files};
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 // AAX is macOS / Windows; AU is macOS only.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -24,7 +20,7 @@ pub(crate) mod aax;
 pub(crate) mod au_v3;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use aax::{emit_aax_bundle, install_aax};
+use aax::install_aax;
 #[cfg(target_os = "macos")]
 use au_v3::build_and_install_au_v3;
 
@@ -68,13 +64,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
                 );
             }
             "-p" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err(
-                        "-p requires a plugin crate name (e.g. -p truce-example-gain)".into(),
-                    );
-                }
-                plugin_filter = Some(args[i].clone());
+                plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
             }
             "--help" | "-h" => {
                 print_help();

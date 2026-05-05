@@ -141,6 +141,7 @@ fn rustc_hash() -> u64 {
 /// it, `save_state` reads it back. This lets `verify_probe`
 /// round-trip a sentinel through the load/save pair to confirm the
 /// `load_state` slot isn't swapped with another `&mut self` slot.
+#[derive(Default)]
 pub struct ProbePlugin {
     last_load_state: std::cell::RefCell<Vec<u8>>,
 }
@@ -148,15 +149,7 @@ pub struct ProbePlugin {
 impl ProbePlugin {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            last_load_state: std::cell::RefCell::new(Vec::new()),
-        }
-    }
-}
-
-impl Default for ProbePlugin {
-    fn default() -> Self {
-        Self::new()
+        Self::default()
     }
 }
 

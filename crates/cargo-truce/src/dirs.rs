@@ -29,13 +29,12 @@ pub fn home_dir() -> Option<PathBuf> {
 
 /// Hard-required form of [`home_dir`]. Returns a typed error so the
 /// surrounding command can print one line ("can't determine home
-/// directory: set HOME / USERPROFILE") instead of panicking on the
-/// `Option::unwrap` the audit flagged across `cmd_status`,
-/// `cmd_uninstall`, install paths, and `cmd_reset_au`.
-//
-// Gated to macOS: every caller (`cmd_status`, `cmd_reset_au` macOS impl)
-// is itself macOS-gated, so on Linux/Windows this would be dead code.
-#[cfg(target_os = "macos")]
+/// directory: set HOME / USERPROFILE") instead of panicking.
+///
+/// `install_scope` calls this via `.expect()` for its `_dir`
+/// helpers (those signatures predate the Result-form and threading
+/// the error through every call site is a bigger refactor than the
+/// helper deserves). New callers should prefer `?`-propagation.
 pub(crate) fn require_home_dir() -> Result<PathBuf, crate::BoxErr> {
     home_dir().ok_or_else(|| -> crate::BoxErr {
         if cfg!(windows) {
@@ -44,4 +43,26 @@ pub(crate) fn require_home_dir() -> Result<PathBuf, crate::BoxErr> {
             "can't determine home directory: HOME is not set".into()
         }
     })
+}
+
+/// Windows `LOCALAPPDATA` (`%LOCALAPPDATA%`, e.g.
+/// `C:\Users\alice\AppData\Local`) — used as the user-scope plug-in
+/// install root for CLAP and VST3 on Windows.
+#[cfg(target_os = "windows")]
+pub(crate) fn require_local_appdata() -> Result<PathBuf, crate::BoxErr> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "LOCALAPPDATA env var not set".into())
+}
+
+/// Windows `APPDATA` (`%APPDATA%`, e.g.
+/// `C:\Users\alice\AppData\Roaming`) — used as the user-scope LV2
+/// install root on Windows. Distinct from `LOCALAPPDATA`: roaming
+/// data follows the user across machines via Active Directory,
+/// matching the LV2 convention of bundle-relative resources.
+#[cfg(target_os = "windows")]
+pub(crate) fn require_appdata() -> Result<PathBuf, crate::BoxErr> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| "APPDATA env var not set".into())
 }

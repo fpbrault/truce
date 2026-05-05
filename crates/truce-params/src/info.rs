@@ -1,7 +1,11 @@
 use crate::range::ParamRange;
 
 /// Metadata for a single parameter, used by format wrappers.
-#[derive(Clone, Debug)]
+///
+/// `Copy` because every field is POD (`&'static str`, scalars,
+/// bitflags, the [`ParamRange`] / [`ParamUnit`] enums). Lets the
+/// audio path pass `param_infos[i]` by value without `clone()` noise.
+#[derive(Clone, Copy, Debug)]
 pub struct ParamInfo {
     pub id: u32,
     pub name: &'static str,

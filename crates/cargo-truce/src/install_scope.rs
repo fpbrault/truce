@@ -11,24 +11,12 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use crate::format::Format;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallScope {
     User,
     System,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Format {
-    Clap,
-    Vst3,
-    Vst2,
-    Lv2,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    Au2,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    Au3,
-    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-    Aax,
 }
 
 impl InstallScope {
@@ -64,19 +52,14 @@ pub(crate) enum PkgScope {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-impl PkgScope {
-    /// `cargo truce package` default when no flag and no
-    /// `[packaging] preferred_scope` is set: ask the end user.
-    /// Matches indie-installer convention (u-he, Valhalla, `FabFilter`).
-    pub(crate) fn os_default() -> Self {
-        Self::Ask
-    }
+impl std::str::FromStr for PkgScope {
+    type Err = String;
 
     /// Parse the value side of `[packaging] preferred_scope = "..."`.
     /// `cargo truce install` has no toml override; only package
     /// supports it because the developer's choice at packaging time
     /// is the install-time UX an end user will see.
-    pub(crate) fn parse_toml_value(s: &str) -> Result<Self, String> {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "user" => Ok(Self::User),
             "system" => Ok(Self::System),
@@ -86,6 +69,16 @@ impl PkgScope {
                  (expected \"user\", \"system\", or \"ask\")"
             )),
         }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl PkgScope {
+    /// `cargo truce package` default when no flag and no
+    /// `[packaging] preferred_scope` is set: ask the end user.
+    /// Matches indie-installer convention (u-he, Valhalla, `FabFilter`).
+    pub(crate) fn os_default() -> Self {
+        Self::Ask
     }
 
     pub(crate) fn label(self) -> &'static str {
@@ -161,13 +154,13 @@ pub(crate) fn set_cli_install_scope(
 /// invocation. Keeps the install log readable when `--user` covers
 /// multiple plugins or formats that all hit the same guardrail.
 pub(crate) fn note_once(message: &str) {
-    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    use std::collections::HashSet;
+    static SEEN: Mutex<Option<HashSet<String>>> = Mutex::new(None);
     let mut g = SEEN.lock().unwrap();
-    if g.iter().any(|s| s == message) {
-        return;
+    let seen = g.get_or_insert_with(HashSet::new);
+    if seen.insert(message.to_string()) {
+        eprintln!("note: {message}");
     }
-    g.push(message.to_string());
-    eprintln!("note: {message}");
 }
 
 // --- Per-format directory resolution ----------------------------------
@@ -177,23 +170,23 @@ pub(crate) fn note_once(message: &str) {
 // these instead, so toggling `--user` / `--system` rewrites the
 // destination uniformly across formats.
 
+// Each of these unwraps a typed error from `crate::dirs`. Threading
+// the `Result` out through every `_dir` method (and 30+ callers) is
+// a separate refactor; for now the panic message is at least
+// consistent with the `?`-form helper that other commands use.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn home() -> PathBuf {
-    crate::dirs::home_dir().expect("HOME not set")
+    crate::dirs::require_home_dir().expect("home directory required")
 }
 
 #[cfg(target_os = "windows")]
 fn local_appdata() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .expect("LOCALAPPDATA env var not set")
+    crate::dirs::require_local_appdata().expect("LOCALAPPDATA required")
 }
 
 #[cfg(target_os = "windows")]
 fn appdata() -> PathBuf {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .expect("APPDATA env var not set")
+    crate::dirs::require_appdata().expect("APPDATA required")
 }
 
 #[cfg(target_os = "macos")]

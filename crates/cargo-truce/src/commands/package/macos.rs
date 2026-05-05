@@ -107,16 +107,10 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::BoxErr> {
     while i < args.len() {
         match args[i].as_str() {
             "-p" => {
-                i += 1;
-                plugin_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-p requires a plugin crate name")?,
-                );
+                plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
             }
             "--formats" => {
-                i += 1;
-                format_str = Some(args.get(i).cloned().ok_or("--formats requires a value")?);
+                format_str = Some(crate::util::arg_value(args, &mut i, "--formats")?.to_string());
             }
             "--no-notarize" => no_notarize = true,
             // `--no-sign` skips all signing including PACE. Apple codesign
@@ -617,7 +611,7 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
         return Ok(s);
     }
     if let Some(ref raw) = config.packaging.preferred_scope {
-        return PkgScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() });
+        return raw.parse::<PkgScope>().map_err(Into::into);
     }
     Ok(PkgScope::os_default())
 }

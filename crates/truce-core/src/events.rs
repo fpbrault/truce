@@ -147,7 +147,7 @@ pub struct EventList {
 impl EventList {
     #[must_use]
     pub fn new() -> Self {
-        Self { events: Vec::new() }
+        Self::default()
     }
 
     /// Append an event. Note: `sample_offset` is **not** bounds-checked

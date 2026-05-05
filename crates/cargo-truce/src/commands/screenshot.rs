@@ -57,28 +57,20 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     while i < args.len() {
         match args[i].as_str() {
             "-p" => {
-                i += 1;
-                plugin_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-p requires a plugin crate name")?,
-                );
+                plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
             }
             "--out" => {
-                i += 1;
-                out_path = Some(PathBuf::from(
-                    args.get(i).cloned().ok_or("--out requires a path")?,
-                ));
+                out_path = Some(PathBuf::from(crate::util::arg_value(
+                    args, &mut i, "--out",
+                )?));
             }
             "--state" => {
-                i += 1;
-                state_path = Some(PathBuf::from(
-                    args.get(i).cloned().ok_or("--state requires a path")?,
-                ));
+                state_path = Some(PathBuf::from(crate::util::arg_value(
+                    args, &mut i, "--state",
+                )?));
             }
             "--scale" => {
-                i += 1;
-                let raw = args.get(i).ok_or("--scale requires an f64 value")?;
+                let raw = crate::util::arg_value(args, &mut i, "--scale")?;
                 scale = raw
                     .parse::<f64>()
                     .map_err(|e| format!("--scale: {raw:?} is not a valid f64: {e}"))?;

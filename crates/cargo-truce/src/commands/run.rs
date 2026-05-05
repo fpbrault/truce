@@ -27,12 +27,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         } else {
             match args[i].as_str() {
                 "-p" => {
-                    i += 1;
-                    plugin_filter = Some(
-                        args.get(i)
-                            .cloned()
-                            .ok_or("-p requires a plugin crate name")?,
-                    );
+                    plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
                 }
                 "--no-build" => no_build = true,
                 "--debug" => debug = true,

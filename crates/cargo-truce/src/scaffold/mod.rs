@@ -24,7 +24,7 @@ mod render;
 mod spec;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{BoxErr, Res};
 
@@ -204,7 +204,7 @@ impl Default for Scaffolder {
 /// Wrapper around `fs::write` that returns the same `Res` shape
 /// the rest of cargo-truce uses, with the path threaded into the
 /// error so failures are diagnosable.
-fn write(path: &PathBuf, content: String) -> Res {
+fn write(path: &Path, content: String) -> Res {
     fs::write(path, content).map_err(|e| {
         let msg: Box<dyn std::error::Error> = format!("write {}: {}", path.display(), e).into();
         msg

@@ -40,14 +40,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--aax" => aax = true,
             "--shell" => shell_mode = true,
             "--debug" => debug = true,
-            "-p" => {
-                i += 1;
-                plugin_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-p requires a plugin crate name")?,
-                );
-            }
+            "-p" => plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string()),
             "--help" | "-h" => {
                 print_help();
                 return Ok(());

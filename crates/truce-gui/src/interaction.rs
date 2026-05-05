@@ -127,26 +127,17 @@ const KNOB_PIXELS_PER_UNIT: f32 = 200.0;
 // is to remember the previous cursor / click — the prefix is meaningful,
 // not redundant.
 #[allow(clippy::struct_field_names)]
+#[derive(Default)]
 pub struct BaseviewTranslator {
     last_cursor: (f32, f32),
     last_click_time: Option<std::time::Instant>,
     last_click_pos: (f32, f32),
 }
 
-impl Default for BaseviewTranslator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl BaseviewTranslator {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            last_cursor: (0.0, 0.0),
-            last_click_time: None,
-            last_click_pos: (0.0, 0.0),
-        }
+        Self::default()
     }
 
     /// The last cursor position we saw from a `CursorMoved`, in logical
@@ -277,6 +268,7 @@ pub struct DropdownState {
 }
 
 /// Tracks the current mouse interaction state.
+#[derive(Default)]
 pub struct InteractionState {
     pub knob_regions: Vec<WidgetRegion>,
     pub dragging: Option<DragState>,
@@ -304,22 +296,10 @@ pub struct DragState {
     pub region_h: f32,
 }
 
-impl Default for InteractionState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl InteractionState {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            knob_regions: Vec::new(),
-            dragging: None,
-            hover_idx: None,
-            dropdown: None,
-            needs_repaint: false,
-        }
+        Self::default()
     }
 
     /// Read and clear the explicit repaint flag set by event handlers.

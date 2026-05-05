@@ -8,6 +8,7 @@
 mod commands;
 mod config;
 pub(crate) mod dirs;
+mod format;
 mod install_scope;
 pub mod scaffold;
 mod templates;

@@ -98,19 +98,15 @@ fn locate_mt_exe() -> Option<PathBuf> {
         return Some(p);
     }
     let sdk_bin = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
-    let entries = std::fs::read_dir(&sdk_bin).ok()?;
-    let mut best: Option<PathBuf> = None;
-    for e in entries.flatten() {
-        let candidate = e.path().join(r"x64\mt.exe");
-        if candidate.exists() {
-            match &best {
-                None => best = Some(candidate),
-                Some(current) if candidate > *current => best = Some(candidate),
-                _ => {}
-            }
-        }
-    }
-    best
+    // SDK subdirs are named by version (e.g. `10.0.22621.0`); lexical
+    // max picks the newest because Windows SDK versions sort
+    // correctly as strings.
+    std::fs::read_dir(&sdk_bin)
+        .ok()?
+        .flatten()
+        .map(|e| e.path().join(r"x64\mt.exe"))
+        .filter(|p| p.exists())
+        .max()
 }
 
 fn which(name: &str) -> std::io::Result<PathBuf> {

@@ -13,14 +13,10 @@ pub enum PluginKind {
     Midi,
 }
 
-impl PluginKind {
-    /// Parse a plugin-kind string from CLI input.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` with a hint listing the accepted values when
-    /// `s` is not `"effect"`, `"instrument"`, or `"midi"`.
-    pub fn parse(s: &str) -> Result<Self, String> {
+impl std::str::FromStr for PluginKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "effect" => Ok(Self::Effect),
             "instrument" => Ok(Self::Instrument),
@@ -30,7 +26,15 @@ impl PluginKind {
             )),
         }
     }
+}
 
+impl std::fmt::Display for PluginKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.category())
+    }
+}
+
+impl PluginKind {
     #[must_use]
     pub fn category(self) -> &'static str {
         match self {

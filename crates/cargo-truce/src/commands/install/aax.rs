@@ -14,8 +14,6 @@
 //! - [`install_aax`] copies an existing `target/bundles/*.aaxplugin`
 //!   to the system AAX plug-ins directory.
 
-#![allow(unused_imports)]
-
 use crate::templates;
 use crate::util::fs_ctx;
 use crate::{

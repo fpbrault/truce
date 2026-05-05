@@ -292,7 +292,7 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
         return Ok(s);
     }
     if let Some(ref raw) = config.packaging.preferred_scope {
-        return PkgScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() });
+        return raw.parse::<PkgScope>().map_err(Into::into);
     }
     Ok(PkgScope::os_default())
 }
@@ -303,16 +303,11 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
     while i < args.len() {
         match args[i].as_str() {
             "-p" => {
-                i += 1;
-                opts.plugin_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-p requires a plugin crate name")?,
-                );
+                opts.plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
             }
             "--formats" => {
-                i += 1;
-                opts.format_str = Some(args.get(i).cloned().ok_or("--formats requires a value")?);
+                opts.format_str =
+                    Some(crate::util::arg_value(args, &mut i, "--formats")?.to_string());
             }
             "--no-sign" => opts.no_sign = true,
             "--no-pace-sign" => opts.no_pace_sign = true,
@@ -807,27 +802,16 @@ fn locate_signtool() -> Option<PathBuf> {
             return Some(p);
         }
     }
+    // Fallback: highest-versioned SDK subdir. Win10 SDK directory
+    // names sort correctly lexically (`10.0.22621.0` > `10.0.19041.0`),
+    // so `Iterator::max` on the path pulls out the newest.
     let sdk_bin = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
-    if let Ok(entries) = fs::read_dir(&sdk_bin) {
-        let mut best: Option<PathBuf> = None;
-        for e in entries.flatten() {
-            let candidate = e.path().join(r"x64\signtool.exe");
-            if candidate.exists() {
-                match &best {
-                    None => best = Some(candidate),
-                    Some(current) => {
-                        if candidate > *current {
-                            best = Some(candidate);
-                        }
-                    }
-                }
-            }
-        }
-        if best.is_some() {
-            return best;
-        }
-    }
-    None
+    fs::read_dir(&sdk_bin)
+        .ok()?
+        .flatten()
+        .map(|e| e.path().join(r"x64\signtool.exe"))
+        .filter(|p| p.exists())
+        .max()
 }
 
 pub(crate) fn locate_iscc() -> Option<PathBuf> {

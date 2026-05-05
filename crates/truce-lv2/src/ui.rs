@@ -221,7 +221,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             .map(|(i, pi)| ParamSlot {
                 id: pi.id,
                 port_index: control_start + len_u32(i),
-                range: pi.range.clone(),
+                range: pi.range,
             })
             .collect();
 
@@ -796,7 +796,7 @@ fn build_editor_context<P: PluginExport>(
     // Clone slot metadata into each closure — small vec, cheap.
     let slots_for_set: Vec<(u32, u32, truce_params::ParamRange)> = slots
         .iter()
-        .map(|s| (s.id, s.port_index, s.range.clone()))
+        .map(|s| (s.id, s.port_index, s.range))
         .collect();
     // Begin/end_edit only need (id → port_index); a thinner clone keeps
     // the gesture closures from holding the full ParamRange.

@@ -2,6 +2,7 @@
 //! clap-validator (CLAP) against the project's installed bundles, with
 //! shadow-install collision detection.
 
+use crate::format::Format;
 use crate::install_scope::InstallScope;
 use crate::{PluginDef, Res, dirs, load_config, tag_warn, tmp_dir};
 #[cfg(target_os = "macos")]
@@ -16,9 +17,13 @@ use std::process::Command;
 /// both user and system scope. Both copies are valid bundles; the
 /// host picks one at scan time and shadows the other, which is a
 /// frequent cause of "DAW loads my old build" support questions.
-fn warn_on_scope_collision(format: &str, user_path: &Path, system_path: &Path) {
+fn warn_on_scope_collision(format: Format, user_path: &Path, system_path: &Path) {
     if user_path.exists() && system_path.exists() {
-        eprintln!("    {} {format} installed in both scopes:", tag_warn());
+        eprintln!(
+            "    {} {} installed in both scopes:",
+            tag_warn(),
+            format.label(),
+        );
         eprintln!("        • user:   {}", user_path.display());
         eprintln!("        • system: {}", system_path.display());
         eprintln!(
@@ -179,12 +184,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 run_vst2 = true;
             }
             "-p" => {
-                i += 1;
-                plugin_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-p requires a plugin crate name")?,
-                );
+                plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
             }
             "--help" | "-h" => {
                 print_help();
@@ -219,7 +219,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     let system_path = InstallScope::System
                         .au_v2_dir()
                         .join(format!("{}.component", p.name));
-                    warn_on_scope_collision("AU v2", &user_path, &system_path);
+                    warn_on_scope_collision(Format::Au2, &user_path, &system_path);
                 }
                 eprint!(
                     "  {} ({} {} {}) ... ",
@@ -347,7 +347,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     eprintln!("FAIL");
                     failures += 1;
                 }
-                warn_on_scope_collision("VST3", &user_path, &system_path);
+                warn_on_scope_collision(Format::Vst3, &user_path, &system_path);
             }
         } else {
             eprintln!("  pluginval not found. Install from https://github.com/Tracktion/pluginval");
@@ -418,7 +418,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     }
                     failures += 1;
                 }
-                warn_on_scope_collision("CLAP", &user_path, &system_path);
+                warn_on_scope_collision(Format::Clap, &user_path, &system_path);
             }
 
             let _ = fs::remove_dir_all(&scratch);
@@ -520,7 +520,7 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
         let system_path = InstallScope::System
             .vst2_dir()
             .join(format!("{}.vst", p.name));
-        warn_on_scope_collision("VST2", &user_path, &system_path);
+        warn_on_scope_collision(Format::Vst2, &user_path, &system_path);
 
         eprint!("  {} ... ", p.name);
         let build = Command::new("cargo")

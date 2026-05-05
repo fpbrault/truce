@@ -29,21 +29,30 @@ pub(crate) enum PkgFormat {
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-impl PkgFormat {
-    pub(crate) fn parse_list(s: &str) -> Result<Vec<PkgFormat>, BoxErr> {
-        let mut out = Vec::new();
-        for token in s.split(',') {
-            match token.trim() {
-                "clap" => out.push(PkgFormat::Clap),
-                "vst3" => out.push(PkgFormat::Vst3),
-                "vst2" => out.push(PkgFormat::Vst2),
-                "au2" => out.push(PkgFormat::Au2),
-                "au3" => out.push(PkgFormat::Au3),
-                "aax" => out.push(PkgFormat::Aax),
-                other => return Err(format!("unknown format: {other}").into()),
-            }
+impl std::str::FromStr for PkgFormat {
+    type Err = BoxErr;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "clap" => Ok(PkgFormat::Clap),
+            "vst3" => Ok(PkgFormat::Vst3),
+            "vst2" => Ok(PkgFormat::Vst2),
+            "au2" => Ok(PkgFormat::Au2),
+            "au3" => Ok(PkgFormat::Au3),
+            "aax" => Ok(PkgFormat::Aax),
+            other => Err(format!("unknown format: {other}").into()),
         }
-        Ok(out)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+impl PkgFormat {
+    /// Comma-separated list parser. Each token is fed through
+    /// [`PkgFormat::from_str`] (the `FromStr` impl above), so an
+    /// unknown token surfaces a "unknown format: …" error rather
+    /// than a generic parse failure.
+    pub(crate) fn parse_list(s: &str) -> Result<Vec<PkgFormat>, BoxErr> {
+        s.split(',').map(|t| t.trim().parse()).collect()
     }
 
     pub(crate) fn label(&self) -> &'static str {

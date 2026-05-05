@@ -106,16 +106,10 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 );
             }
             "-p" => {
-                i += 1;
-                crate_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-p requires a plugin crate name")?,
-                );
+                crate_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
             }
             "-n" => {
-                i += 1;
-                name_filter = Some(args.get(i).cloned().ok_or("-n requires a plugin name")?);
+                name_filter = Some(crate::util::arg_value(args, &mut i, "-n")?.to_string());
             }
             "--help" | "-h" => {
                 print_help();
