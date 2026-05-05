@@ -6,9 +6,9 @@ use crate::format::Format;
 use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
 use crate::locate_wraptool_macos;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use crate::rustup_has_target;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use crate::tag_info;
 use crate::{
     Res, check_cmd, dirs, find_on_path, load_config, project_root, resolve_aax_sdk_path, tag_fail,
@@ -16,8 +16,7 @@ use crate::{
 };
 #[cfg(target_os = "windows")]
 use crate::{
-    common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, packaging_windows,
-    program_files, which_exe,
+    common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, packaging_windows, which_exe,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
