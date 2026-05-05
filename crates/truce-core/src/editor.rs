@@ -461,7 +461,7 @@ pub fn for_test_params(params: Arc<dyn Params>) -> PluginContext<dyn Params> {
             get_meter: Box::new(|_| 0.0),
             get_state: Box::new(Vec::new),
             set_state: Box::new(|_| {}),
-            transport: Box::new(move || Some(transport.clone())),
+            transport: Box::new(move || Some(transport)),
         },
         params,
     )

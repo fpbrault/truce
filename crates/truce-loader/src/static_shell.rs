@@ -127,24 +127,16 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
                 slot.store(v.to_bits(), Ordering::Relaxed);
             }
         };
-        let mut output_events = EventList::new();
         let mut ctx = ProcessContext::new(
             context.transport,
             context.sample_rate,
             buffer.num_samples(),
-            &mut output_events,
+            &mut *context.output_events,
         )
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 
-        let result = self.logic.process(buffer, events, &mut ctx);
-
-        // Copy output events back to the host.
-        for event in output_events.iter() {
-            context.output_events.push(event.clone());
-        }
-
-        result
+        self.logic.process(buffer, events, &mut ctx)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {

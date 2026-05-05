@@ -43,6 +43,11 @@ pub struct HotShell<P: Params> {
     meters: Arc<[AtomicU32; 256]>,
     sample_rate: f64,
     max_block_size: usize,
+    /// Last `load_counter` value the audio path observed. When the
+    /// file watcher drives a reload, this lags behind
+    /// `loader.load_counter()` until `process()` runs `plugin.reset()`
+    /// to match the new instance.
+    last_seen_load_counter: u64,
 }
 
 unsafe impl<P: Params> Send for HotShell<P> {}
@@ -52,12 +57,18 @@ impl<P: Params + 'static> HotShell<P> {
         let params = Arc::new(params);
         let params_ptr = Arc::as_ptr(&params).cast::<()>();
         let loader = NativeLoader::new(dylib_path, params_ptr);
+        let initial_counter = loader.load_counter();
+        let loader = Arc::new(Mutex::new(loader));
+        // Drive reloads off the audio thread. The watcher polls the
+        // dylib path and runs `reload()` itself when mtime advances.
+        NativeLoader::spawn_watcher(&loader);
         Self {
             params,
-            loader: Arc::new(Mutex::new(loader)),
+            loader,
             meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
             sample_rate: 44100.0,
             max_block_size: 1024,
+            last_seen_load_counter: initial_counter,
         }
     }
 
@@ -123,12 +134,15 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     ) -> ProcessStatus {
         let mut loader = self.loader.lock();
 
-        // Check for hot-reload.
-        if loader.is_reload_pending()
-            && loader.reload()
-            && let Some(plugin) = loader.plugin_mut()
-        {
-            plugin.reset(self.sample_rate, self.max_block_size);
+        // The watcher thread drives reload directly; the audio thread
+        // only observes the swap and resets the new plugin to the
+        // current sample rate / block size.
+        let counter = loader.load_counter();
+        if counter != self.last_seen_load_counter {
+            if let Some(plugin) = loader.plugin_mut() {
+                plugin.reset(self.sample_rate, self.max_block_size);
+            }
+            self.last_seen_load_counter = counter;
         }
 
         let Some(plugin) = loader.plugin_mut() else {
@@ -156,23 +170,16 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
                 slot.store(v.to_bits(), Ordering::Relaxed);
             }
         };
-        let mut output_events = EventList::new();
         let mut ctx = ProcessContext::new(
             context.transport,
             context.sample_rate,
             buffer.num_samples(),
-            &mut output_events,
+            &mut *context.output_events,
         )
         .with_params(&param_fn)
         .with_meters(&meter_fn);
 
-        let result = plugin.process(buffer, events, &mut ctx);
-
-        // Copy output events back to the host's event list.
-        for event in output_events.iter() {
-            context.output_events.push(event.clone());
-        }
-        result
+        plugin.process(buffer, events, &mut ctx)
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -302,11 +309,9 @@ impl<P: Params + 'static> HotEditor<P> {
         // instead of having to wait the full poll interval. Same
         // shape as `loader::watch_loop`.
         //
-        // Last-seen `load_counter` is tracked locally so the watcher
-        // can also detect *audio-driven* reloads (audio's `process()`
-        // calls `reload()` itself when `is_reload_pending`). When the
-        // counter advances without the watcher having driven reload,
-        // it just rebuilds the GUI to match.
+        // The file watcher in `NativeLoader::spawn_watcher` is what
+        // actually drives reload; this thread only observes
+        // `load_counter` advances and rebuilds the GUI to match.
         let inner_for_thread = Arc::clone(inner);
         let params_for_thread = Arc::clone(params);
         let loader_for_thread = Arc::clone(loader);
@@ -345,7 +350,7 @@ impl<P: Params + 'static> HotEditor<P> {
                     // under sustained audio activity. 50 ms is big
                     // enough to span multiple buffers but small
                     // enough that the watcher tick still feels live.
-                    let Some(mut guard) = loader_for_thread.try_lock_for(LOCK_WAIT) else {
+                    let Some(guard) = loader_for_thread.try_lock_for(LOCK_WAIT) else {
                         hot_debug!("[truce-gui-reload] loader busy (audio holds lock); retrying");
                         continue;
                     };
@@ -353,32 +358,14 @@ impl<P: Params + 'static> HotEditor<P> {
                     let mut new_layout = None;
 
                     if guard.load_counter() != last_seen_counter {
-                        // Audio thread already reloaded between ticks —
-                        // just resync the GUI layout to the new version.
                         hot_debug!(
-                            "[truce-gui-reload] audio reloaded (counter {} → {}); resyncing GUI",
+                            "[truce-gui-reload] reload detected (counter {} → {}); resyncing GUI",
                             last_seen_counter,
                             guard.load_counter()
                         );
                         last_seen_counter = guard.load_counter();
                         if let Some(plugin) = guard.plugin() {
                             new_layout = Some(plugin.layout());
-                        }
-                    } else if guard.is_reload_pending() {
-                        // Watcher drives reload itself when audio is
-                        // idle (no `process()` calls — between songs,
-                        // standalone host paused, etc.).
-                        hot_debug!("[truce-gui-reload] reload pending, attempting reload");
-                        if guard.reload() {
-                            hot_debug!("[truce-gui-reload] dylib reloaded successfully");
-                            last_seen_counter = guard.load_counter();
-                            if let Some(plugin) = guard.plugin() {
-                                new_layout = Some(plugin.layout());
-                            } else {
-                                hot_debug!("[truce-gui-reload] ERROR: no plugin after reload");
-                            }
-                        } else {
-                            hot_debug!("[truce-gui-reload] reload failed");
                         }
                     }
 

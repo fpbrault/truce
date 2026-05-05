@@ -776,7 +776,7 @@ impl<P: PluginExport> PluginDriver<P> {
                 if *off >= cursor && *off < cursor + block_len {
                     event_list.push(Event {
                         sample_offset: len_u32(*off - cursor),
-                        body: body.clone(),
+                        body: *body,
                     });
                 }
             }
@@ -838,7 +838,7 @@ impl<P: PluginExport> PluginDriver<P> {
             if self.capture.output_events {
                 let cursor_u32 = u32::try_from(cursor).unwrap_or(u32::MAX);
                 for ev in output_events_block.iter() {
-                    let mut e = ev.clone();
+                    let mut e = *ev;
                     e.sample_offset = e.sample_offset.saturating_add(cursor_u32);
                     output_events_capture.push(e);
                 }

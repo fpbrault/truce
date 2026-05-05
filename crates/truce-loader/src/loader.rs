@@ -4,9 +4,11 @@
 //! compatibility via `AbiCanary` + vtable probe before use.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::SystemTime;
+use std::sync::{Arc, Weak};
+use std::time::{Duration, SystemTime};
+
+use parking_lot::Mutex;
 
 /// Process-wide counter assigning a unique `instance_id` to each
 /// `NativeLoader` constructed in this process. Used as a tiebreaker
@@ -52,7 +54,6 @@ pub struct NativeLoader {
     params_ptr: *const (),
     last_modified: SystemTime,
     last_hash: u32,
-    reload_pending: Arc<AtomicBool>,
     /// Set to true to stop the file watcher thread.
     watcher_stop: Arc<AtomicBool>,
     /// Old library handles — leaked to avoid TLS destructor segfaults.
@@ -78,19 +79,13 @@ pub struct NativeLoader {
 unsafe impl Send for NativeLoader {}
 
 impl NativeLoader {
+    /// Construct the loader and run the initial load.
+    ///
+    /// Does not spawn the file watcher — call
+    /// [`NativeLoader::spawn_watcher`] after wrapping the loader in an
+    /// `Arc<Mutex<...>>` so the watcher thread can drive reloads
+    /// itself, off the audio thread.
     pub fn new(dylib_path: PathBuf, params_ptr: *const ()) -> Self {
-        let reload_pending = Arc::new(AtomicBool::new(false));
-        let watcher_stop = Arc::new(AtomicBool::new(false));
-
-        // Spawn file watcher thread.
-        let flag = reload_pending.clone();
-        let stop = watcher_stop.clone();
-        let path = dylib_path.clone();
-        std::thread::Builder::new()
-            .name("truce-hot-watcher".into())
-            .spawn(move || watch_loop(&path, &flag, &stop))
-            .ok();
-
         let mut loader = Self {
             dylib_path,
             library: None,
@@ -98,8 +93,7 @@ impl NativeLoader {
             params_ptr,
             last_modified: SystemTime::UNIX_EPOCH,
             last_hash: 0,
-            reload_pending,
-            watcher_stop,
+            watcher_stop: Arc::new(AtomicBool::new(false)),
             leaked_handles: Vec::new(),
             temp_paths: Vec::new(),
             current_temp: None,
@@ -108,6 +102,30 @@ impl NativeLoader {
         };
         loader.load();
         loader
+    }
+
+    /// Spawn the file-mtime watcher thread.
+    ///
+    /// The watcher polls the dylib path; when mtime advances and
+    /// settles, it acquires `loader` and runs [`NativeLoader::reload`]
+    /// directly. This keeps the codesign / dlopen / canary-probe work
+    /// off the audio thread — the audio thread only observes
+    /// reloads via [`NativeLoader::load_counter`] advances and runs
+    /// `plugin.reset()` to match the new sample rate / block size.
+    ///
+    /// Held as a `Weak` so dropping the last `Arc<Mutex<NativeLoader>>`
+    /// breaks the watcher's reference and lets the thread exit on its
+    /// next stop-flag check.
+    pub fn spawn_watcher(loader: &Arc<Mutex<Self>>) {
+        let weak = Arc::downgrade(loader);
+        let (path, stop) = {
+            let guard = loader.lock();
+            (guard.dylib_path.clone(), guard.watcher_stop.clone())
+        };
+        std::thread::Builder::new()
+            .name("truce-hot-watcher".into())
+            .spawn(move || watch_loop(&path, &weak, &stop))
+            .ok();
     }
 
     /// Build, verify, and instantiate a fresh dylib at `dylib_path`.
@@ -242,8 +260,6 @@ impl NativeLoader {
     /// failed canary or vtable probe leaves the host with the previous
     /// plugin still loaded instead of silence.
     pub fn reload(&mut self) -> bool {
-        self.reload_pending.store(false, Ordering::Relaxed);
-
         let Some(new_hash) = crc32_file(&self.dylib_path) else {
             log::warn!(
                 "failed to hash dylib at {} (missing / unreadable / mid-write); keeping previous plugin loaded",
@@ -305,11 +321,6 @@ impl NativeLoader {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 
-    #[must_use]
-    pub fn is_reload_pending(&self) -> bool {
-        self.reload_pending.load(Ordering::Relaxed)
-    }
-
     /// Monotonic counter of successful (or attempted) reloads — bumps
     /// once per `copy_versioned()` invocation, which precedes every
     /// candidate build. Two consumers (audio path + GUI watcher) that
@@ -363,15 +374,30 @@ impl Drop for NativeLoader {
     }
 }
 
-/// File watcher loop. Polls mtime ~every 500ms, but checks the stop flag
-/// every 50ms so dropping the loader doesn't block waiting for the next
-/// poll cycle.
-fn watch_loop(path: &std::path::Path, flag: &AtomicBool, stop: &AtomicBool) {
-    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
-    const STOP_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
+/// File watcher loop. Polls mtime ~every 500ms, but checks the stop
+/// flag every 50ms so dropping the loader doesn't block waiting for
+/// the next poll cycle.
+///
+/// On a stable mtime advance, takes the loader lock with
+/// `try_lock_for` and runs `reload()` directly. Earlier shapes only
+/// set a `reload_pending` flag and let the audio thread call
+/// `reload()` itself, which spawned `codesign` and dlopen on the
+/// audio thread. Driving reload here keeps that work off the audio
+/// path entirely.
+fn watch_loop(path: &std::path::Path, loader: &Weak<Mutex<NativeLoader>>, stop: &AtomicBool) {
+    const POLL_INTERVAL: Duration = Duration::from_millis(500);
+    const STOP_CHECK: Duration = Duration::from_millis(50);
+    const SETTLE: Duration = Duration::from_millis(200);
+    /// How long to wait for the audio thread to release the loader
+    /// mutex before giving up and retrying on the next poll. Short
+    /// enough that a stuck audio thread doesn't pin the watcher; long
+    /// enough to cover a single `process()` call (typically ≪ 50 ms).
+    const LOCK_WAIT: Duration = Duration::from_millis(50);
     // Both constants are sub-second; the u128 → u32 cast is bounded.
     #[allow(clippy::cast_possible_truncation)]
     let chunks = (POLL_INTERVAL.as_millis() / STOP_CHECK.as_millis()) as u32;
+    #[allow(clippy::cast_possible_truncation)]
+    let settle_chunks = (SETTLE.as_millis() / STOP_CHECK.as_millis()) as u32;
 
     let mut last_mtime = file_mtime(path);
     while !stop.load(Ordering::Relaxed) {
@@ -382,21 +408,28 @@ fn watch_loop(path: &std::path::Path, flag: &AtomicBool, stop: &AtomicBool) {
             }
         }
         let mtime = file_mtime(path);
-        if mtime > last_mtime {
-            // Wait for compiler to finish writing — also broken into
-            // STOP_CHECK chunks so a Drop during the settle window
-            // doesn't have to wait the full 200ms.
-            #[allow(clippy::cast_possible_truncation)]
-            let settle_chunks = 200 / STOP_CHECK.as_millis() as u32;
-            for _ in 0..settle_chunks {
-                std::thread::sleep(STOP_CHECK);
-                if stop.load(Ordering::Relaxed) {
-                    return;
-                }
-            }
-            last_mtime = file_mtime(path);
-            flag.store(true, Ordering::Relaxed);
+        if mtime <= last_mtime {
+            continue;
         }
+        // Wait for the compiler to finish writing — broken into
+        // STOP_CHECK chunks so dropping the loader during the settle
+        // window doesn't block for the full SETTLE duration.
+        for _ in 0..settle_chunks {
+            std::thread::sleep(STOP_CHECK);
+            if stop.load(Ordering::Relaxed) {
+                return;
+            }
+        }
+        last_mtime = file_mtime(path);
+
+        let Some(loader) = loader.upgrade() else {
+            return;
+        };
+        let Some(mut guard) = loader.try_lock_for(LOCK_WAIT) else {
+            // Audio thread holds the lock; try again on the next poll.
+            continue;
+        };
+        guard.reload();
     }
 }
 

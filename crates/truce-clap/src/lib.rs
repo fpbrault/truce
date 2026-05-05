@@ -94,34 +94,22 @@ enum GuiParamChange {
     GestureEnd(u32),
 }
 
-/// Thread-safe queue for GUI-initiated parameter changes.
-/// GUI thread pushes, audio/main thread drains.
-struct GuiChangeQueue {
-    pending: std::sync::Mutex<Vec<GuiParamChange>>,
-}
-
-impl GuiChangeQueue {
-    fn new() -> Self {
-        Self {
-            pending: std::sync::Mutex::new(Vec::new()),
-        }
-    }
-
-    fn push(&self, change: GuiParamChange) {
-        self.pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(change);
-    }
-
-    fn drain_to(&self, out: &mut Vec<GuiParamChange>) {
-        let mut pending = self
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        out.append(&mut pending);
-    }
-}
+/// Wait-free bounded queue for GUI-initiated parameter changes.
+///
+/// GUI thread pushes, audio thread drains. Every push and pop is O(1)
+/// and allocation-free, so the audio thread never blocks on the GUI
+/// thread.
+///
+/// Capacity sized for the worst case "user wiggles every param at
+/// once during MIDI-learn": ~64 widgets × (begin + value + end) per
+/// gesture, with several blocks of headroom before the audio thread
+/// next drains. Overflow drops the change — blocking or panicking
+/// from the audio path is worse, and the host's next automation tick
+/// recovers the lost values via the param tree. Per-instance memory
+/// is `CAPACITY * sizeof(GuiParamChange)` (≈ 32 KB), one-time at
+/// instance creation.
+const GUI_QUEUE_CAPACITY: usize = 1024;
+type GuiChangeQueue = crossbeam_queue::ArrayQueue<GuiParamChange>;
 
 // ---------------------------------------------------------------------------
 // Internal wrapper struct held as plugin_data
@@ -154,8 +142,6 @@ struct ClapPluginData<P: PluginExport> {
     host_params: *const clap_host_params,
     /// Queue of GUI-initiated parameter changes to emit as output events.
     gui_changes: Arc<GuiChangeQueue>,
-    /// Scratch buffer for draining GUI changes (avoids allocation).
-    gui_drain_buf: Vec<GuiParamChange>,
     /// Flag: GUI changed params, need rescan on main thread.
     needs_rescan: Arc<std::sync::atomic::AtomicBool>,
     /// Shared transport slot: audio thread writes each block, editor reads.
@@ -669,11 +655,8 @@ unsafe fn flush_gui_changes<P: PluginExport>(
             return;
         };
 
-        data.gui_drain_buf.clear();
-        data.gui_changes.drain_to(&mut data.gui_drain_buf);
-
-        for change in &data.gui_drain_buf {
-            match *change {
+        while let Some(change) = data.gui_changes.pop() {
+            match change {
                 GuiParamChange::GestureBegin(id) => {
                     let event = clap_event_param_gesture {
                         header: clap_event_header {
@@ -721,13 +704,6 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 }
             }
         }
-        // Reclaim memory after a burst of GUI gestures (automation
-        // pass, MIDI-learn drag) so the buffer doesn't hold its
-        // high-water capacity for the plugin's lifetime. 64 events
-        // covers the steady-state per-block load (≤ 1 gesture begin
-        // + setting + end per visible widget) without rallocating
-        // on every flush.
-        data.gui_drain_buf.shrink_to(64);
     }
 }
 
@@ -1670,12 +1646,18 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let context = PluginContext::from_closures(
             ClosureBridge {
                 begin_edit: Box::new(move |id| {
-                    gui_changes.push(GuiParamChange::GestureBegin(id));
+                    // Push can fail only if the audio thread hasn't
+                    // drained for `GUI_QUEUE_CAPACITY` gestures.
+                    // request_flush below pokes the host to call
+                    // back; needs_rescan in set_param ensures the
+                    // param tree picks up the latest plain values
+                    // even if a begin/end pair gets dropped.
+                    let _ = gui_changes.push(GuiParamChange::GestureBegin(id));
                     request_flush();
                 }),
                 set_param: Box::new(move |id, value| {
                     let plain = params_for_set.set_normalized_returning_plain(id, value);
-                    gui_changes2.push(GuiParamChange::Value(id, plain));
+                    let _ = gui_changes2.push(GuiParamChange::Value(id, plain));
                     request_flush2();
                     // Symmetry with the host-pointer null guards at
                     // `:297, :365, :1404`. CLAP guarantees a valid
@@ -1693,7 +1675,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     }
                 }),
                 end_edit: Box::new(move |id| {
-                    gui_changes3.push(GuiParamChange::GestureEnd(id));
+                    let _ = gui_changes3.push(GuiParamChange::GestureEnd(id));
                     request_flush3();
                 }),
                 request_resize: Box::new(|_w, _h| false),
@@ -1907,8 +1889,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         gui_created: false,
         host,
         host_params: ptr::null(),
-        gui_changes: Arc::new(GuiChangeQueue::new()),
-        gui_drain_buf: Vec::new(),
+        gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
         needs_rescan: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,

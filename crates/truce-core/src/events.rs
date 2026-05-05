@@ -1,12 +1,15 @@
 /// A timestamped event within a process block.
-#[derive(Clone, Debug)]
+///
+/// `Copy` because every [`EventBody`] variant is POD — lets the audio
+/// path move events without per-event clones.
+#[derive(Clone, Copy, Debug)]
 pub struct Event {
     /// Sample offset within the block (`0..num_samples`).
     pub sample_offset: u32,
     pub body: EventBody,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum EventBody {
     // -- MIDI 1.0 (normalized float values) --
     NoteOn {
@@ -99,7 +102,7 @@ pub enum EventBody {
     Transport(TransportInfo),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct TransportInfo {
     pub playing: bool,
     pub recording: bool,

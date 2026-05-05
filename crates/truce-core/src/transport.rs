@@ -8,7 +8,7 @@
 //!
 //! The implementation is a single-writer seqlock: the audio thread's
 //! write path takes no locks and always lands; UI readers retry on
-//! collision (the critical section is a single `TransportInfo` clone,
+//! collision (the critical section is a single `TransportInfo` copy,
 //! a few hundred nanoseconds at worst). The previous `Mutex` design
 //! used `try_lock` on both sides and silently dropped audio-thread
 //! writes that happened to coincide with a UI read, so the visualizer
@@ -76,7 +76,7 @@ impl TransportSlot {
         // `data` concurrently. Readers detect mid-update via the odd
         // seq value.
         unsafe {
-            *self.data.get() = info.clone();
+            *self.data.get() = *info;
         }
         // Release pairs with `read`'s Acquire load — makes the data
         // write above visible to any reader that observes this
@@ -88,7 +88,7 @@ impl TransportSlot {
     /// no host block has reported one yet.
     ///
     /// Bounded retry: each iteration is an Acquire-ordered counter
-    /// load and a `TransportInfo` clone. In the worst observable case
+    /// load and a `TransportInfo` copy. In the worst observable case
     /// (writer scheduled out mid-update) the reader spins until the
     /// writer resumes — typically nanoseconds; with thread preemption
     /// in pathological scheduling, microseconds. We cap at 8 attempts
@@ -105,10 +105,10 @@ impl TransportSlot {
                 continue;
             }
             // SAFETY: even seq means no writer is mid-update at the
-            // load above. The post-clone seq re-read confirms no
-            // writer started during the clone; if that fails we
+            // load above. The post-copy seq re-read confirms no
+            // writer started during the copy; if that fails we
             // discard and retry rather than returning torn state.
-            let snapshot = unsafe { (*self.data.get()).clone() };
+            let snapshot = unsafe { *self.data.get() };
             let s2 = self.seq.load(Ordering::Acquire);
             if s1 == s2 {
                 return Some(snapshot);

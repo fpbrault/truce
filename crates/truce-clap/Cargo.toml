@@ -10,6 +10,8 @@ description = "CLAP format wrapper for truce"
 truce-core = { workspace = true }
 truce-params = { workspace = true }
 clap-sys = "0.5"
+# Wait-free bounded MPMC queue for GUI → audio param change handoff.
+crossbeam-queue = "0.3"
 
 [lints]
 workspace = true
