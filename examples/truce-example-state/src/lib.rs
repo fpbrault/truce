@@ -20,9 +20,23 @@ const WINDOW_H: u32 = 120;
 
 // --- Parameters ---
 
-/// One bool param keeps the param surface non-empty (so the derive
-/// generates a `new()` and the host has *something* to enumerate)
-/// without distracting from the state-persistence story.
+/// Use `Param` for values the host should treat as a control: gain,
+/// frequency, mix, bypass, mode selectors. Hosts list params in
+/// their automation editor, draw automation lanes against them,
+/// record undo entries on every change, and feed them through MIDI
+/// CC / OSC mappings. They're numeric atoms (`f32` / `f64` / `bool`
+/// / int / enum-as-index) read lock-free from the audio thread.
+///
+/// Use `derive(State)` for everything that isn't a numeric atom:
+/// strings, file paths, loaded sample buffers, lists, view modes,
+/// nested structs. State is opaque to the host — no automation, no
+/// CC mapping, no UI in the host's parameter list — the framework
+/// just round-trips the bytes you hand it via `save_state` /
+/// `load_state` (see [`InstanceMemo`] below).
+///
+/// In this example: `Active` is a bool the user might want to
+/// automate, so it's a param. The instance label is plain text,
+/// so it's state.
 #[derive(Params)]
 pub struct StateExampleParams {
     #[param(name = "Active", default = 1)]
@@ -66,7 +80,6 @@ impl PluginLogic for StateExample {
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         // Pass-through: copy input to output for every channel.
-        // No DSP — the example is about state, not audio.
         for ch in 0..buffer.channels() {
             let (inp, out) = buffer.io(ch);
             out.copy_from_slice(inp);
