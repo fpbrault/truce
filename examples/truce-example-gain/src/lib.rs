@@ -184,6 +184,7 @@ mod tests {
     fn empty_state_no_crash() {
         truce_test::assert_empty_state_no_crash::<Plugin>();
     }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {

@@ -88,9 +88,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     // unstaged siblings.
     let suites: Vec<crate::config::ResolvedSuite<'_>> = if parsed.plugin_filter.is_some() {
         if !config.suites.is_empty() {
-            eprintln!(
-                "(-p set; skipping suite installers — they need every member plugin staged)"
-            );
+            eprintln!("(-p set; skipping suite installers — they need every member plugin staged)");
         }
         Vec::new()
     } else {
@@ -582,17 +580,16 @@ fn build_all_formats(
 /// inspects the plugin's `Cargo.toml` so hand-edited `[[bin]] name`
 /// values still work — falls back to the scaffold convention
 /// (`{crate_name}-standalone`) when the manifest can't be parsed.
-fn build_and_lipo_standalone(
-    root: &Path,
-    plugin: &PluginDef,
-    archs: &[MacArch],
-    dt: &str,
-) -> Res {
+fn build_and_lipo_standalone(root: &Path, plugin: &PluginDef, archs: &[MacArch], dt: &str) -> Res {
     let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
         .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
 
     for &arch in archs {
-        eprintln!("Building Standalone ({}, {})...", plugin.name, arch.triple());
+        eprintln!(
+            "Building Standalone ({}, {})...",
+            plugin.name,
+            arch.triple()
+        );
         cargo_build_for_arch(
             &[],
             &[
@@ -626,7 +623,9 @@ fn build_and_lipo_standalone(
             .into());
         }
     }
-    let output = truce_build::target_dir(root).join("release").join(&bin_stem);
+    let output = truce_build::target_dir(root)
+        .join("release")
+        .join(&bin_stem);
     if inputs.len() == 1 {
         // Single-arch (`--host-only`): nothing to lipo, just copy
         // into the canonical universal output path so `stage_standalone`

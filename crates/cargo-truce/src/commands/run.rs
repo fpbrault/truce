@@ -155,9 +155,7 @@ fn stage_macos_app_bundle(
     let exe_name = bin_filename(bin_stem);
     fs_ctx::copy(built, macos.join(&exe_name))?;
 
-    crate::commands::package::stage::write_standalone_info_plist(
-        staged, plugin, &exe_name, vendor,
-    )
+    crate::commands::package::stage::write_standalone_info_plist(staged, plugin, &exe_name, vendor)
 }
 
 /// On macOS the staged path is `<Plugin>.standalone.app/`; the

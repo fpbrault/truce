@@ -352,6 +352,7 @@ truce::plugin! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {

@@ -353,6 +353,7 @@ mod tests {
             }
         }
     }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {

@@ -367,12 +367,7 @@ pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &
 /// writes the Info.plist, and codesigns. The pkgbuild step downstream
 /// installs the resulting `.app` to `/Applications/`.
 #[cfg(target_os = "macos")]
-pub(crate) fn stage_standalone(
-    root: &Path,
-    p: &PluginDef,
-    config: &Config,
-    staging: &Path,
-) -> Res {
+pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
     use std::os::unix::fs::PermissionsExt;
 
     let bin_stem = crate::read_standalone_bin_name(&p.crate_name)

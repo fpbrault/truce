@@ -76,9 +76,9 @@ pub fn install(
         add_app_menu_items(app_menu, app_name);
         let _: () = msg_send![app_menu_item, setSubmenu: app_menu];
 
-        // Plugin menu and its action target.
-        let plugin_menu_item = make_menu_item("Plugin");
-        let plugin_menu = make_menu("Plugin");
+        // Audio menu and its action target.
+        let plugin_menu_item = make_menu_item("Audio");
+        let plugin_menu = make_menu("Audio");
         let target = make_menu_target(input.clone(), output.clone());
 
         // Mic toggle (⌘I) — only meaningful for effects.

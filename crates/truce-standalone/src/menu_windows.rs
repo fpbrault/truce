@@ -1,6 +1,6 @@
 //! Windows native menu bar for the standalone host.
 //!
-//! Builds a Win32 `HMENU` with one top-level "Plugin" popup
+//! Builds a Win32 `HMENU` with one top-level "Audio" popup
 //! containing:
 //!
 //! - **Mic Input** (checkable, `Ctrl+I` shown as the accelerator hint;
@@ -25,7 +25,7 @@
 //!   keeps the size it asked for.
 //! - There's no auto-populated "App" menu like Cocoa's. The
 //!   window's `[X]` close button covers Quit; we ship just the
-//!   Plugin menu.
+//!   Audio menu.
 //! - Cocoa's `Cmd+I` accelerator is wired by the menu item itself.
 //!   Win32 needs a separate `HACCEL` table + `TranslateAccelerator`
 //!   in the message loop, which baseview doesn't expose. The menu
@@ -171,8 +171,8 @@ pub fn install(
             output_label.as_ptr(),
         );
 
-        // Attach the Plugin popup to the menu bar.
-        let plugin_label = wide("Plugin");
+        // Attach the Audio popup to the menu bar.
+        let plugin_label = wide("Audio");
         AppendMenuW(
             menu_bar,
             MF_POPUP,

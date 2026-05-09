@@ -201,6 +201,7 @@ mod tests {
     fn state_round_trips() {
         truce_test::assert_state_round_trip::<Plugin>();
     }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {

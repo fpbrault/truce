@@ -176,6 +176,7 @@ mod tests {
             _ => panic!("Expected NoteOn"),
         }
     }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {

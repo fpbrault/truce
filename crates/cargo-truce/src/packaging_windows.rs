@@ -119,9 +119,7 @@ pub(crate) fn cmd_package(
     // siblings at the suite step.
     let suites: Vec<crate::config::ResolvedSuite<'_>> = if opts.plugin_filter.is_some() {
         if !config.suites.is_empty() {
-            eprintln!(
-                "(-p set; skipping suite installers — they need every member plugin staged)"
-            );
+            eprintln!("(-p set; skipping suite installers — they need every member plugin staged)");
         }
         Vec::new()
     } else {
@@ -1400,7 +1398,11 @@ fn render_suite_iss(
                 let prefix = sanitize_component_name(&plugin.name);
                 let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
                     .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
-                (iss_escape(&plugin.name), bin_stem, format!("{prefix}\\standalone"))
+                (
+                    iss_escape(&plugin.name),
+                    bin_stem,
+                    format!("{prefix}\\standalone"),
+                )
             })
             .collect();
         setup.push_str("[Icons]\r\n");
