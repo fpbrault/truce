@@ -48,13 +48,15 @@ pub(crate) use util::tmp_manifests;
 // `commands::install::mod`, so it stays unconditionally re-exported.
 pub(crate) use util::tmp_lv2;
 
+// `read_workspace_version` is consumed by all three packagers
+// (macOS / Windows / Linux tarball), so it stays unconditional.
+pub(crate) use util::read_workspace_version;
+
 // Re-exports used only by the macOS / Windows installer pipelines.
 // Linux ships plugins via distro tooling rather than the bundled
 // `package` flow, so these symbols are absent there.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(crate) use util::{
-    read_workspace_version, release_lib_for_target, rustup_has_target, tag_info, tmp_aax_template,
-};
+pub(crate) use util::{release_lib_for_target, rustup_has_target, tag_info, tmp_aax_template};
 
 // macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline. The
 // `PackagingConfig` / `copy_dir_recursive` re-exports land here too —

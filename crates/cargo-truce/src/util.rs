@@ -224,8 +224,7 @@ pub(crate) fn program_files() -> PathBuf {
 
 /// Read the version from Cargo.toml.
 /// Checks `[workspace.package] version` first, then `[package] version`.
-/// Only consumed by the package pipelines (macOS .pkg, Windows .exe).
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// Consumed by the package pipelines (macOS .pkg, Windows .exe, Linux tarball).
 pub(crate) fn read_workspace_version(root: &Path) -> Option<String> {
     let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
     let doc: toml::Table = content.parse().ok()?;
@@ -601,6 +600,9 @@ pub(crate) fn tmp_dir() -> PathBuf {
 
 /// `tmp/manifests/` — short-lived plist / `.manifest` / `.json` config
 /// files handed to platform tools (codesign, signtool, pkgbuild, etc).
+/// Linux's tarball pipeline doesn't shell out to platform tools, so the
+/// helper is gated to the platforms that actually consume it.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn tmp_manifests() -> PathBuf {
     let dir = tmp_dir().join("manifests");
     let _ = fs::create_dir_all(&dir);
