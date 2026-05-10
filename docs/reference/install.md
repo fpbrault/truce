@@ -77,9 +77,10 @@ ready to package AU v3. Switch the active developer directory with:
 sudo xcode-select -s /Applications/Xcode.app
 ```
 
-**AAX** needs the Avid AAX SDK (point `AAX_SDK_PATH` at it, or set
-`[macos].aax_sdk_path` in `truce.toml`) plus PACE/wraptool for
-retail Pro Tools releases. Skip both if you're not shipping AAX.
+**AAX** needs the Avid AAX SDK (point `AAX_SDK_PATH` at it — set
+it in `.cargo/config.toml` under `[env]`, or export it in your
+shell) plus PACE/wraptool for retail Pro Tools releases. Skip both
+if you're not shipping AAX.
 
 ### Windows
 

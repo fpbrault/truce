@@ -8,11 +8,9 @@ use crate::install_scope::InstallScope;
 use crate::locate_wraptool_macos;
 #[cfg(target_os = "macos")]
 use crate::rustup_has_target;
-#[cfg(target_os = "macos")]
-use crate::tag_info;
 use crate::{
     Res, check_cmd, dirs, find_on_path, load_config, project_root, resolve_aax_sdk_path, tag_fail,
-    tag_ok, tag_warn,
+    tag_info, tag_ok, tag_warn,
 };
 #[cfg(target_os = "windows")]
 use crate::{
@@ -232,13 +230,8 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     if let Some(p) = aax_sdk {
         eprintln!("    {} AAX SDK at {}", tag_ok(), p.display());
     } else {
-        let hint = if cfg!(target_os = "windows") {
-            "[windows].aax_sdk_path"
-        } else {
-            "[macos].aax_sdk_path"
-        };
         eprintln!(
-            "    {} AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)",
+            "    {} AAX SDK not configured (set AAX_SDK_PATH env var, e.g. in .cargo/config.toml [env])",
             tag_warn()
         );
     }
