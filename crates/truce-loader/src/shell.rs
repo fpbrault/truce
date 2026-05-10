@@ -213,7 +213,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
         // Refresh latency / tail caches so host-thread queries don't
         // have to take the loader lock (and don't dispatch through
-        // `&PluginLogic` while audio holds `&mut PluginLogic`).
+        // `&LoaderPlugin` while audio holds `&mut LoaderPlugin`).
         self.latency_cache
             .store(plugin.latency(), Ordering::Relaxed);
         self.tail_cache.store(plugin.tail(), Ordering::Relaxed);
@@ -271,8 +271,8 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn latency(&self) -> u32 {
         // Read the audio-thread-updated atomic snapshot rather than
-        // dispatching through `&PluginLogic` (which would race with
-        // the audio thread's `&mut PluginLogic` and require the
+        // dispatching through `&LoaderPlugin` (which would race with
+        // the audio thread's `&mut LoaderPlugin` and require the
         // loader lock).
         self.latency_cache.load(Ordering::Relaxed)
     }

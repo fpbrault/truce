@@ -98,10 +98,7 @@ fn aax_skip_reason(_config: &Config) -> Option<String> {
         if crate::resolve_aax_sdk_path().is_some() {
             return None;
         }
-        Some(
-            "AAX: SDK not configured. Set AAX_SDK_PATH in .cargo/config.toml [env]."
-                .to_string(),
-        )
+        Some("AAX: SDK not configured. Set AAX_SDK_PATH in .cargo/config.toml [env].".to_string())
     }
 }
 

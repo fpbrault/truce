@@ -172,9 +172,7 @@ macro_rules! __plugin_impl {
             let path_str = match ::std::str::from_utf8(path_bytes) {
                 Ok(s) => s,
                 Err(e) => {
-                    ::std::eprintln!(
-                        "[truce] __truce_screenshot: invalid UTF-8 in out_path: {e}"
-                    );
+                    ::std::eprintln!("[truce] __truce_screenshot: invalid UTF-8 in out_path: {e}");
                     return 1;
                 }
             };
@@ -187,11 +185,10 @@ macro_rules! __plugin_impl {
             } else {
                 $crate::core::screenshot::DEFAULT_SCREENSHOT_SCALE
             };
-            let (pixels, w, h) =
-                $crate::core::screenshot::render_with_state_at_scale::<Plugin>(
-                    state,
-                    resolved_scale,
-                );
+            let (pixels, w, h) = $crate::core::screenshot::render_with_state_at_scale::<Plugin>(
+                state,
+                resolved_scale,
+            );
             $crate::core::screenshot::save_png(path, &pixels, w, h);
             0
         }
@@ -261,9 +258,7 @@ macro_rules! __plugin_hot_reload {
                 // install time: a single line containing the absolute
                 // path to the logic dylib.
                 let crate_name = env!("CARGO_PKG_NAME");
-                if let Some(sidecar) =
-                    $crate::__reexport::shell_sidecar_path(crate_name)
-                {
+                if let Some(sidecar) = $crate::__reexport::shell_sidecar_path(crate_name) {
                     if let Ok(contents) = std::fs::read_to_string(&sidecar) {
                         let trimmed = contents.trim();
                         if !trimmed.is_empty() {
@@ -302,15 +297,24 @@ macro_rules! __plugin_hot_reload {
         }
 
         impl $crate::core::plugin::Plugin for __HotShellWrapper {
-            fn supports_in_place() -> bool where Self: Sized {
+            fn supports_in_place() -> bool
+            where
+                Self: Sized,
+            {
                 <$logic as $crate::core::PluginLogic>::supports_in_place()
             }
 
-            fn info() -> $crate::core::info::PluginInfo where Self: Sized {
+            fn info() -> $crate::core::info::PluginInfo
+            where
+                Self: Sized,
+            {
                 $crate::prelude::plugin_info!()
             }
 
-            fn bus_layouts() -> Vec<$crate::core::bus::BusLayout> where Self: Sized {
+            fn bus_layouts() -> Vec<$crate::core::bus::BusLayout>
+            where
+                Self: Sized,
+            {
                 // Hot-reload mode reads bus layouts from the
                 // shell's *baked-in* `$logic` rather than the
                 // running dylib's: bus layouts are queried during
@@ -351,9 +355,15 @@ macro_rules! __plugin_hot_reload {
                 self.inner.editor()
             }
 
-            fn latency(&self) -> u32 { self.inner.latency() }
-            fn tail(&self) -> u32 { self.inner.tail() }
-            fn get_meter(&self, meter_id: u32) -> f32 { self.inner.get_meter(meter_id) }
+            fn latency(&self) -> u32 {
+                self.inner.latency()
+            }
+            fn tail(&self) -> u32 {
+                self.inner.tail()
+            }
+            fn get_meter(&self, meter_id: u32) -> f32 {
+                self.inner.get_meter(meter_id)
+            }
         }
 
         impl $crate::core::export::PluginExport for __HotShellWrapper {

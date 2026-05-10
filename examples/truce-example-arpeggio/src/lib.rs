@@ -334,7 +334,6 @@ impl PluginLogic for Arpeggio {
 
         ProcessStatus::Normal
     }
-
 }
 
 impl PluginEditor for Arpeggio {

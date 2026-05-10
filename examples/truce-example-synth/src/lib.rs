@@ -199,7 +199,6 @@ impl PluginLogic for Synth {
             ProcessStatus::Normal
         }
     }
-
 }
 
 impl PluginEditor for Synth {

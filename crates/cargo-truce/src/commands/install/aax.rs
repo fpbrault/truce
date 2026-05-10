@@ -358,10 +358,7 @@ fn template_binary() -> PathBuf {
 /// when building for macOS packaging; `false` for host-only dev /
 /// install, `true` for `cargo truce package --universal`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn ensure_template(
-    root: &Path,
-    universal_mac: bool,
-) -> Result<Option<PathBuf>, crate::BoxErr> {
+fn ensure_template(root: &Path, universal_mac: bool) -> Result<Option<PathBuf>, crate::BoxErr> {
     let template = template_binary();
     if let Some(sdk_path) = resolve_aax_sdk_path() {
         if !template.exists() {

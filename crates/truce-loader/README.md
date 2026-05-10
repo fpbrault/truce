@@ -4,27 +4,39 @@ Plugin runtime + hot-reload infrastructure for truce.
 
 ## Overview
 
-Provides the runtime that wires a plugin's `PluginLogic` to its host-side
-shell. Used by every truce plugin, in two modes:
+Hot-reload mechanics for truce: dylib loading, ABI canary, vtable
+probe, and the shells (`HotShell`, `StaticShell`) that bridge the
+user-facing traits onto `truce_core::Plugin` for format wrappers.
+Used by every truce plugin, in two modes:
 
-- **Static (default).** `export_static!` embeds the logic directly into
-  the format wrapper at compile time. Zero runtime overhead, single dylib.
-- **Hot-reload (opt-in).** `export_plugin!` exports the logic across a
-  `#[no_mangle]` C ABI in a separate dylib; the shell loads it via
-  `libloading`, verifies ABI compatibility, and swaps the trait object
-  on rebuild without restarting the DAW. Preserves audio continuity.
+- **Static (default).** `export_static!` embeds the user's struct
+  directly into the format wrapper at compile time. Zero runtime
+  overhead, single dylib.
+- **Hot-reload (opt-in).** `export_plugin!` exports the plugin
+  across a `#[no_mangle]` C ABI in a separate dylib; the shell
+  loads it via `libloading`, verifies ABI compatibility, and swaps
+  the trait object on rebuild without restarting the DAW.
+  Preserves audio continuity.
 
-Developers implement the safe `PluginLogic` trait. The `truce::plugin!`
-macro emits the right `export_*!` call based on the `shell` Cargo
-feature on the `truce` facade.
+Plugin authors don't reach into this crate directly. They write
+`impl PluginLogic` (DSP, in `truce-core`) plus `impl PluginEditor`
+(GUI, in `truce-gui`) on their plugin struct, and `truce::plugin!`
+emits the right `export_*!` call based on the `shell` Cargo
+feature.
 
 ## Key types and macros
 
-- **`PluginLogic`** -- safe trait every plugin implements
-- **`HotShell`** -- shell-side dylib loader and hot-swap manager
-- **`StaticShell`** -- shell-side wrapper that embeds the logic at compile time
-- **`export_static!`** -- emits the `__HotShellWrapper` for static mode
-- **`export_plugin!`** -- emits the `#[no_mangle]` C ABI for shell mode
+- **`LoaderPlugin`** -- supertrait combining `PluginLogic` +
+  `PluginEditor` for `Box<dyn _>` dispatch across the dylib
+  boundary. Auto-implemented for any type that implements both.
+- **`HotShell`** -- shell-side dylib loader and hot-swap manager.
+- **`StaticShell`** -- shell-side wrapper that embeds the plugin
+  at compile time.
+- **`export_static!`** -- emits the `__HotShellWrapper` for static
+  mode.
+- **`export_plugin!`** -- emits the `#[no_mangle]` C ABI symbols
+  for shell mode (`truce_create`, `truce_abi_canary`,
+  `truce_vtable_probe`).
 
 ## Features
 

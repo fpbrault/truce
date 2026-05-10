@@ -35,9 +35,10 @@ cargo watch -x "build -p my-plugin"
 ```
 
 `--shell` flips the `shell` feature on, which makes `truce::plugin!`
-expand into a dynamic shell that loads your `PluginLogic` out of a
-separate dylib. The shell watches the dylib for content changes
-and swaps in the new one while the plugin is live.
+expand into a dynamic shell that loads your `PluginLogic` +
+`PluginEditor` impls out of a separate dylib. The shell watches
+the dylib for content changes and swaps in the new one while the
+plugin is live.
 
 Logic profile defaults to release for closer-to-shipped DSP perf.
 Pass `--debug` to flip the logic to debug profile (faster compile,
@@ -109,7 +110,8 @@ feature is on:
 7. `dlopen` loads the new dylib.
 8. An ABI canary verifies type layouts match.
 9. A vtable probe verifies trait-method dispatch order.
-10. `truce_create()` returns a new `Box<dyn PluginLogic>`.
+10. `truce_create()` returns a new `Box<dyn LoaderPlugin>` (the
+    supertrait combining `PluginLogic` and `PluginEditor`).
 11. The new instance is reset with the current sample rate, then
     state is restored.
 
