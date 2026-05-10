@@ -10,9 +10,9 @@ use super::stage::{
 };
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
-    Config, MacArch, PluginDef, Res, cargo_build_for_arch, copy_dir_recursive, deployment_target,
-    detect_default_features, lipo_into, load_config, project_root, read_workspace_version,
-    release_lib_for_target,
+    Config, MacArch, PluginDef, Res, cargo_build_per_arch_parallel, copy_dir_recursive,
+    deployment_target, detect_default_features, lipo_into, load_config, project_root,
+    read_workspace_version, release_lib_for_target,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -644,24 +644,34 @@ fn build_and_lipo_standalone(
     // One cargo build per arch covering every plugin in the batch.
     // Cargo pays the dep-graph-resolve / process-startup cost once per
     // arch and codegens the leaf example crates' bin targets in
-    // parallel.
-    for &arch in archs {
+    // parallel. Per-arch invocations target distinct
+    // `target/<triple>/release/` dirs and run concurrently when more
+    // than one arch is requested.
+    let mut args: Vec<&str> = Vec::with_capacity(plugins.len() * 2 + 3);
+    for p in plugins {
+        args.push("-p");
+        args.push(&p.crate_name);
+    }
+    args.push("--no-default-features");
+    args.push("--features");
+    args.push("standalone");
+
+    if archs.len() == 1 {
         eprintln!(
             "Building Standalone for {} ({} plugin{})...",
-            arch.triple(),
+            archs[0].triple(),
             plugins.len(),
             if plugins.len() == 1 { "" } else { "s" },
         );
-        let mut args: Vec<&str> = Vec::with_capacity(plugins.len() * 2 + 4);
-        for p in plugins {
-            args.push("-p");
-            args.push(&p.crate_name);
-        }
-        args.push("--no-default-features");
-        args.push("--features");
-        args.push("standalone");
-        cargo_build_for_arch(&[], &args, arch, dt)?;
+    } else {
+        eprintln!(
+            "Building Standalone for {} archs in parallel ({} plugin{})...",
+            archs.len(),
+            plugins.len(),
+            if plugins.len() == 1 { "" } else { "s" },
+        );
     }
+    cargo_build_per_arch_parallel(archs, &args, dt)?;
 
     // Per-plugin lipo: each plugin's per-arch bins land at
     // `target/<triple>/release/<bin_stem>` and need to be combined
@@ -987,15 +997,21 @@ fn build_and_lipo_format(
     label: &str,
 ) -> Res {
     let suffix = format!("_{feature}");
+    let mut base: Vec<&str> = Vec::new();
+    for p in plugins {
+        base.push("-p");
+        base.push(&p.crate_name);
+    }
+    base.extend_from_slice(&["--no-default-features", "--features", feature]);
+
+    if archs.len() == 1 {
+        eprintln!("Building {label} ({})...", archs[0].triple());
+    } else {
+        eprintln!("Building {label} for {} archs in parallel...", archs.len());
+    }
+    cargo_build_per_arch_parallel(archs, &base, dt)?;
+
     for &arch in archs {
-        eprintln!("Building {label} ({})...", arch.triple());
-        let mut base: Vec<&str> = Vec::new();
-        for p in plugins {
-            base.push("-p");
-            base.push(&p.crate_name);
-        }
-        base.extend_from_slice(&["--no-default-features", "--features", feature]);
-        cargo_build_for_arch(&[], &base, arch, dt)?;
         for p in plugins {
             let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
             let saved = release_lib_for_target(
