@@ -1515,7 +1515,6 @@ pub(crate) fn tag_fail() -> String {
 pub(crate) fn tag_warn() -> String {
     paint("[WARN]", "\x1b[1;33m")
 }
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn tag_info() -> String {
     paint("[INFO]", "\x1b[1;36m")
 }
