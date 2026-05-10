@@ -23,8 +23,8 @@ pub fn include_dir() -> std::path::PathBuf;
 Three consumers need the **exact same bytes** of the header:
 
 1. **`truce-au/build.rs`** — passes `include_dir()` to `cc-rs` so the
-   shim sources (`au_shim_common.c`, `au_v2_view.m`, `au_v2_shim.c`,
-   `au_shim.m`) can `#include "au_shim_types.h"` during compile.
+   shim sources (`au_shim_common.c`, `au_v2_shim.c`) can
+   `#include "au_shim_types.h"` during compile.
 2. **`truce-au/src/ffi.rs`** — defines `AuTransportSnapshot` whose
    Rust layout has to match the C struct in the header.
 3. **`cargo-truce/src/templates.rs`** — embeds `AU_SHIM_TYPES_H` into

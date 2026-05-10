@@ -31,11 +31,6 @@ void truce_au_register(
     g_registered = 1;
 }
 
-// Defined in au_shim.m — registers the AUAudioUnit subclass for the v3→v2 bridge.
-// Weak: no-op if v3 shim is not compiled (v2-only builds).
-__attribute__((weak))
-void truce_au_v3_register_subclass(void) {}
-
 // Constructor: populates globals when the dylib is loaded.
 __attribute__((constructor))
 static void au_shim_constructor(void) {

@@ -204,12 +204,14 @@ pub(crate) fn build_format_dylibs(
     let combined = format_features.join(",");
 
     for p in plugins {
-        // Per-plugin env: AU2 needs the shim version + bundle id; every
-        // format optionally overrides its display name.
+        // AU2 needs `TRUCE_AU_VERSION=2` so truce-au's Rust side
+        // sets `cfg(truce_au_v3_only)` correctly. Every format
+        // optionally overrides its display name. (The cocoa view
+        // class name moved to runtime ObjC registration in
+        // truce-au, so plugin-id is no longer baked at build time.)
         let mut env_pairs: Vec<(&str, &str)> = Vec::new();
         if format == BuildFormat::Au2 {
             env_pairs.push(("TRUCE_AU_VERSION", "2"));
-            env_pairs.push(("TRUCE_AU_PLUGIN_ID", &p.bundle_id));
         }
         if let Some(n) = format.name_override(p) {
             env_pairs.push((format.name_override_env(), n));

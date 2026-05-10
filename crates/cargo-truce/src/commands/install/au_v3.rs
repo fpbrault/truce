@@ -128,10 +128,11 @@ fn build_rust_framework_dylib(
 ) -> Result<PathBuf, crate::BoxErr> {
     for &arch in archs {
         crate::vprintln!("  Building Rust framework ({})...", arch.triple());
-        let mut env_pairs: Vec<(&str, &str)> = vec![
-            ("TRUCE_AU_VERSION", "3"),
-            ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
-        ];
+        // AU v3's appex compiles its Swift `AudioUnitFactory` and
+        // `TruceAUAudioUnit` separately via xcodebuild — those classes
+        // are scoped to the appex bundle, not the framework dylib, so
+        // the framework no longer needs a per-plugin id baked in.
+        let mut env_pairs: Vec<(&str, &str)> = vec![("TRUCE_AU_VERSION", "3")];
         if let Some(n) = p.au3_name.as_deref() {
             env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
         }

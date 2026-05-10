@@ -669,17 +669,17 @@ fn build_and_lipo_standalone(root: &Path, plugin: &PluginDef, archs: &[MacArch],
     Ok(())
 }
 
-/// AU v2 per-plugin build: each plugin needs its own
-/// `TRUCE_AU_PLUGIN_ID` env var, so the multi-format helper doesn't
-/// fit. Builds per-arch then lipos to `lib{stem}_au.dylib`.
+/// AU v2 per-plugin build. Used to differ from the multi-format
+/// helper because each plugin needed a distinct `TRUCE_AU_PLUGIN_ID`
+/// env var to drive `ObjC` class-name `#define`s; that uniqueness now
+/// lives in runtime `ObjC` class registration on the Rust side, so the
+/// only env var left is `TRUCE_AU_VERSION=2`. Builds per-arch then
+/// lipos to `lib{stem}_au.dylib`.
 fn build_and_lipo_au2(root: &Path, p: &PluginDef, archs: &[MacArch], dt: &str) -> Res {
     for &arch in archs {
         eprintln!("Building AU v2 ({}, {})...", p.name, arch.triple());
         cargo_build_for_arch(
-            &[
-                ("TRUCE_AU_VERSION", "2"),
-                ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
-            ],
+            &[("TRUCE_AU_VERSION", "2")],
             &[
                 "-p",
                 &p.crate_name,
