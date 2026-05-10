@@ -82,9 +82,9 @@ pub(crate) use util::{rustup_has_target, tmp_aax_template};
 pub(crate) use config::PackagingConfig;
 #[cfg(target_os = "macos")]
 pub(crate) use util::{
-    MacArch, cargo_build_for_arch, cargo_build_per_arch_parallel, copy_dir_recursive,
-    extract_team_id, is_production_identity, lipo_into, locate_wraptool_macos, pace_sign_aax_macos,
-    run_codesign, run_quiet, run_silent, tmp_au_v3,
+    MacArch, cargo_build_for_arch, cargo_build_multi_arch, copy_dir_recursive, extract_team_id,
+    is_production_identity, lipo_into, locate_wraptool_macos, pace_sign_aax_macos, run_codesign,
+    run_quiet, run_silent, tmp_au_v3,
 };
 
 // Windows-only: VS / MSVC / cmake / ninja discovery + Program Files

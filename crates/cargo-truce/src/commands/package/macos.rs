@@ -10,9 +10,9 @@ use super::stage::{
 };
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
-    Config, MacArch, PluginDef, Res, cargo_build_per_arch_parallel, copy_dir_recursive,
-    deployment_target, detect_default_features, lipo_into, load_config, project_root,
-    read_workspace_version, release_lib_for_target,
+    Config, MacArch, PluginDef, Res, cargo_build_multi_arch, copy_dir_recursive, deployment_target,
+    detect_default_features, lipo_into, load_config, project_root, read_workspace_version,
+    release_lib_for_target,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -665,13 +665,13 @@ fn build_and_lipo_standalone(
         );
     } else {
         eprintln!(
-            "Building Standalone for {} archs in parallel ({} plugin{})...",
+            "Building Standalone for {} archs ({} plugin{})...",
             archs.len(),
             plugins.len(),
             if plugins.len() == 1 { "" } else { "s" },
         );
     }
-    cargo_build_per_arch_parallel(archs, &args, dt)?;
+    cargo_build_multi_arch(archs, &args, dt)?;
 
     // Per-plugin lipo: each plugin's per-arch bins land at
     // `target/<triple>/release/<bin_stem>` and need to be combined
@@ -1007,9 +1007,9 @@ fn build_and_lipo_format(
     if archs.len() == 1 {
         eprintln!("Building {label} ({})...", archs[0].triple());
     } else {
-        eprintln!("Building {label} for {} archs in parallel...", archs.len());
+        eprintln!("Building {label} for {} archs...", archs.len());
     }
-    cargo_build_per_arch_parallel(archs, &base, dt)?;
+    cargo_build_multi_arch(archs, &base, dt)?;
 
     for &arch in archs {
         for p in plugins {
