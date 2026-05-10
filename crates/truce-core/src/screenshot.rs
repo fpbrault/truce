@@ -100,8 +100,10 @@ pub fn render_with_state_at_scale<P: PluginExport>(
 ) -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();
-    if let Some(bytes) = state {
-        plugin.load_state(bytes);
+    if let Some(bytes) = state
+        && let Err(e) = plugin.load_state(bytes)
+    {
+        eprintln!("truce: screenshot load_state failed: {e}");
     }
     render_pixels_for_at_scale::<P>(&mut plugin, scale)
 }

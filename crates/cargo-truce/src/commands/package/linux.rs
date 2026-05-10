@@ -59,7 +59,10 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
 
     let config = load_config()?;
     let root = project_root();
-    let version = read_workspace_version(&root).unwrap_or_else(|| "0.0.0".to_string());
+    let version = read_workspace_version(&root).unwrap_or_else(|e| {
+        eprintln!("WARNING: {e}; defaulting tarball version to 0.0.0");
+        "0.0.0".to_string()
+    });
 
     if config.plugin.is_empty() {
         return Err("no [[plugin]] entries in truce.toml".into());

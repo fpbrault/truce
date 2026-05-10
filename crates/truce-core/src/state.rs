@@ -2,13 +2,47 @@
 const STATE_MAGIC: &[u8; 4] = b"OAST";
 const STATE_VERSION: u32 = 1;
 
-/// Serialize plugin state: parameter values + optional extra state.
+/// Reason a [`crate::PluginLogic::load_state`] / [`crate::Plugin::load_state`]
+/// implementation failed to interpret the host-supplied extra-state
+/// blob. Format wrappers receive this on the audio-thread apply path
+/// and currently log it; future hosts will surface a non-success code
+/// to the DAW (e.g. CLAP `state_load` returning `false`).
+///
+/// `Malformed` is the typical case — the blob's framing or content
+/// doesn't match what `save_state` would emit (version skew between
+/// older session files and newer plugin builds is the canonical
+/// example). `Other` carries a free-form message for plugin-specific
+/// failures that don't fit the malformed-bytes shape.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum StateLoadError {
+    /// State blob is too short, mis-framed, or otherwise unparseable.
+    Malformed(&'static str),
+    /// Plugin-specific failure with a free-form message.
+    Other(String),
+}
+
+impl std::fmt::Display for StateLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Malformed(s) => write!(f, "malformed state: {s}"),
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl std::error::Error for StateLoadError {}
+
+/// Serialize plugin state: parameter values + extra state. Empty
+/// `extra` slice serializes as the same `0u64` length-prefix that an
+/// absent extra block would, so callers don't need an `Option`
+/// wrapper to express "no extra state".
 #[must_use]
 pub fn serialize_state(
     plugin_id_hash: u64,
     param_ids: &[u32],
     param_values: &[f64],
-    extra: Option<&[u8]>,
+    extra: &[u8],
 ) -> Vec<u8> {
     let mut data = Vec::new();
 
@@ -25,14 +59,10 @@ pub fn serialize_state(
         data.extend_from_slice(&value.to_le_bytes());
     }
 
-    // Extra state block
-    if let Some(extra) = extra {
-        let len = extra.len() as u64;
-        data.extend_from_slice(&len.to_le_bytes());
-        data.extend_from_slice(extra);
-    } else {
-        data.extend_from_slice(&0u64.to_le_bytes());
-    }
+    // Extra state block: length-prefixed, may be zero-length.
+    let len = extra.len() as u64;
+    data.extend_from_slice(&len.to_le_bytes());
+    data.extend_from_slice(extra);
 
     data
 }
@@ -65,8 +95,18 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
     use truce_params::Params;
     plugin.params().restore_values(&state.params);
     plugin.params().snap_smoothers();
-    if let Some(extra) = &state.extra {
-        plugin.load_state(extra);
+    if let Some(extra) = &state.extra
+        && let Err(e) = plugin.load_state(extra)
+    {
+        // Audio-thread error path: host already received a "yes I
+        // accepted the state" return from the format wrapper's setChunk
+        // by the time we run, so the only thing left is logging.
+        // `eprintln!` is deliberate — `truce-core` is the audio-runtime
+        // crate, no `log` dep, and a state-load failure is a one-shot
+        // event not a per-block hot path. Format wrappers that surface
+        // this to the host (e.g. CLAP's `state_load` returning `false`)
+        // do so synchronously *before* the queue handoff.
+        eprintln!("truce: load_state failed: {e}");
     }
 }
 
@@ -177,16 +217,32 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
 use crate::export::PluginExport;
 use truce_params::Params;
 
-/// Errors `restore_plugin` can return. `Invalid` covers all
-/// envelope-level failures the user might care to distinguish:
-/// missing / wrong magic, version mismatch, plugin-ID mismatch,
-/// truncated body. The caller typically just prints a diagnostic
-/// and proceeds with default params.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Errors `restore_plugin` can return.
+///
+/// `Invalid` covers envelope-level failures (missing / wrong magic,
+/// version mismatch, plugin-ID mismatch, truncated body); `LoadState`
+/// covers a successfully-parsed envelope whose extra-state blob the
+/// plugin's [`crate::PluginLogic::load_state`] rejected. The caller
+/// typically prints a diagnostic and proceeds with default params.
+#[derive(Debug)]
 pub enum RestoreError {
     /// The bytes don't parse as a state envelope for this plugin.
     Invalid,
+    /// Envelope parsed but the plugin couldn't interpret its extra
+    /// bytes.
+    LoadState(StateLoadError),
 }
+
+impl std::fmt::Display for RestoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid => f.write_str("state envelope is invalid"),
+            Self::LoadState(e) => write!(f, "plugin load_state failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for RestoreError {}
 
 /// Serialize a plugin instance into the canonical state envelope —
 /// parameter values + optional `Plugin::save_state()` payload, with
@@ -198,12 +254,7 @@ pub enum RestoreError {
 pub fn snapshot_plugin<P: PluginExport>(plugin: &P) -> Vec<u8> {
     let (ids, values) = plugin.params().collect_values();
     let extra = plugin.save_state();
-    serialize_state(
-        hash_plugin_id(P::info().clap_id),
-        &ids,
-        &values,
-        extra.as_deref(),
-    )
+    serialize_state(hash_plugin_id(P::info().clap_id), &ids, &values, &extra)
 }
 
 /// Inverse of [`snapshot_plugin`]. Validates the envelope's magic,
@@ -222,7 +273,7 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
     let s = deserialize_state(bytes, id).ok_or(RestoreError::Invalid)?;
     plugin.params().restore_values(&s.params);
     if let Some(extra) = s.extra {
-        plugin.load_state(&extra);
+        plugin.load_state(&extra).map_err(RestoreError::LoadState)?;
     }
     Ok(())
 }
@@ -276,7 +327,7 @@ mod tests {
         let values = [0.5f64, 1.0, -12.0];
         let extra = b"hello extra state";
 
-        let data = serialize_state(plugin_id, &ids, &values, Some(extra));
+        let data = serialize_state(plugin_id, &ids, &values, extra);
         let state = deserialize_state(&data, plugin_id).unwrap();
 
         assert_eq!(state.params.len(), 3);
@@ -289,7 +340,7 @@ mod tests {
     #[test]
     fn wrong_plugin_id_fails() {
         let plugin_id = hash_plugin_id("com.test.plugin");
-        let data = serialize_state(plugin_id, &[], &[], None);
+        let data = serialize_state(plugin_id, &[], &[], &[]);
         assert!(deserialize_state(&data, 12345).is_none());
     }
 }

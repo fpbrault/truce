@@ -91,7 +91,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
         let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let (ids, values) = inst.plugin.params().collect_values();
         let extra = inst.plugin.save_state();
-        let blob = serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
+        let blob = serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
         let chunk_urid = inst.urid_map.atom_chunk;
@@ -144,8 +144,10 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
         if let Some(state) = deserialize_state(slice, inst.plugin_id_hash) {
             inst.plugin.params().restore_values(&state.params);
             inst.plugin.params().snap_smoothers();
-            if let Some(extra) = state.extra {
-                inst.plugin.load_state(&extra);
+            if let Some(extra) = state.extra
+                && let Err(e) = inst.plugin.load_state(&extra)
+            {
+                eprintln!("truce: lv2 load_state failed: {e}");
             }
         }
         LV2_STATE_SUCCESS

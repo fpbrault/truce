@@ -129,32 +129,28 @@ pub(crate) struct VendorConfig {
     pub(crate) au_manufacturer: String,
 }
 
+/// Install-time view of a `[[plugin]]` entry.
+///
+/// Wraps the shared `truce_build::PluginDef` schema (consumed by the
+/// proc macros) and adds install-only fields (`au3_subtype`,
+/// `au_tag`). `Deref` exposes the shared fields so call sites read
+/// `p.name` / `p.bundle_id` directly without going through `p.shared`.
 #[derive(Deserialize)]
 pub(crate) struct PluginDef {
-    pub(crate) name: String,
-    pub(crate) bundle_id: String,
-    #[serde(rename = "crate")]
-    pub(crate) crate_name: String,
-    #[serde(default)]
-    pub(crate) fourcc: Option<String>,
-    pub(crate) category: String,
-    #[serde(default)]
-    pub(crate) au_type: Option<String>,
-    #[serde(default)]
-    pub(crate) au_subtype: Option<String>,
+    #[serde(flatten)]
+    pub(crate) shared: truce_build::PluginDef,
     #[serde(default)]
     pub(crate) au3_subtype: Option<String>,
     #[serde(default = "default_au_tag")]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au_tag: String,
-    // `au3_name` doubles as the AU v3 `.app` bundle directory name,
-    // which is install-time logic in this crate. Other per-format
-    // display names flow through `PluginInfo` directly (the
-    // proc-macro reads the same `truce.toml` keys), so cargo-truce
-    // doesn't need its own copies.
-    #[serde(default)]
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) au3_name: Option<String>,
+}
+
+impl std::ops::Deref for PluginDef {
+    type Target = truce_build::PluginDef;
+    fn deref(&self) -> &Self::Target {
+        &self.shared
+    }
 }
 
 impl PluginDef {
@@ -310,10 +306,7 @@ impl SuiteDef {
             .into());
         }
 
-        Ok(ResolvedSuite {
-            def: self,
-            plugins,
-        })
+        Ok(ResolvedSuite { def: self, plugins })
     }
 }
 
@@ -420,16 +413,26 @@ mod suite_tests {
 
     fn plugin(crate_name: &str, bundle_id: &str) -> PluginDef {
         PluginDef {
-            name: crate_name.into(),
-            bundle_id: bundle_id.into(),
-            crate_name: crate_name.into(),
-            fourcc: None,
-            category: "effect".into(),
-            au_type: None,
-            au_subtype: None,
+            shared: truce_build::PluginDef {
+                name: crate_name.into(),
+                bundle_id: bundle_id.into(),
+                crate_name: crate_name.into(),
+                version: None,
+                fourcc: None,
+                category: "effect".into(),
+                au_type: None,
+                au_subtype: None,
+                aax_category: None,
+                vst3_name: None,
+                clap_name: None,
+                vst2_name: None,
+                au_name: None,
+                au3_name: None,
+                aax_name: None,
+                lv2_name: None,
+            },
             au3_subtype: None,
             au_tag: default_au_tag(),
-            au3_name: None,
         }
     }
 

@@ -142,17 +142,18 @@ impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> Plu
         self.logic.process(buffer, events, &mut ctx)
     }
 
-    fn save_state(&self) -> Option<Vec<u8>> {
-        let data = self.logic.save_state();
-        if data.is_empty() { None } else { Some(data) }
+    fn save_state(&self) -> Vec<u8> {
+        self.logic.save_state()
     }
 
-    fn load_state(&mut self, data: &[u8]) {
-        self.logic.load_state(data);
+    fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
+        let result = self.logic.load_state(data);
         // Plugin-side cache invalidation runs in the same `&mut`
         // borrow window so the next `process()` block sees the
-        // refreshed caches.
+        // refreshed caches — fire it whether or not load_state
+        // succeeded so partial state still triggers a refresh.
         PluginLogic::state_changed(&mut self.logic);
+        result
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
@@ -257,12 +258,15 @@ macro_rules! export_static {
                 self.inner.process(buffer, events, context)
             }
 
-            fn save_state(&self) -> Option<Vec<u8>> {
+            fn save_state(&self) -> Vec<u8> {
                 self.inner.save_state()
             }
 
-            fn load_state(&mut self, data: &[u8]) {
-                self.inner.load_state(data);
+            fn load_state(
+                &mut self,
+                data: &[u8],
+            ) -> Result<(), $crate::__macro_deps::truce_core::state::StateLoadError> {
+                self.inner.load_state(data)
             }
 
             fn editor(

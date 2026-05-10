@@ -14,7 +14,7 @@ truce-gui = { workspace = true }
 log = "0.4"
 iced = { version = "0.13", default-features = false, features = ["canvas", "wgpu"] }
 iced_runtime = "0.13"
-iced_wgpu = "0.13"
+iced_wgpu = { workspace = true }
 iced_graphics = "0.13"
 pollster = "0.4"
 baseview = { workspace = true }

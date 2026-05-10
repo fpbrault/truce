@@ -73,7 +73,15 @@ pub trait PluginLogic: Send + 'static {
     }
 
     /// Restore plugin-specific state.
-    fn load_state(&mut self, _data: &[u8]) {}
+    ///
+    /// # Errors
+    ///
+    /// Return `Err(StateLoadError)` when the blob is malformed or
+    /// otherwise can't be interpreted — the format wrapper logs the
+    /// failure (and on hosts that support it, surfaces it to the DAW).
+    fn load_state(&mut self, _data: &[u8]) -> Result<(), crate::state::StateLoadError> {
+        Ok(())
+    }
 
     /// Called on the audio thread immediately after [`Self::load_state`]
     /// returns. Use this to invalidate or recompute caches the next

@@ -1,5 +1,10 @@
 use crate::events::{EventList, TransportInfo};
 
+/// Per-block context handed to `process()`. Construct via
+/// [`Self::new`] + the `with_*` builders. Marked `#[non_exhaustive]`
+/// so adding host-populated fields in future (e.g. `host_latency`,
+/// `bus_routing`) isn't a `SemVer` break for downstream pre-1.0 callers.
+#[non_exhaustive]
 pub struct ProcessContext<'a> {
     pub transport: &'a TransportInfo,
     pub sample_rate: f64,

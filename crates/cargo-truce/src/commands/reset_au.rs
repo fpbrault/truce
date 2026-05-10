@@ -26,6 +26,7 @@ pub(crate) fn cmd_reset_au(_args: &[String]) -> Res {
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
     use crate::{confirm_prompt, dirs, load_config, run_silent, tmp_dir};
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::Path;
     use std::process::Command;
@@ -143,8 +144,11 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
 
     // Kill daemons to drop in-memory caches
     eprintln!("Restarting audio daemons...");
-    run_silent("killall", &["-9", "AudioComponentRegistrar"]);
-    run_silent("killall", &["-9", "pkd"]);
+    run_silent(
+        "killall",
+        &[OsStr::new("-9"), OsStr::new("AudioComponentRegistrar")],
+    );
+    run_silent("killall", &[OsStr::new("-9"), OsStr::new("pkd")]);
 
     eprintln!("Done. Restart your DAW to rescan.");
     Ok(())

@@ -13,7 +13,7 @@ truce-params = { workspace = true }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 baseview = { workspace = true }
 raw-window-handle = "0.5"
-wgpu = "24"
+wgpu = { workspace = true }
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 paste = "1"

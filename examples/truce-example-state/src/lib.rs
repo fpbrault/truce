@@ -98,9 +98,15 @@ impl PluginLogic for StateExample {
         self.memo.serialize()
     }
 
-    fn load_state(&mut self, data: &[u8]) {
-        if let Some(m) = InstanceMemo::deserialize(data) {
-            self.memo = m;
+    fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
+        match InstanceMemo::deserialize(data) {
+            Some(m) => {
+                self.memo = m;
+                Ok(())
+            }
+            None => Err(truce_core::state::StateLoadError::Malformed(
+                "InstanceMemo deserialize",
+            )),
         }
     }
 
@@ -235,7 +241,7 @@ mod tests {
 
         let mut fresh = make_plugin();
         assert_eq!(fresh.memo.label, "");
-        fresh.load_state(&bytes);
+        fresh.load_state(&bytes).unwrap();
         assert_eq!(fresh.memo.label, "guitar bus");
     }
 
@@ -244,7 +250,7 @@ mod tests {
         let p = make_plugin();
         let bytes = p.save_state();
         let mut fresh = make_plugin();
-        fresh.load_state(&bytes);
+        fresh.load_state(&bytes).unwrap();
         assert_eq!(fresh.memo.label, "");
     }
 
@@ -254,7 +260,7 @@ mod tests {
         p.memo.label = "🎸 distortion ⚡ ã ç ñ".to_string();
         let bytes = p.save_state();
         let mut fresh = make_plugin();
-        fresh.load_state(&bytes);
+        fresh.load_state(&bytes).unwrap();
         assert_eq!(fresh.memo.label, "🎸 distortion ⚡ ã ç ñ");
     }
 
@@ -267,20 +273,22 @@ mod tests {
         p.memo.label = "x".repeat(8 * 1024);
         let bytes = p.save_state();
         let mut fresh = make_plugin();
-        fresh.load_state(&bytes);
+        fresh.load_state(&bytes).unwrap();
         assert_eq!(fresh.memo.label.len(), 8 * 1024);
     }
 
     #[test]
     fn garbage_state_doesnt_panic() {
         // A truncated / hostile blob must leave the plugin at its
-        // default rather than panic in deserialize.
+        // default rather than panic in deserialize. The Err return
+        // is the documented signal — we just want to confirm it
+        // doesn't unwind.
         let mut p = make_plugin();
-        p.load_state(&[]);
+        let _ = p.load_state(&[]);
         assert_eq!(p.memo.label, "");
-        p.load_state(&[0xFF; 3]);
+        let _ = p.load_state(&[0xFF; 3]);
         assert_eq!(p.memo.label, "");
-        p.load_state(&[0xFF; 32]);
+        let _ = p.load_state(&[0xFF; 32]);
         assert_eq!(p.memo.label, "");
     }
 

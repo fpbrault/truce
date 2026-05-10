@@ -106,7 +106,10 @@ pub(crate) fn cmd_package(
 
     let config = load_config()?;
     let root = project_root();
-    let version = read_workspace_version(&root).unwrap_or_else(|| "0.0.0".to_string());
+    let version = read_workspace_version(&root).unwrap_or_else(|e| {
+        eprintln!("WARNING: {e}; defaulting installer version to 0.0.0");
+        "0.0.0".to_string()
+    });
 
     let formats = resolve_formats(&config, opts.format_str.as_deref())?;
     let plugins = resolve_plugins(&config, opts.plugin_filter.as_deref())?;

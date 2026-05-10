@@ -25,6 +25,7 @@ use crate::{
     extract_team_id, is_production_identity, lipo_into, release_lib_for_target, run_silent,
     run_sudo, tmp_au_v3,
 };
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -258,11 +259,19 @@ fn assemble_framework_bundle(
     // inside-out after embedding into the .app), but xcodebuild
     // reads the framework to resolve symbols and rejects unsigned
     // frameworks under `CODE_SIGN_STYLE = Manual`.
-    let mut cs_args = vec!["--force", "--sign", sign_id];
+    let mut cs_args: Vec<&OsStr> = vec![
+        OsStr::new("--force"),
+        OsStr::new("--sign"),
+        OsStr::new(sign_id),
+    ];
     if is_production_identity(sign_id) {
-        cs_args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
+        cs_args.extend_from_slice(&[
+            OsStr::new("--options"),
+            OsStr::new("runtime"),
+            OsStr::new("--timestamp"),
+        ]);
     }
-    cs_args.push(fw_root.to_str().unwrap());
+    cs_args.push(fw_root.as_os_str());
     crate::run_codesign(&cs_args, false)?;
     Ok(())
 }
@@ -453,48 +462,51 @@ fn embed_framework_into_app(
 /// everything). Re-signing an inner bundle invalidates the outer, so
 /// signing in the wrong order leaves the whole thing broken.
 fn sign_au_v3_inside_out(final_app: &Path, build_dir: &Path, fw_name: &str, sign_id: &str) -> Res {
-    let runtime_flags: &[&str] = if is_production_identity(sign_id) {
-        &["--options", "runtime", "--timestamp"]
+    let runtime_flags: &[&OsStr] = if is_production_identity(sign_id) {
+        &[
+            OsStr::new("--options"),
+            OsStr::new("runtime"),
+            OsStr::new("--timestamp"),
+        ]
     } else {
         &[]
     };
 
     let embedded_fw = final_app.join(format!("Contents/Frameworks/{fw_name}.framework"));
-    let fw_path = embedded_fw.to_str().unwrap();
-    let mut args = vec!["--force", "--sign", sign_id];
+    let mut args: Vec<&OsStr> = vec![
+        OsStr::new("--force"),
+        OsStr::new("--sign"),
+        OsStr::new(sign_id),
+    ];
     args.extend_from_slice(runtime_flags);
-    args.push(fw_path);
+    args.push(embedded_fw.as_os_str());
     crate::run_codesign(&args, false)?;
 
     let appex_path = final_app.join("Contents/PlugIns/AUExt.appex");
-    let appex_str = appex_path.to_str().unwrap();
     let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
-    let ent = entitlements_appex.to_str().unwrap();
-    let mut args = vec![
-        "--force",
-        "--sign",
-        sign_id,
-        "--entitlements",
-        ent,
-        "--generate-entitlement-der",
+    let mut args: Vec<&OsStr> = vec![
+        OsStr::new("--force"),
+        OsStr::new("--sign"),
+        OsStr::new(sign_id),
+        OsStr::new("--entitlements"),
+        entitlements_appex.as_os_str(),
+        OsStr::new("--generate-entitlement-der"),
     ];
     args.extend_from_slice(runtime_flags);
-    args.push(appex_str);
+    args.push(appex_path.as_os_str());
     crate::run_codesign(&args, false)?;
 
     let entitlements_app = build_dir.join("App/App.entitlements");
-    let ent = entitlements_app.to_str().unwrap();
-    let app_str = final_app.to_str().unwrap();
-    let mut args = vec![
-        "--force",
-        "--sign",
-        sign_id,
-        "--entitlements",
-        ent,
-        "--generate-entitlement-der",
+    let mut args: Vec<&OsStr> = vec![
+        OsStr::new("--force"),
+        OsStr::new("--sign"),
+        OsStr::new(sign_id),
+        OsStr::new("--entitlements"),
+        entitlements_app.as_os_str(),
+        OsStr::new("--generate-entitlement-der"),
     ];
     args.extend_from_slice(runtime_flags);
-    args.push(app_str);
+    args.push(final_app.as_os_str());
     crate::run_codesign(&args, false)?;
     Ok(())
 }
@@ -558,11 +570,11 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
         let _ = Command::new("pluginkit")
             .args(["-e", "ignore", "-i", &appex_id])
             .output();
-        let _ = run_sudo("rm", &["-rf", &app_dir]);
+        let _ = run_sudo("rm", &[OsStr::new("-rf"), OsStr::new(&app_dir)]);
 
         // Install to /Applications/. `ditto` preserves the existing
         // signature since we signed the bundle at build time.
-        run_sudo("ditto", &[final_app.to_str().unwrap(), &app_dir])?;
+        run_sudo("ditto", &[final_app.as_os_str(), OsStr::new(&app_dir)])?;
 
         // lsregister updates the LaunchServices DB; it doesn't need
         // `pkd` alive, so it can run in the per-plugin phase.
@@ -579,8 +591,11 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
     // cache forces a clean re-scan on the next host launch. The 2s
     // sleep gives `pkd` time to respawn before we call `pluginkit -a`
     // (which silently no-ops if `pkd` is mid-respawn).
-    run_silent("killall", &["-9", "pkd"]);
-    run_silent("killall", &["-9", "AudioComponentRegistrar"]);
+    run_silent("killall", &[OsStr::new("-9"), OsStr::new("pkd")]);
+    run_silent(
+        "killall",
+        &[OsStr::new("-9"), OsStr::new("AudioComponentRegistrar")],
+    );
     if let Some(home) = dirs::home_dir() {
         let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
     }

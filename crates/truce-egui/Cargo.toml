@@ -11,8 +11,8 @@ truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
 egui = "0.31"
-egui-wgpu = "0.31"
-wgpu = "24"
+egui-wgpu = { workspace = true }
+wgpu = { workspace = true }
 pollster = "0.4"
 baseview = { workspace = true }
 raw-window-handle = "0.5"

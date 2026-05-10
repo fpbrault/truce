@@ -175,8 +175,9 @@ impl PluginLogic for ProbePlugin {
             cached.clone()
         }
     }
-    fn load_state(&mut self, data: &[u8]) {
+    fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
         *self.last_load_state.borrow_mut() = data.to_vec();
+        Ok(())
     }
     fn latency(&self) -> u32 {
         0xAAAA
@@ -262,7 +263,9 @@ pub fn verify_probe(probe: &mut dyn LoaderPlugin) -> Result<(), String> {
     // Round-trip a sentinel through load_state → save_state to confirm
     // the load slot isn't swapped with another `&mut self` slot.
     let sentinel = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
-    probe.load_state(&sentinel);
+    probe
+        .load_state(&sentinel)
+        .map_err(|e| format!("load_state probe: {e}"))?;
     if probe.save_state() != sentinel {
         return Err("load_state/save_state round-trip mismatch".into());
     }

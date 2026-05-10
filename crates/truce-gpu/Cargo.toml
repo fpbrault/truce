@@ -10,7 +10,7 @@ description = "GPU rendering backend (wgpu) for truce plugins"
 truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
-wgpu = "24"
+wgpu = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 lyon_tessellation = "1"

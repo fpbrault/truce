@@ -15,6 +15,16 @@ pub use types::{BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum
 #[doc(hidden)]
 pub const METER_ID_BASE: u32 = 1 << 24;
 
+/// Sealing module: external crates cannot implement [`Params`] or
+/// [`ParamEnum`] directly because they can't name `Sealed`. The
+/// `#[derive(Params)]` and `#[derive(ParamEnum)]` macros emit the
+/// `Sealed` impl alongside their trait impls, so derive users are
+/// unaffected.
+#[doc(hidden)]
+pub mod __private {
+    pub trait Sealed {}
+}
+
 /// Format a plain parameter value as a display string based on the parameter's unit.
 ///
 /// Used by the `#[derive(Params)]` macro for default `format_value` implementations
@@ -67,7 +77,7 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
 /// rather than expecting one on the trait — `#[derive(Params)]` emits
 /// `impl Default` alongside the trait impl, so that bound is free for
 /// derive users.
-pub trait Params: Send + Sync + 'static {
+pub trait Params: __private::Sealed + Send + Sync + 'static {
     /// All parameter infos, in declaration order.
     fn param_infos(&self) -> Vec<ParamInfo>;
 

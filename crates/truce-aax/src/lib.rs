@@ -971,6 +971,12 @@ pub unsafe fn _save_state<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
 ) -> u32 {
+    // Allocator pin: AAX uses the Rust global allocator on both the
+    // save (`finalize_blob` boxes a `Vec`) and free (`_free_state`
+    // reconstitutes a `Vec` via `Vec::from_raw_parts`) paths. VST3 / AU
+    // use libc malloc/free instead; do not cross wires when refactoring
+    // `_save_state` paths together.
+
     /// Cap on retries when the audio thread keeps bumping the
     /// revision mid-walk. A handful of attempts covers the common
     /// "user wiggling automation while Pro Tools snapshots" case;
@@ -1007,7 +1013,7 @@ pub unsafe fn _save_state<P: PluginExport>(
         // is "save_state must be safe to call concurrently with
         // process"; impls that copy from atomic params are fine.
         let extra = inst.plugin.save_state();
-        state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref())
+        state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra)
     };
 
     let blob: Arc<[u8]> = {
@@ -1216,7 +1222,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
                 }),
                 get_state: Box::new(move || {
                     let plugin = plugin_ptr.get();
-                    plugin.save_state().unwrap_or_default()
+                    plugin.save_state()
                 }),
                 set_state: Box::new(move |bytes| {
                     if let Some(deserialized) =

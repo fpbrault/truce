@@ -14,7 +14,7 @@ tiny-skia = "0.12"
 fontdue = "0.9"
 baseview = { workspace = true }
 raw-window-handle = "0.5"
-wgpu = "24"
+wgpu = { workspace = true }
 pollster = "0.4"
 log = "0.4"
 

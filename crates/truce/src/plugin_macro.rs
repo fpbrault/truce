@@ -342,12 +342,15 @@ macro_rules! __plugin_hot_reload {
                 self.inner.process(buffer, events, context)
             }
 
-            fn save_state(&self) -> Option<Vec<u8>> {
+            fn save_state(&self) -> Vec<u8> {
                 self.inner.save_state()
             }
 
-            fn load_state(&mut self, data: &[u8]) {
-                self.inner.load_state(data);
+            fn load_state(
+                &mut self,
+                data: &[u8],
+            ) -> Result<(), $crate::core::state::StateLoadError> {
+                self.inner.load_state(data)
             }
 
             fn editor(&mut self) -> Option<Box<dyn $crate::core::editor::Editor>> {

@@ -520,8 +520,14 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // also reading it from `save_state` races here. The contract
         // is "save_state must be safe to call concurrently with
         // process"; impls that copy from atomic params are fine.
+        //
+        // Allocator pin: this wrapper allocates with `libc_malloc` and
+        // the C++ shim frees with `libc::free`. The Rust global
+        // allocator must not appear on either side. (VST2 uses the
+        // Rust global allocator for both save + free; do not cross
+        // wires when refactoring `_save_state` paths together.)
         let extra = inst.plugin.save_state();
-        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
+        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
         let len = blob.len();
         let ptr = libc_malloc(len).cast::<u8>();
         if ptr.is_null() {
@@ -829,7 +835,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     }),
                     get_state: Box::new(move || {
                         let plugin = plugin_ptr.get();
-                        plugin.save_state().unwrap_or_default()
+                        plugin.save_state()
                     }),
                     set_state: Box::new(move |bytes| {
                         if let Some(deserialized) =

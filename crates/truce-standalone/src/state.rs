@@ -29,5 +29,10 @@ pub fn load_into<P: PluginExport>(plugin: &mut P, path: &Path) {
             path.display(),
             P::info().name,
         ),
+        Err(truce_core::state::RestoreError::LoadState(e)) => eprintln!(
+            "{} parsed but {}'s load_state rejected the extra bytes: {e}",
+            path.display(),
+            P::info().name,
+        ),
     }
 }

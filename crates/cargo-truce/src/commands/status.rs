@@ -40,6 +40,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
 #[cfg(target_os = "macos")]
 pub(crate) fn cmd_status(args: &[String]) -> Res {
     use crate::{dirs, load_config, run_quiet};
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::Path;
 
@@ -104,7 +105,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
     }
 
     eprintln!("\nauval");
-    if let Ok(output) = run_quiet("auval", &["-a"]) {
+    if let Ok(output) = run_quiet("auval", &[OsStr::new("-a")]) {
         let vendor_lower = vendor.to_lowercase();
         for line in output.lines() {
             if line.to_lowercase().contains(&vendor_lower) {
