@@ -2,6 +2,7 @@
 
 pub use truce_core as core;
 pub use truce_derive::{ParamEnum, Params, State};
+pub use truce_gui as gui;
 pub use truce_params as params;
 
 #[cfg(feature = "clap")]
@@ -37,14 +38,15 @@ pub mod prelude {
     pub use std::f64::consts::TAU;
     pub use std::sync::Arc;
     pub use truce_core::custom_state::{State as StateTrait, StateBinding, StateField};
+    pub use truce_core::state::StateLoadError;
     pub use truce_core::util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
     pub use truce_core::{
         AudioBuffer, BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody,
-        EventList, Plugin, PluginCategory, PluginContext, PluginExport, PluginInfo, PluginLogic,
-        ProcessContext, ProcessStatus, TransportInfo,
+        EventList, Plugin, PluginCategory, PluginContext, PluginExport, PluginInfo, ProcessContext,
+        ProcessStatus, TransportInfo,
     };
     pub use truce_derive::{ParamEnum, Params, State, plugin_info};
-    pub use truce_gui::PluginEditor;
+    pub use truce_gui::PluginLogic;
     pub use truce_gui::interaction::WidgetRegion;
     pub use truce_gui::render::RenderBackend;
     pub use truce_gui::theme::{Color, Theme};

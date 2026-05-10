@@ -132,9 +132,7 @@ impl PluginLogic for Gain {
         }
         ProcessStatus::Normal
     }
-}
 
-impl PluginEditor for Gain {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
     }

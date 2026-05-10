@@ -10,11 +10,10 @@ use crate::process::{ProcessContext, ProcessStatus};
 ///
 /// `Plugin` is the surface every format wrapper (CLAP, VST3, VST2,
 /// LV2, AU, AAX) consumes. The `truce::plugin!` macro generates an
-/// `impl Plugin for __HotShellWrapper` from the user's two
-/// implementations — [`PluginLogic`](crate::PluginLogic) (DSP) and
-/// `truce_gui::PluginEditor` (GUI) — so the user writes safe Rust
-/// against a split surface and the format wrappers see one combined
-/// trait against the macro-generated wrapper type.
+/// `impl Plugin for __HotShellWrapper` from the user's
+/// `truce_gui::PluginLogic` impl, bridging the GUI-aware user trait
+/// into this GUI-free format-wrapper surface so `truce-core` doesn't
+/// pull in `truce-gui` types.
 ///
 /// What plugin authors implement instead:
 ///
@@ -22,26 +21,15 @@ use crate::process::{ProcessContext, ProcessStatus};
 /// impl truce::prelude::PluginLogic for MyPlugin {
 ///     fn reset(&mut self, sr: f64, bs: usize) { /* ... */ }
 ///     fn process(&mut self, /* ... */) -> ProcessStatus { /* ... */ }
-/// }
-///
-/// impl truce::prelude::PluginEditor for MyPlugin {
 ///     fn layout(&self) -> GridLayout { /* ... */ }
 /// }
 ///
 /// truce::plugin! { logic: MyPlugin, params: MyPluginParams }
 /// ```
 ///
-/// The macro-emitted `impl Plugin` routes each method to the right
-/// half: DSP methods (`reset`, `process`, `save_state`, `load_state`,
-/// `latency`, `tail`, `bus_layouts`, `supports_in_place`) call into
-/// `PluginLogic`; `editor()` calls into `PluginEditor::custom_editor`
-/// or builds a `BuiltinEditor` from `PluginEditor::layout`.
-///
-/// This trait stays in `truce-core` because the format wrappers
-/// depend on `truce-core` and need to consume one combined trait;
-/// keeping the user-facing surface split (across `truce-core` and
-/// `truce-gui`) keeps headless plugins from pulling GUI types into
-/// their compile errors.
+/// The macro-emitted `impl Plugin` routes each method directly to the
+/// user's impl, except `editor()` which the macro builds from the
+/// user's `custom_editor` (preferred) or `layout` (built-in fallback).
 pub trait Plugin: Send + 'static {
     /// Opt into zero-copy in-place I/O. When this returns `true`,
     /// the format wrapper skips its safety memcpy on host-aliased
@@ -100,15 +88,17 @@ pub trait Plugin: Send + 'static {
     ) -> ProcessStatus;
 
     /// Save extra state beyond parameter values. Empty `Vec` means
-    /// "no extra state" — matches `PluginLogic::save_state`'s shape so
-    /// the wrapper bridge is a passthrough rather than an
-    /// `Option<Vec<u8>>` ↔ `Vec<u8>` translation.
+    /// "no extra state" — matches the user-facing
+    /// `truce_gui::PluginLogic::save_state` shape so the wrapper bridge
+    /// is a passthrough rather than an `Option<Vec<u8>>` ↔ `Vec<u8>`
+    /// translation.
     fn save_state(&self) -> Vec<u8> {
         Vec::new()
     }
 
-    /// Restore extra state. Mirrors `PluginLogic::load_state`'s
-    /// `Result` shape so the wrapper bridge is a passthrough.
+    /// Restore extra state. Mirrors the user-facing
+    /// `truce_gui::PluginLogic::load_state` `Result` shape so the
+    /// wrapper bridge is a passthrough.
     ///
     /// # Errors
     ///

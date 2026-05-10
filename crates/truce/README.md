@@ -14,8 +14,7 @@ and `plugin_info!()`), giving you a single import path for everything.
 - `Plugin`, `PluginExport`, `AudioBuffer`, `Editor` -- from truce-core
 - `FloatParam`, `IntParam`, `BoolParam`, `EnumParam`, `Smoother` -- from truce-params
 - `#[derive(Params)]`, `#[derive(ParamEnum)]`, `#[derive(State)]`, `plugin_info!()` -- from truce-derive
-- `PluginLogic` -- from truce-core (DSP surface)
-- `PluginEditor` -- from truce-gui (GUI surface)
+- `PluginLogic` -- from truce-gui (combined DSP + GUI surface)
 - `export_plugin!`, `export_static!`, `HotShell` -- from truce-loader
 - The `truce::plugin!` macro -- generates all the format-export glue from
   one declaration
@@ -71,9 +70,10 @@ impl PluginLogic for MyPlugin {
         // ...
         ProcessStatus::Normal
     }
-}
 
-impl PluginEditor for MyPlugin {}   // empty = built-in widgets, default layout
+    // GUI methods (layout, custom_editor, …) all have defaults —
+    // omit them for built-in widgets with the default layout.
+}
 
 truce::plugin! { logic: MyPlugin, params: MyParams }
 ```

@@ -5,17 +5,14 @@ use std::cell::RefCell;
 use std::mem::{align_of, size_of};
 use std::ptr;
 
-use truce_core::PluginLogic;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_gui::PluginEditor;
+use truce_gui::PluginLogic;
 use truce_gui::interaction::WidgetRegion;
 use truce_gui::layout::GridLayout;
 use truce_gui::render::RenderBackend;
 use truce_gui::theme::{Color, Theme};
-
-use crate::LoaderPlugin;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
@@ -48,7 +45,7 @@ impl AbiCanary {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            trait_object_size: size_of::<*const dyn LoaderPlugin>() * 2,
+            trait_object_size: size_of::<*const dyn PluginLogic>() * 2,
             audio_buffer_size: size_of::<AudioBuffer>(),
             process_context_size: size_of::<ProcessContext>(),
             process_status_size: size_of::<ProcessStatus>(),
@@ -185,9 +182,7 @@ impl PluginLogic for ProbePlugin {
     fn tail(&self) -> u32 {
         0xBBBB
     }
-}
 
-impl PluginEditor for ProbePlugin {
     fn render(&self, _backend: &mut dyn RenderBackend) {}
 
     fn uses_custom_render(&self) -> bool {
@@ -231,7 +226,7 @@ impl PluginEditor for ProbePlugin {
 /// failed to round-trip — distinct messages for `latency`, `tail`,
 /// `layout`, `hit_test`, `save_state` (default and echo paths),
 /// `uses_custom_render`, `custom_editor`, and `load_state`.
-pub fn verify_probe(probe: &mut dyn LoaderPlugin) -> Result<(), String> {
+pub fn verify_probe(probe: &mut dyn PluginLogic) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
         return Err(format!(
             "latency: expected 0xAAAA, got 0x{:X}",

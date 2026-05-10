@@ -1,7 +1,7 @@
 //! Shell-side integration: `HotShell<P>` and `HotEditor`.
 //!
 //! `HotShell` implements truce-core's `Plugin` + `PluginExport` traits,
-//! delegating all logic to the `LoaderPlugin` trait object in the
+//! delegating all logic to the `PluginLogic` trait object in the
 //! hot-reloadable dylib.
 
 use std::path::PathBuf;
@@ -36,7 +36,7 @@ macro_rules! hot_debug {
 ///
 /// `P` is the parameter type (owned by the shell, survives reload).
 /// All plugin logic (DSP, GUI rendering, layout) is delegated to
-/// the `LoaderPlugin` trait object in the loaded dylib.
+/// the `PluginLogic` trait object in the loaded dylib.
 pub struct HotShell<P: Params> {
     pub params: Arc<P>,
     loader: Arc<Mutex<NativeLoader>>,
@@ -213,7 +213,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
         // Refresh latency / tail caches so host-thread queries don't
         // have to take the loader lock (and don't dispatch through
-        // `&LoaderPlugin` while audio holds `&mut LoaderPlugin`).
+        // `&PluginLogic` while audio holds `&mut PluginLogic`).
         self.latency_cache
             .store(plugin.latency(), Ordering::Relaxed);
         self.tail_cache.store(plugin.tail(), Ordering::Relaxed);
@@ -225,7 +225,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         let loader = self.loader.lock();
         loader
             .plugin()
-            .map(truce_core::PluginLogic::save_state)
+            .map(truce_gui::PluginLogic::save_state)
             .unwrap_or_default()
     }
 
@@ -271,8 +271,8 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn latency(&self) -> u32 {
         // Read the audio-thread-updated atomic snapshot rather than
-        // dispatching through `&LoaderPlugin` (which would race with
-        // the audio thread's `&mut LoaderPlugin` and require the
+        // dispatching through `&PluginLogic` (which would race with
+        // the audio thread's `&mut PluginLogic` and require the
         // loader lock).
         self.latency_cache.load(Ordering::Relaxed)
     }

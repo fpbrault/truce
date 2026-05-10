@@ -2,7 +2,7 @@
 const STATE_MAGIC: &[u8; 4] = b"OAST";
 const STATE_VERSION: u32 = 1;
 
-/// Reason a [`crate::PluginLogic::load_state`] / [`crate::Plugin::load_state`]
+/// Reason a [`crate::Plugin::load_state`] / `truce_gui::PluginLogic::load_state`
 /// implementation failed to interpret the host-supplied extra-state
 /// blob. Format wrappers receive this on the audio-thread apply path
 /// and currently log it; future hosts will surface a non-success code
@@ -222,7 +222,7 @@ use truce_params::Params;
 /// `Invalid` covers envelope-level failures (missing / wrong magic,
 /// version mismatch, plugin-ID mismatch, truncated body); `LoadState`
 /// covers a successfully-parsed envelope whose extra-state blob the
-/// plugin's [`crate::PluginLogic::load_state`] rejected. The caller
+/// plugin's [`crate::Plugin::load_state`] rejected. The caller
 /// typically prints a diagnostic and proceeds with default params.
 #[derive(Debug)]
 pub enum RestoreError {

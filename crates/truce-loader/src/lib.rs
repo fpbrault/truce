@@ -1,42 +1,38 @@
 //! Hot-reload mechanics for truce: dylib loading, ABI canary,
 //! vtable probe, and the shells (`HotShell`, `StaticShell`) that
-//! bridge the user-facing [`truce_core::PluginLogic`] (DSP) and
-//! [`truce_gui::PluginEditor`] (GUI) traits onto
+//! bridge the user-facing [`truce_gui::PluginLogic`] trait onto
 //! [`truce_core::Plugin`] for format wrappers.
 //!
 //! Plugin authors don't reach into this crate directly. They write
-//! `impl PluginLogic for MyPlugin` and `impl PluginEditor for MyPlugin`,
-//! and the `truce::plugin!` macro picks the static or hot shell
-//! based on the `shell` Cargo feature.
+//! `impl PluginLogic for MyPlugin` and the `truce::plugin!` macro
+//! picks the static or hot shell based on the `shell` Cargo feature.
 //!
 //! # ABI boundary
 //!
-//! Across the dylib boundary the shell holds a [`Box<dyn LoaderPlugin>`]
-//! — a supertrait that combines `PluginLogic` and `PluginEditor`
-//! into one trait object (Rust trait objects can name only one
-//! non-auto trait). Any type implementing both halves satisfies it
-//! via the blanket `impl<T: PluginLogic + PluginEditor> LoaderPlugin for T {}`.
+//! Across the dylib boundary the shell holds a
+//! `Box<dyn truce_gui::PluginLogic>`. The trait combines DSP and GUI
+//! surfaces in one object so a single vtable crosses the boundary.
 //!
 //! ```ignore
 //! use truce_loader::prelude::*;
 //!
 //! struct MyPlugin { /* ... */ }
-//! impl PluginLogic for MyPlugin { /* DSP */ }
-//! impl PluginEditor for MyPlugin { /* GUI */ }
+//! impl PluginLogic for MyPlugin { /* DSP + GUI */ }
 //!
 //! #[unsafe(no_mangle)]
-//! pub fn truce_create() -> Box<dyn LoaderPlugin> { Box::new(MyPlugin::new()) }
+//! pub fn truce_create() -> Box<dyn PluginLogic> { Box::new(MyPlugin::new()) }
 //!
 //! #[unsafe(no_mangle)]
 //! pub fn truce_abi_canary() -> AbiCanary { AbiCanary::current() }
 //!
 //! #[unsafe(no_mangle)]
-//! pub fn truce_vtable_probe() -> Box<dyn LoaderPlugin> { Box::new(ProbePlugin::default()) }
+//! pub fn truce_vtable_probe() -> Box<dyn PluginLogic> { Box::new(ProbePlugin::default()) }
 //! ```
 
 #[doc(hidden)]
 pub mod __macro_deps {
     pub use truce_core;
+    pub use truce_gui;
 }
 
 mod canary;
@@ -50,20 +46,7 @@ pub mod static_shell;
 
 pub use canary::{AbiCanary, ProbePlugin, verify_probe};
 pub use safe_types::*;
-
-use truce_core::PluginLogic;
-use truce_gui::PluginEditor;
-
-/// The dylib-boundary trait object: `Box<dyn LoaderPlugin>`. Trait
-/// objects can name only one non-auto trait, so a supertrait is the
-/// only way to package both `PluginLogic` (DSP) and `PluginEditor`
-/// (GUI) vtables behind one `Box<dyn _>`.
-///
-/// Plugin authors don't implement this directly — the blanket impl
-/// derives it from any type that implements both halves.
-pub trait LoaderPlugin: PluginLogic + PluginEditor {}
-
-impl<T: PluginLogic + PluginEditor> LoaderPlugin for T {}
+pub use truce_gui::PluginLogic;
 
 #[cfg(feature = "shell")]
 pub use loader::NativeLoader;
@@ -76,7 +59,7 @@ pub use loader::NativeLoader;
 macro_rules! export_plugin {
     ($logic:ty, $params:ty) => {
         #[unsafe(no_mangle)]
-        pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::LoaderPlugin> {
+        pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogic> {
             let params: Arc<$params> = unsafe {
                 Arc::increment_strong_count(params_ptr as *const $params);
                 Arc::from_raw(params_ptr as *const $params)
@@ -90,7 +73,7 @@ macro_rules! export_plugin {
         }
 
         #[unsafe(no_mangle)]
-        pub fn truce_vtable_probe() -> Box<dyn $crate::LoaderPlugin> {
+        pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogic> {
             Box::new($crate::ProbePlugin::default())
         }
     };
@@ -98,12 +81,9 @@ macro_rules! export_plugin {
 
 /// Convenience prelude for logic dylib authors.
 pub mod prelude {
-    pub use crate::LoaderPlugin;
+    pub use crate::PluginLogic;
     pub use crate::canary::{AbiCanary, ProbePlugin};
     pub use crate::safe_types::*;
-
-    pub use truce_core::PluginLogic;
-    pub use truce_gui::PluginEditor;
 
     // Re-export param types so the developer can own params in their struct.
     pub use truce_params::{BoolParam, EnumParam, FloatParam, IntParam, ParamEnum, Params};

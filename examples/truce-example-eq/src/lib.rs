@@ -192,9 +192,7 @@ impl PluginLogic for Eq {
 
         ProcessStatus::Normal
     }
-}
 
-impl PluginEditor for Eq {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![
             section(

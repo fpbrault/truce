@@ -17,9 +17,10 @@
 //! fn save_state(&self) -> Vec<u8> {
 //!     self.persistent.serialize()
 //! }
-//! fn load_state(&mut self, data: &[u8]) {
-//!     if let Some(s) = MyState::deserialize(data) {
-//!         self.persistent = s;
+//! fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
+//!     match MyState::deserialize(data) {
+//!         Some(s) => { self.persistent = s; Ok(()) }
+//!         None => Err(StateLoadError::Malformed("MyState")),
 //!     }
 //! }
 //! ```

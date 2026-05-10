@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use truce_core::PluginLogic;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
 use truce_core::editor::Editor;
@@ -14,28 +13,28 @@ use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_gui::PluginEditor;
+use truce_gui::PluginLogic;
 use truce_params::Params;
 
 // ---------------------------------------------------------------------------
 // StaticShell
 // ---------------------------------------------------------------------------
 
-/// A static plugin shell that embeds the user's plugin (`PluginLogic`
-/// + `PluginEditor`) directly into the format-wrapper binary.
+/// A static plugin shell that embeds the user's `PluginLogic` impl
+/// directly into the format-wrapper binary.
 ///
 /// Same bridging as `HotShell` but without `NativeLoader`, `Mutex`,
 /// file watching, or any dynamic loading overhead. Use via `export_static!`.
-pub struct StaticShell<P: Params, L: PluginLogic + PluginEditor> {
+pub struct StaticShell<P: Params, L: PluginLogic> {
     pub params: Arc<P>,
     logic: L,
     meters: Arc<[AtomicU32; 256]>,
     sample_rate: f64,
 }
 
-unsafe impl<P: Params, L: PluginLogic + PluginEditor> Send for StaticShell<P, L> {}
+unsafe impl<P: Params, L: PluginLogic> Send for StaticShell<P, L> {}
 
-impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> StaticShell<P, L> {
+impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> {
     /// Create from pre-constructed parts. The plugin logic should
     /// hold an `Arc::clone` of the same params.
     pub fn from_parts(params: Arc<P>, logic: L) -> Self {
@@ -76,9 +75,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> Sta
     }
 }
 
-impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> Plugin
-    for StaticShell<P, L>
-{
+impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticShell<P, L> {
     fn info() -> PluginInfo
     where
         Self: Sized,
@@ -189,8 +186,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> Plu
 // export_static! macro
 // ---------------------------------------------------------------------------
 
-/// Compile-time static embedding of a plugin (`PluginLogic` +
-/// `PluginEditor`) into the binary.
+/// Compile-time static embedding of a `PluginLogic` impl into the binary.
 ///
 /// Produces a `__HotShellWrapper` struct that implements `Plugin + PluginExport`,
 /// so format export macros (`export_clap!`, `export_vst3!`, etc.) work unchanged.
@@ -224,7 +220,7 @@ macro_rules! export_static {
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_core::PluginLogic>::supports_in_place()
+                <$logic as $crate::__macro_deps::truce_gui::PluginLogic>::supports_in_place()
             }
 
             fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo
@@ -238,7 +234,7 @@ macro_rules! export_static {
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_core::PluginLogic>::bus_layouts()
+                <$logic as $crate::__macro_deps::truce_gui::PluginLogic>::bus_layouts()
             }
 
             fn init(&mut self) {

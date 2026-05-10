@@ -22,9 +22,7 @@ impl PluginLogic for {struct_name} \{
     }
 
 {process_body | unescaped}
-}
 
-impl PluginEditor for {struct_name} \{
     fn layout(&self) -> truce_gui::layout::GridLayout \{
         GridLayout::build(vec![widgets(vec![
             {layout_knob | unescaped},

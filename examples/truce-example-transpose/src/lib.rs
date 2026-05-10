@@ -120,9 +120,7 @@ impl PluginLogic for Transpose {
 
         ProcessStatus::Normal
     }
-}
 
-impl PluginEditor for Transpose {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![
             knob(P::Semitones, "Semitones"),

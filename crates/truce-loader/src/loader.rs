@@ -26,16 +26,16 @@ static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};
 
-use crate::LoaderPlugin;
+use crate::PluginLogic;
 use crate::canary::{AbiCanary, verify_probe};
 
-type ProbeFn = fn() -> Box<dyn LoaderPlugin>;
-type CreateFn = fn(*const ()) -> Box<dyn LoaderPlugin>;
+type ProbeFn = fn() -> Box<dyn PluginLogic>;
+type CreateFn = fn(*const ()) -> Box<dyn PluginLogic>;
 
 /// Verified candidate dylib + instance, ready to swap in.
 struct Candidate {
     library: Library,
-    plugin: Box<dyn LoaderPlugin>,
+    plugin: Box<dyn PluginLogic>,
     hash: u32,
     mtime: SystemTime,
     /// Path of the versioned copy in the system temp dir. Tracked so
@@ -48,7 +48,7 @@ struct Candidate {
 pub struct NativeLoader {
     dylib_path: PathBuf,
     library: Option<Library>,
-    plugin: Option<Box<dyn LoaderPlugin>>,
+    plugin: Option<Box<dyn PluginLogic>>,
     /// Raw pointer to the shell's `Arc<Params>` (type-erased).
     /// Passed to `truce_create()` so the plugin shares the same params.
     params_ptr: *const (),
@@ -300,7 +300,20 @@ impl NativeLoader {
         if let (Some(state), Some(plugin)) = (state, self.plugin.as_mut())
             && !state.is_empty()
         {
-            plugin.load_state(&state);
+            if let Err(e) = plugin.load_state(&state) {
+                // The new dylib refused state saved by the previous one —
+                // typically a state-format change between builds during
+                // iteration. The plugin keeps its post-`create()` defaults;
+                // log so the developer can see why the params jumped.
+                log::warn!("hot-reload: new dylib rejected previous state ({e}); keeping defaults");
+            }
+            // Fire state_changed in the same `&mut` borrow window as
+            // `load_state` — format-wrapper bridges (StaticShell, HotShell)
+            // do this for host-driven loads, but at this depth we hold the
+            // raw `dyn PluginLogic` and have to call it ourselves.
+            // Run on both Ok and Err so partial state still triggers a
+            // cache refresh — same policy as the format-wrapper bridges.
+            plugin.state_changed();
         }
 
         log::info!(
@@ -312,11 +325,11 @@ impl NativeLoader {
     }
 
     #[must_use]
-    pub fn plugin(&self) -> Option<&dyn LoaderPlugin> {
+    pub fn plugin(&self) -> Option<&dyn PluginLogic> {
         self.plugin.as_ref().map(std::convert::AsRef::as_ref)
     }
 
-    pub fn plugin_mut(&mut self) -> Option<&mut dyn LoaderPlugin> {
+    pub fn plugin_mut(&mut self) -> Option<&mut dyn PluginLogic> {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 

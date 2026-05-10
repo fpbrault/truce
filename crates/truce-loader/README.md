@@ -19,16 +19,15 @@ Used by every truce plugin, in two modes:
   Preserves audio continuity.
 
 Plugin authors don't reach into this crate directly. They write
-`impl PluginLogic` (DSP, in `truce-core`) plus `impl PluginEditor`
-(GUI, in `truce-gui`) on their plugin struct, and `truce::plugin!`
-emits the right `export_*!` call based on the `shell` Cargo
-feature.
+a single `impl PluginLogic` (in `truce-gui`) on their plugin
+struct -- one trait covering both DSP (`reset`, `process`, …) and
+GUI (`layout`, `custom_editor`, …) -- and `truce::plugin!` emits
+the right `export_*!` call based on the `shell` Cargo feature.
 
 ## Key types and macros
 
-- **`LoaderPlugin`** -- supertrait combining `PluginLogic` +
-  `PluginEditor` for `Box<dyn _>` dispatch across the dylib
-  boundary. Auto-implemented for any type that implements both.
+- **`PluginLogic`** -- the user-facing trait crossed across the
+  dylib boundary as `Box<dyn PluginLogic>` in shell mode.
 - **`HotShell`** -- shell-side dylib loader and hot-swap manager.
 - **`StaticShell`** -- shell-side wrapper that embeds the plugin
   at compile time.

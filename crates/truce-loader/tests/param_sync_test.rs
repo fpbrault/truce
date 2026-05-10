@@ -3,13 +3,12 @@
 //! Bug: double-denormalization caused gain to slam to extremes in VST3.
 
 use std::sync::Arc;
-use truce_core::PluginLogic;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_derive::Params;
-use truce_gui::PluginEditor;
+use truce_gui::PluginLogic;
 use truce_params::Params;
 
 #[derive(Params)]
@@ -48,8 +47,6 @@ impl PluginLogic for TestPlugin {
         ProcessStatus::Normal
     }
 }
-
-impl PluginEditor for TestPlugin {}
 
 #[test]
 fn plain_param_not_double_denormalized() {

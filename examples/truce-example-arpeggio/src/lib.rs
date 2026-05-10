@@ -334,9 +334,7 @@ impl PluginLogic for Arpeggio {
 
         ProcessStatus::Normal
     }
-}
 
-impl PluginEditor for Arpeggio {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![
             dropdown(P::Rate, "Rate"),

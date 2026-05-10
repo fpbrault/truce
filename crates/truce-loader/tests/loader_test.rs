@@ -119,7 +119,9 @@ mod test {
         assert_eq!(state.len(), 8); // f64 = 8 bytes
 
         // Restore into a fresh instance.
-        plugin.load_state(&state);
+        plugin
+            .load_state(&state)
+            .expect("save/load_state round-trip should succeed");
         let state2 = plugin.save_state();
         assert_eq!(state, state2);
     }

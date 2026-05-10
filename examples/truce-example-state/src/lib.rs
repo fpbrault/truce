@@ -124,9 +124,7 @@ impl PluginLogic for StateExample {
     fn state_changed(&mut self) {
         self.state_load_count = self.state_load_count.saturating_add(1);
     }
-}
 
-impl PluginEditor for StateExample {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             EguiEditor::with_ui(

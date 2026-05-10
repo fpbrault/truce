@@ -1,5 +1,5 @@
-//! The `plugin!` macro — one macro to export a plugin (`PluginLogic`
-//! + `PluginEditor`) to all formats with zero boilerplate.
+//! The `plugin!` macro — one macro to export a `PluginLogic` impl
+//! to all formats with zero boilerplate.
 
 /// Export a plugin to all active format targets.
 ///
@@ -300,7 +300,7 @@ macro_rules! __plugin_hot_reload {
             where
                 Self: Sized,
             {
-                <$logic as $crate::core::PluginLogic>::supports_in_place()
+                <$logic as $crate::gui::PluginLogic>::supports_in_place()
             }
 
             fn info() -> $crate::core::info::PluginInfo
@@ -322,7 +322,7 @@ macro_rules! __plugin_hot_reload {
                 // re-discovery anyway. Reloading the logic dylib
                 // can iterate DSP and GUI freely; bus layouts
                 // changes warrant a shell rebuild + DAW rescan.
-                <$logic as $crate::core::PluginLogic>::bus_layouts()
+                <$logic as $crate::gui::PluginLogic>::bus_layouts()
             }
 
             fn init(&mut self) {
