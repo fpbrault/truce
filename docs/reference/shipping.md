@@ -250,16 +250,22 @@ cargo truce package (on macOS)
 7. notarytool + staple         (if [macos.packaging].notarize = true)
 ```
 
-Minimum config for signed + notarised macOS builds, in
-`truce.toml`:
+Minimum config for signed + notarised macOS builds. The
+notarize flag goes in `truce.toml` (it's a project-level
+release decision); signing identities and Apple credentials go
+in `.cargo/config.toml [env]`.
 
 ```toml
-[macos.signing]
-application_identity = "Developer ID Application: Your Name (TEAMID)"
-installer_identity   = "Developer ID Installer: Your Name (TEAMID)"
-
+# truce.toml
 [macos.packaging]
 notarize = true
+```
+
+```toml
+# .cargo/config.toml — gitignored.
+[env]
+TRUCE_SIGNING_IDENTITY           = "Developer ID Application: Your Name (TEAMID)"
+TRUCE_INSTALLER_SIGNING_IDENTITY = "Developer ID Installer: Your Name (TEAMID)"
 ```
 
 One-time notarisation keychain setup:

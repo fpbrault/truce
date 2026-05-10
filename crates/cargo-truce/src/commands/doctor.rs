@@ -1,11 +1,11 @@
 //! `cargo truce doctor` — environment diagnostics: Rust toolchain, code
 //! signing tools, AAX SDK, installed plugins.
 
-use crate::read_build_env;
 use crate::format::Format;
 use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
 use crate::locate_wraptool_macos;
+use crate::read_build_env;
 #[cfg(target_os = "macos")]
 use crate::rustup_has_target;
 use crate::{

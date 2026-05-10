@@ -5,7 +5,43 @@ use crate::events::EventList;
 use crate::info::PluginInfo;
 use crate::process::{ProcessContext, ProcessStatus};
 
-/// The core trait that all plugins implement.
+/// The format-facing plugin trait. **Plugin authors do NOT implement
+/// this directly.**
+///
+/// `Plugin` is the surface every format wrapper (CLAP, VST3, VST2,
+/// LV2, AU, AAX) consumes. The `truce::plugin!` macro generates an
+/// `impl Plugin for __HotShellWrapper` from the user's two
+/// implementations — [`PluginLogic`](crate::PluginLogic) (DSP) and
+/// `truce_gui::PluginEditor` (GUI) — so the user writes safe Rust
+/// against a split surface and the format wrappers see one combined
+/// trait against the macro-generated wrapper type.
+///
+/// What plugin authors implement instead:
+///
+/// ```ignore
+/// impl truce::prelude::PluginLogic for MyPlugin {
+///     fn reset(&mut self, sr: f64, bs: usize) { /* ... */ }
+///     fn process(&mut self, /* ... */) -> ProcessStatus { /* ... */ }
+/// }
+///
+/// impl truce::prelude::PluginEditor for MyPlugin {
+///     fn layout(&self) -> GridLayout { /* ... */ }
+/// }
+///
+/// truce::plugin! { logic: MyPlugin, params: MyPluginParams }
+/// ```
+///
+/// The macro-emitted `impl Plugin` routes each method to the right
+/// half: DSP methods (`reset`, `process`, `save_state`, `load_state`,
+/// `latency`, `tail`, `bus_layouts`, `supports_in_place`) call into
+/// `PluginLogic`; `editor()` calls into `PluginEditor::custom_editor`
+/// or builds a `BuiltinEditor` from `PluginEditor::layout`.
+///
+/// This trait stays in `truce-core` because the format wrappers
+/// depend on `truce-core` and need to consume one combined trait;
+/// keeping the user-facing surface split (across `truce-core` and
+/// `truce-gui`) keeps headless plugins from pulling GUI types into
+/// their compile errors.
 pub trait Plugin: Send + 'static {
     /// Opt into zero-copy in-place I/O. When this returns `true`,
     /// the format wrapper skips its safety memcpy on host-aliased

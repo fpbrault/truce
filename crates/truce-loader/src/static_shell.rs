@@ -21,7 +21,8 @@ use truce_params::Params;
 // StaticShell
 // ---------------------------------------------------------------------------
 
-/// A static plugin shell that embeds `PluginLogic` directly.
+/// A static plugin shell that embeds the user's plugin (`PluginLogic`
+/// + `PluginEditor`) directly into the format-wrapper binary.
 ///
 /// Same bridging as `HotShell` but without `NativeLoader`, `Mutex`,
 /// file watching, or any dynamic loading overhead. Use via `export_static!`.
@@ -218,15 +219,24 @@ macro_rules! export_static {
         }
 
         impl $crate::__macro_deps::truce_core::plugin::Plugin for __HotShellWrapper {
-            fn supports_in_place() -> bool where Self: Sized {
+            fn supports_in_place() -> bool
+            where
+                Self: Sized,
+            {
                 <$logic as $crate::__macro_deps::truce_core::PluginLogic>::supports_in_place()
             }
 
-            fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo where Self: Sized {
+            fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo
+            where
+                Self: Sized,
+            {
                 $info
             }
 
-            fn bus_layouts() -> Vec<$crate::__macro_deps::truce_core::bus::BusLayout> where Self: Sized {
+            fn bus_layouts() -> Vec<$crate::__macro_deps::truce_core::bus::BusLayout>
+            where
+                Self: Sized,
+            {
                 <$logic as $crate::__macro_deps::truce_core::PluginLogic>::bus_layouts()
             }
 
@@ -255,13 +265,21 @@ macro_rules! export_static {
                 self.inner.load_state(data);
             }
 
-            fn editor(&mut self) -> Option<Box<dyn $crate::__macro_deps::truce_core::editor::Editor>> {
+            fn editor(
+                &mut self,
+            ) -> Option<Box<dyn $crate::__macro_deps::truce_core::editor::Editor>> {
                 self.inner.editor()
             }
 
-            fn latency(&self) -> u32 { self.inner.latency() }
-            fn tail(&self) -> u32 { self.inner.tail() }
-            fn get_meter(&self, meter_id: u32) -> f32 { self.inner.get_meter(meter_id) }
+            fn latency(&self) -> u32 {
+                self.inner.latency()
+            }
+            fn tail(&self) -> u32 {
+                self.inner.tail()
+            }
+            fn get_meter(&self, meter_id: u32) -> f32 {
+                self.inner.get_meter(meter_id)
+            }
         }
 
         impl $crate::__macro_deps::truce_core::export::PluginExport for __HotShellWrapper {

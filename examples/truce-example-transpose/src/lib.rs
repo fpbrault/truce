@@ -120,7 +120,6 @@ impl PluginLogic for Transpose {
 
         ProcessStatus::Normal
     }
-
 }
 
 impl PluginEditor for Transpose {

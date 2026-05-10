@@ -78,7 +78,16 @@ pub(crate) fn emit_au_v3_bundle(
     fs_ctx::create_dir_all(&bundles_dir)?;
 
     for p in plugins {
-        build_au_v3_for_plugin(root, config, p, archs, &sign_id, &team_id, &dt, &bundles_dir)?;
+        build_au_v3_for_plugin(
+            root,
+            config,
+            p,
+            archs,
+            &sign_id,
+            &team_id,
+            &dt,
+            &bundles_dir,
+        )?;
     }
     Ok(())
 }

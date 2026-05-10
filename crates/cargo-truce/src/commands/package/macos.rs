@@ -150,13 +150,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
         // has produced a universal Mach-O at the canonical path; pass
         // None so `release_lib_for_target` resolves there.
         let result = match fmt {
-            PkgFormat::Clap => stage_clap(
-                root,
-                p,
-                &staging,
-                &crate::application_identity(),
-                None,
-            ),
+            PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
@@ -734,13 +728,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         // has produced a universal Mach-O at the canonical path; pass
         // None so `release_lib_for_target` resolves there.
         let result = match fmt {
-            PkgFormat::Clap => stage_clap(
-                root,
-                p,
-                &staging,
-                &crate::application_identity(),
-                None,
-            ),
+            PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
@@ -766,10 +754,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     // runtime, ad-hoc cert leakage. No-op when the signing
     // identity is ad-hoc.
     eprint!("  Verifying signing readiness... ");
-    match crate::util::verify_signed_for_notarization(
-        &staging,
-        &crate::application_identity(),
-    ) {
+    match crate::util::verify_signed_for_notarization(&staging, &crate::application_identity()) {
         Ok(()) => eprintln!("ok"),
         Err(e) => {
             eprintln!("FAILED");
