@@ -7,13 +7,22 @@
 /// they translate into format-specific main/aux bus designations, and
 /// `BusConfig::kind` lets call-sites that need it ask the bus
 /// directly rather than re-deriving the convention.
+///
+/// Construct via [`Self::new`] / [`Self::stereo`] + the `with_*`
+/// builders rather than struct literal — `#[non_exhaustive]` so
+/// pre-1.0 future fields don't break downstream.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct BusLayout {
     pub inputs: Vec<BusConfig>,
     pub outputs: Vec<BusConfig>,
 }
 
+/// Constructed by [`BusLayout`]'s `with_*` builders. Marked
+/// `#[non_exhaustive]` to keep the struct literal as a private
+/// detail of the builder methods.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct BusConfig {
     pub name: &'static str,
     pub channels: ChannelConfig,

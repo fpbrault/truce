@@ -64,7 +64,10 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
 
-    let version = read_workspace_version(&root).unwrap_or_else(|| "0.0.0".to_string());
+    let version = read_workspace_version(&root).unwrap_or_else(|e| {
+        eprintln!("WARNING: {e}; defaulting package version to 0.0.0");
+        "0.0.0".to_string()
+    });
 
     let opts = PackageOpts {
         config: &config,

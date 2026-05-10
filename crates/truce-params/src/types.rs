@@ -303,7 +303,7 @@ impl IntParam {
 }
 
 /// Trait for enums used as parameters.
-pub trait ParamEnum: Clone + Copy + Send + Sync + 'static {
+pub trait ParamEnum: crate::__private::Sealed + Clone + Copy + Send + Sync + 'static {
     fn from_index(index: usize) -> Self;
     fn to_index(&self) -> usize;
     fn name(&self) -> &'static str;
@@ -489,6 +489,7 @@ mod tests {
         C,
         D,
     }
+    impl crate::__private::Sealed for E4 {}
     impl ParamEnum for E4 {
         fn from_index(i: usize) -> Self {
             match i {

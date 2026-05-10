@@ -1076,6 +1076,7 @@ mod tests {
         }
     }
 
+    impl truce_params::__private::Sealed for TestParams {}
     impl Params for TestParams {
         fn param_infos(&self) -> Vec<ParamInfo> {
             vec![
@@ -1386,6 +1387,7 @@ mod tests {
         }
     }
 
+    impl truce_params::__private::Sealed for ManyOptionParams {}
     impl Params for ManyOptionParams {
         fn param_infos(&self) -> Vec<ParamInfo> {
             vec![

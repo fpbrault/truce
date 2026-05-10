@@ -1480,6 +1480,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
         #param_id_enum
 
+        impl ::truce::params::__private::Sealed for #struct_name {}
+
         impl ::truce::params::Params for #struct_name {
             fn param_infos(&self) -> Vec<::truce::params::ParamInfo> {
                 #infos_expr
@@ -1731,6 +1733,8 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
             }
         }
         impl Eq for #enum_name {}
+
+        impl ::truce::params::__private::Sealed for #enum_name {}
 
         impl ::truce::params::ParamEnum for #enum_name {
             fn from_index(index: usize) -> Self {

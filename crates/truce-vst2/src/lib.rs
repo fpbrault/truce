@@ -567,7 +567,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         // is "save_state must be safe to call concurrently with
         // process"; impls that copy from atomic params are fine.
         let extra = inst.plugin.save_state();
-        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
+        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
         let len = blob.len();
         // Hand the C shim a heap-allocated buffer it'll later return
@@ -799,7 +799,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                     }),
                     get_state: Box::new(move || {
                         let plugin = plugin_ptr.get();
-                        plugin.save_state().unwrap_or_default()
+                        plugin.save_state()
                     }),
                     set_state: Box::new(move |bytes| {
                         if let Some(deserialized) =

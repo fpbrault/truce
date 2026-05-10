@@ -17,6 +17,7 @@ use crate::{
     common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, packaging_windows, which_exe,
 };
 use std::env;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -59,8 +60,8 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
 
     // Toolchain
     eprintln!("  Toolchain");
-    check_cmd("rustc", &["--version"], "rustc");
-    check_cmd("cargo", &["--version"], "cargo");
+    check_cmd("rustc", &[OsStr::new("--version")], "rustc");
+    check_cmd("cargo", &[OsStr::new("--version")], "cargo");
     if root.join("rust-toolchain.toml").exists() {
         eprintln!("    {} rust-toolchain.toml present", tag_ok());
     }
@@ -90,9 +91,13 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     {
         eprintln!();
         eprintln!("  macOS");
-        check_cmd("xcode-select", &["-p"], "Xcode CLI tools");
-        check_cmd("xcodebuild", &["-version"], "xcodebuild (AU v3)");
-        check_cmd("codesign", &["--help"], "codesign");
+        check_cmd("xcode-select", &[OsStr::new("-p")], "Xcode CLI tools");
+        check_cmd(
+            "xcodebuild",
+            &[OsStr::new("-version")],
+            "xcodebuild (AU v3)",
+        );
+        check_cmd("codesign", &[OsStr::new("--help")], "codesign");
         match locate_wraptool_macos() {
             Some(p) => eprintln!("    {} wraptool (PACE) at {}", tag_ok(), p.display()),
             None => eprintln!(
@@ -164,8 +169,12 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     eprintln!("  Compilers");
     #[cfg(not(target_os = "windows"))]
     {
-        check_cmd("cc", &["--version"], "C compiler");
-        check_cmd("c++", &["--version"], "C++ compiler (VST3 shim)");
+        check_cmd("cc", &[OsStr::new("--version")], "C compiler");
+        check_cmd(
+            "c++",
+            &[OsStr::new("--version")],
+            "C++ compiler (VST3 shim)",
+        );
     }
     #[cfg(target_os = "windows")]
     {
@@ -174,7 +183,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
         // PATH check would falsely flag the tool as missing on a perfectly
         // working setup. Try PATH first, then fall back to vswhere.
         if which_exe("cl.exe").is_some() {
-            check_cmd("cl", &["/?"], "MSVC compiler (in current PATH)");
+            check_cmd("cl", &[OsStr::new("/?")], "MSVC compiler (in current PATH)");
         } else {
             match locate_msvc_cl() {
                 Some(p) => eprintln!(
@@ -196,7 +205,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     // `auval` ships with Audio Toolbox on macOS; no equivalent exists on
     // Linux / Windows, so the check would always FAIL on those hosts.
     #[cfg(target_os = "macos")]
-    check_cmd("auval", &["-h"], "auval");
+    check_cmd("auval", &[OsStr::new("-h")], "auval");
     check_which_with_env("pluginval", Some("PLUGINVAL"));
     check_which_with_env("clap-validator", Some("CLAP_VALIDATOR"));
 

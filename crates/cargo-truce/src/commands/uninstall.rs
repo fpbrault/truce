@@ -5,6 +5,7 @@
 use crate::Config;
 use crate::install_scope::{InstallScope, note_once, set_cli_install_scope};
 use crate::{PluginDef, Res, confirm_prompt, dirs, load_config, run_sudo};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -543,7 +544,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         }
 
         let result = if t.needs_sudo {
-            run_sudo("rm", &["-rf", t.path.to_str().unwrap()])
+            run_sudo("rm", &[OsStr::new("-rf"), t.path.as_os_str()])
         } else {
             fs::remove_dir_all(&t.path)
                 .or_else(|_| fs::remove_file(&t.path))

@@ -37,6 +37,15 @@ pub struct VendorConfig {
     pub au_manufacturer: String,
 }
 
+/// Shared TOML schema for a `[[plugin]]` entry.
+///
+/// Lives in `truce-build` so both the `#[derive(Params)]` /
+/// `plugin_info!()` proc macros and `cargo-truce`'s install-time
+/// logic can share one source of truth. `cargo-truce` extends with
+/// install-only fields (`au3_subtype`, `au_tag`) via
+/// `#[serde(flatten)]` and exposes the shared fields through a
+/// `Deref` impl so call sites read `p.name` instead of
+/// `p.schema.name`.
 #[derive(Deserialize, Debug)]
 pub struct PluginDef {
     pub name: String,

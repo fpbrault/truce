@@ -312,6 +312,11 @@ impl RawBufferScratch {
         num_frames: u32,
         supports_in_place: bool,
     ) -> AudioBuffer<'a> {
+        // Cap matches the 64-channel `in_place_mask` width and
+        // `is_in_place`'s ch < 64 guard — wider buses are exotic
+        // enough to be a follow-up; the assert below makes the
+        // truncation observable instead of silently miscounting.
+        const MAX_CHANNELS_TRACKED: usize = 64;
         unsafe {
             let nf = num_frames as usize;
 
@@ -319,7 +324,13 @@ impl RawBufferScratch {
             // detect aliasing without holding `&mut` to output_slices.
             let num_out = num_out as usize;
             let num_in = num_in as usize;
-            let out_ptrs: [Option<*mut f32>; 32] = std::array::from_fn(|ch| {
+            debug_assert!(
+                num_out <= MAX_CHANNELS_TRACKED,
+                "RawBufferScratch::build: alias detection only covers up to {MAX_CHANNELS_TRACKED} \
+                 output channels; got {num_out}. Channels beyond the cap won't be \
+                 detected as aliased.",
+            );
+            let out_ptrs: [Option<*mut f32>; MAX_CHANNELS_TRACKED] = std::array::from_fn(|ch| {
                 if ch < num_out {
                     let p = *outputs.add(ch);
                     if p.is_null() { None } else { Some(p) }
@@ -330,13 +341,16 @@ impl RawBufferScratch {
             let aliases_any_output = |in_ptr: *const f32| -> bool {
                 let in_start = in_ptr as usize;
                 let in_end = in_start + nf * std::mem::size_of::<f32>();
-                out_ptrs.iter().take(num_out).any(|o| {
-                    o.is_some_and(|op| {
-                        let o_start = op as usize;
-                        let o_end = o_start + nf * std::mem::size_of::<f32>();
-                        !(in_end <= o_start || o_end <= in_start)
+                out_ptrs
+                    .iter()
+                    .take(num_out.min(MAX_CHANNELS_TRACKED))
+                    .any(|o| {
+                        o.is_some_and(|op| {
+                            let o_start = op as usize;
+                            let o_end = o_start + nf * std::mem::size_of::<f32>();
+                            !(in_end <= o_start || o_end <= in_start)
+                        })
                     })
-                })
             };
 
             self.input_slices.clear();

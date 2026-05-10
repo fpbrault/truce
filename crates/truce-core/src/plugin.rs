@@ -99,13 +99,25 @@ pub trait Plugin: Send + 'static {
         context: &mut ProcessContext,
     ) -> ProcessStatus;
 
-    /// Save extra state beyond parameter values.
-    fn save_state(&self) -> Option<Vec<u8>> {
-        None
+    /// Save extra state beyond parameter values. Empty `Vec` means
+    /// "no extra state" — matches `PluginLogic::save_state`'s shape so
+    /// the wrapper bridge is a passthrough rather than an
+    /// `Option<Vec<u8>>` ↔ `Vec<u8>` translation.
+    fn save_state(&self) -> Vec<u8> {
+        Vec::new()
     }
 
-    /// Restore extra state.
-    fn load_state(&mut self, _data: &[u8]) {}
+    /// Restore extra state. Mirrors `PluginLogic::load_state`'s
+    /// `Result` shape so the wrapper bridge is a passthrough.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` when the macro-generated impl forwards a
+    /// `PluginLogic::load_state` failure (malformed bytes, version
+    /// skew between session file and plugin build, etc).
+    fn load_state(&mut self, _data: &[u8]) -> Result<(), crate::state::StateLoadError> {
+        Ok(())
+    }
 
     /// GUI editor. Return None for headless plugins.
     fn editor(&mut self) -> Option<Box<dyn Editor>> {

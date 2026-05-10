@@ -23,6 +23,7 @@ use crate::{Config, PluginDef, Res, release_lib, resolve_aax_sdk_path, tmp_aax_t
 use crate::{codesign_bundle, run_sudo};
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, locate_cmake, locate_ninja, locate_vcvars64};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -566,11 +567,11 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
 
     #[cfg(target_os = "macos")]
     {
-        let aax_dir = "/Library/Application Support/Avid/Audio/Plug-Ins";
-        let dst = format!("{aax_dir}/{bundle_name}");
-        run_sudo("rm", &["-rf", &dst])?;
-        run_sudo("ditto", &[built.to_str().unwrap(), &dst])?;
-        crate::log_output(format!("AAX:  {dst}"));
+        let aax_dir = Path::new("/Library/Application Support/Avid/Audio/Plug-Ins");
+        let dst = aax_dir.join(bundle_name);
+        run_sudo("rm", &[OsStr::new("-rf"), dst.as_os_str()])?;
+        run_sudo("ditto", &[built.as_os_str(), dst.as_os_str()])?;
+        crate::log_output(format!("AAX:  {}", dst.display()));
     }
 
     #[cfg(target_os = "windows")]

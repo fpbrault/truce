@@ -515,12 +515,14 @@ where
                 plugin_save
                     .try_lock()
                     .ok()
-                    .and_then(|p| p.save_state())
+                    .map(|p| p.save_state())
                     .unwrap_or_default()
             }),
             set_state: Box::new(move |bytes| {
-                if let Ok(mut p) = plugin_load.try_lock() {
-                    p.load_state(&bytes);
+                if let Ok(mut p) = plugin_load.try_lock()
+                    && let Err(e) = p.load_state(&bytes)
+                {
+                    eprintln!("truce-standalone: load_state failed: {e}");
                 }
             }),
             transport: Box::new(move || Some(transport_read.snapshot())),

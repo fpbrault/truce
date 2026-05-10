@@ -14,6 +14,7 @@ use crate::{
 use crate::tmp_manifests;
 #[cfg(target_os = "macos")]
 use crate::{codesign_bundle, dirs};
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
@@ -321,8 +322,8 @@ pub(crate) fn install_clap(
     let dst = clap_dir.join(format!("{}.clap", p.name));
 
     if scope.needs_sudo() {
-        run_sudo("mkdir", &["-p", clap_dir.to_str().unwrap()])?;
-        run_sudo("cp", &[dylib.to_str().unwrap(), dst.to_str().unwrap()])?;
+        run_sudo("mkdir", &[OsStr::new("-p"), clap_dir.as_os_str()])?;
+        run_sudo("cp", &[dylib.as_os_str(), dst.as_os_str()])?;
     } else {
         fs_ctx::create_dir_all(&clap_dir)?;
         fs_ctx::copy(&dylib, &dst)?;
@@ -378,18 +379,11 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
         fs_ctx::write(&plist_tmp, &plist)?;
 
         if scope.needs_sudo() {
-            run_sudo("mkdir", &["-p", macos_dir.to_str().unwrap()])?;
-            run_sudo(
-                "cp",
-                &[
-                    dylib.to_str().unwrap(),
-                    &format!("{}/{}", macos_dir.display(), p.name),
-                ],
-            )?;
-            run_sudo(
-                "cp",
-                &[&plist_tmp, &format!("{}/Info.plist", contents.display())],
-            )?;
+            run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
+            let dst_dylib = macos_dir.join(&p.name);
+            run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
+            let dst_plist = contents.join("Info.plist");
+            run_sudo("cp", &[OsStr::new(&plist_tmp), dst_plist.as_os_str()])?;
         } else {
             fs_ctx::create_dir_all(&macos_dir)?;
             fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
@@ -466,33 +460,18 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
         fs_ctx::write(&plist_tmp, &plist)?;
 
         if scope.needs_sudo() {
-            run_sudo("rm", &["-rf", bundle.to_str().unwrap()])?;
-            run_sudo("mkdir", &["-p", macos_dir.to_str().unwrap()])?;
-            run_sudo(
-                "cp",
-                &[
-                    dylib.to_str().unwrap(),
-                    &format!("{}/{}", macos_dir.display(), p.name),
-                ],
-            )?;
-            run_sudo(
-                "cp",
-                &[
-                    &plist_tmp,
-                    &format!("{}/Contents/Info.plist", bundle.display()),
-                ],
-            )?;
+            run_sudo("rm", &[OsStr::new("-rf"), bundle.as_os_str()])?;
+            run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
+            let dst_dylib = macos_dir.join(&p.name);
+            run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
+            let dst_plist = bundle.join("Contents/Info.plist");
+            run_sudo("cp", &[OsStr::new(&plist_tmp), dst_plist.as_os_str()])?;
             // PkgInfo is small enough that re-emitting via run_sudo
             // (rather than tee) keeps the helper surface minimal.
             let pkginfo_tmp = tmp_manifests().join(format!("{}_vst2.pkginfo", p.bundle_id));
             fs_ctx::write(&pkginfo_tmp, "BNDL????")?;
-            run_sudo(
-                "cp",
-                &[
-                    pkginfo_tmp.to_str().unwrap(),
-                    &format!("{}/Contents/PkgInfo", bundle.display()),
-                ],
-            )?;
+            let dst_pkginfo = bundle.join("Contents/PkgInfo");
+            run_sudo("cp", &[pkginfo_tmp.as_os_str(), dst_pkginfo.as_os_str()])?;
         } else {
             let _ = fs::remove_dir_all(&bundle);
             fs_ctx::create_dir_all(&macos_dir)?;
@@ -550,7 +529,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope) -> Res {
     let lv2_dir = scope.lv2_dir();
     if scope.needs_sudo() {
-        run_sudo("mkdir", &["-p", lv2_dir.to_str().unwrap()])?;
+        run_sudo("mkdir", &[OsStr::new("-p"), lv2_dir.as_os_str()])?;
     } else {
         fs_ctx::create_dir_all(&lv2_dir)?;
     }
@@ -567,13 +546,13 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
         let slug = crate::commands::package::stage::lv2_slug(&p.name);
         let staged_bundle = staging.join(format!("{slug}.lv2"));
         let dst_bundle = lv2_dir.join(format!("{slug}.lv2"));
-        run_sudo("rm", &["-rf", dst_bundle.to_str().unwrap()])?;
+        run_sudo("rm", &[OsStr::new("-rf"), dst_bundle.as_os_str()])?;
         run_sudo(
             "cp",
             &[
-                "-R",
-                staged_bundle.to_str().unwrap(),
-                dst_bundle.to_str().unwrap(),
+                OsStr::new("-R"),
+                staged_bundle.as_os_str(),
+                dst_bundle.as_os_str(),
             ],
         )?;
         crate::log_output(format!("LV2:  {}", dst_bundle.display()));
@@ -601,15 +580,10 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
     let macos_dir = contents.join("MacOS");
 
     if scope.needs_sudo() {
-        let _ = run_sudo("rm", &["-rf", &bundle_str]);
-        run_sudo("mkdir", &["-p", macos_dir.to_str().unwrap()])?;
-        run_sudo(
-            "cp",
-            &[
-                dylib.to_str().unwrap(),
-                &format!("{}/{}", macos_dir.display(), p.name),
-            ],
-        )?;
+        let _ = run_sudo("rm", &[OsStr::new("-rf"), bundle.as_os_str()]);
+        run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
+        let dst_dylib = macos_dir.join(&p.name);
+        run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
     } else {
         let _ = fs::remove_dir_all(&bundle);
         fs_ctx::create_dir_all(&macos_dir)?;
@@ -674,7 +648,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
     fs_ctx::write(&plist_tmp, &plist)?;
     let info_plist = contents.join("Info.plist");
     if scope.needs_sudo() {
-        run_sudo("cp", &[&plist_tmp, info_plist.to_str().unwrap()])?;
+        run_sudo("cp", &[OsStr::new(&plist_tmp), info_plist.as_os_str()])?;
     } else {
         fs_ctx::copy(&plist_tmp, &info_plist)?;
     }

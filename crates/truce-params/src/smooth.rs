@@ -14,16 +14,12 @@ pub enum SmoothingStyle {
 /// **Threading.** The audio thread is the sole writer of `current`
 /// (via `next` / `snap`) and the sole reader of `coeff`. The
 /// editor / main thread is the sole writer of `sample_rate` and
-/// `coeff` (via `set_sample_rate` / `recalculate_coeff`). The four
-/// `AtomicF64` accesses are individually atomic, but a
-/// `set_sample_rate` call from the editor thread that lands
-/// mid-block can leave `coeff` momentarily inconsistent with
-/// `sample_rate` from the audio thread's point of view (one
-/// updated, the other not). This produces at most one block of
-/// "smooth in the wrong cadence" output and self-corrects on the
-/// next sample. `reset()` and `process()` never run concurrently
-/// per the host contract; sample-rate changes outside `reset` are
-/// tolerated as best-effort.
+/// `coeff` via [`Self::set_sample_rate`], which computes the new
+/// coefficient locally from the supplied `sr` before storing —
+/// so a concurrent audio block sees either the old (`sample_rate`,
+/// `coeff`) pair or the new one, never a mid-update split. The
+/// stored `sample_rate` field is informational; it isn't read in
+/// the audio path, only by future writers as a freshness check.
 pub struct Smoother {
     style: SmoothingStyle,
     current: AtomicF64,
@@ -34,24 +30,30 @@ pub struct Smoother {
 impl Smoother {
     #[must_use]
     pub fn new(style: SmoothingStyle) -> Self {
-        let s = Self {
+        // Pre-compute the coefficient against a placeholder sample
+        // rate so unit tests that exercise `FloatParam` / `Smoother`
+        // directly (without calling `set_sample_rate` first) still
+        // produce non-zero output. The host re-runs this when it
+        // calls `set_sample_rate(sr)` at activate time.
+        let coeff = compute_coeff(style, 44100.0);
+        Self {
             style,
             current: AtomicF64::new(0.0),
-            coeff: AtomicF64::new(0.0),
+            coeff: AtomicF64::new(coeff),
             sample_rate: AtomicF64::new(44100.0),
-        };
-        // Compute the coefficient up-front against the placeholder
-        // sample rate so unit tests that exercise `FloatParam` /
-        // `Smoother` directly (without calling `set_sample_rate` first)
-        // still produce non-zero output. The host re-runs this when
-        // it calls `set_sample_rate(sr)` at activate time.
-        s.recalculate_coeff();
-        s
+        }
     }
 
     pub fn set_sample_rate(&self, sr: f64) {
+        // Compute coeff from the local `sr` (not from a re-loaded
+        // `self.sample_rate`) so the (sample_rate, coeff) pair the
+        // audio thread observes via `coeff` is always self-consistent —
+        // even if a second `set_sample_rate` from a different thread
+        // races. Order: stash the informational sample_rate first,
+        // then publish the audio-visible coeff last.
+        let new_coeff = compute_coeff(self.style, sr);
         self.sample_rate.store(sr);
-        self.recalculate_coeff();
+        self.coeff.store(new_coeff);
     }
 
     /// Snap to a value immediately (used on reset/init).
@@ -103,24 +105,28 @@ impl Smoother {
     pub fn current(&self) -> f32 {
         self.current.load() as f32
     }
+}
 
-    fn recalculate_coeff(&self) {
-        let sr = self.sample_rate.load();
-        let new_coeff = match self.style {
-            SmoothingStyle::None => 1.0,
-            SmoothingStyle::Linear(ms) => {
-                let samples = (ms / 1000.0) * sr;
-                if samples > 1.0 { 1.0 / samples } else { 1.0 }
+/// Pure coefficient calculation: smoothing style + sample rate →
+/// per-sample step coefficient. Lifted out of `Smoother` so
+/// `set_sample_rate` can compute the new coefficient against its
+/// local `sr` argument without re-loading any shared state — the
+/// audio thread then sees a single atomic publish of `coeff`
+/// instead of a two-step (`sample_rate`, `coeff`) write.
+fn compute_coeff(style: SmoothingStyle, sr: f64) -> f64 {
+    match style {
+        SmoothingStyle::None => 1.0,
+        SmoothingStyle::Linear(ms) => {
+            let samples = (ms / 1000.0) * sr;
+            if samples > 1.0 { 1.0 / samples } else { 1.0 }
+        }
+        SmoothingStyle::Exponential(ms) => {
+            let samples = (ms / 1000.0) * sr;
+            if samples > 0.0 {
+                1.0 - (-1.0 / samples).exp()
+            } else {
+                1.0
             }
-            SmoothingStyle::Exponential(ms) => {
-                let samples = (ms / 1000.0) * sr;
-                if samples > 0.0 {
-                    1.0 - (-1.0 / samples).exp()
-                } else {
-                    1.0
-                }
-            }
-        };
-        self.coeff.store(new_coeff);
+        }
     }
 }

@@ -97,6 +97,25 @@ truce-build = { version = "0.36.2", path = "crates/truce-build" }
 truce-shim-types = { version = "0.36.2", path = "crates/truce-shim-types" }
 truce-utils = { version = "0.36.2", path = "crates/truce-utils" }
 
+# Common third-party deps consumed by multiple workspace crates.
+# Hoisted here so version bumps are a one-line change. wgpu and the
+# wgpu-backed UI bridge crates use the same wgpu version under the
+# hood; pinning them together prevents the GUI crates from drifting
+# onto incompatible wgpu major versions.
+thiserror = "2"
+toml = "1"
+# wgpu's default features include `webgpu` (browser) and `webgl`
+# (browser GLES fallback). Plugins ship as native dylibs in DAWs,
+# never the browser, so opt out of those and pin the two native
+# backends that are feature-flagged here (`metal` macOS, `dx12`
+# Windows) plus `wgsl` for the shader source format. Vulkan support
+# (Linux's native backend) isn't feature-gated in wgpu 24 — wgpu-hal
+# compiles it unconditionally on `cfg(target_os = "linux")`, so it's
+# already covered without an explicit flag.
+wgpu = { version = "24", default-features = false, features = ["wgsl", "metal", "dx12"] }
+egui-wgpu = "0.31"
+iced_wgpu = "0.13"
+
 # The truce-audio fork carries the AAX / Pro Tools close-path fix
 # (responder / tracking-area / layer-contents cleanup). GUI crates
 # consume this via `baseview = { workspace = true }` so the fork

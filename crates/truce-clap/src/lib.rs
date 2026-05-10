@@ -485,6 +485,7 @@ unsafe fn convert_input_events<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     in_events: *const clap_input_events,
     sort: bool,
+    state_loaded: bool,
 ) {
     unsafe {
         data.event_list.clear();
@@ -551,6 +552,16 @@ unsafe fn convert_input_events<P: PluginExport>(
                     });
                 }
                 CLAP_EVENT_PARAM_VALUE => {
+                    // When a state load was applied at the head of
+                    // this block, param-change events queued by the
+                    // host predate that intent (typical case: a clip-
+                    // edge re-trigger sends preset-B automation in
+                    // the same block as the preset-A state recall).
+                    // Drop them so the just-restored preset isn't
+                    // partly overwritten by stale automation.
+                    if state_loaded {
+                        continue;
+                    }
                     let param_event = &*header.cast::<clap_event_param_value>();
                     // CLAP param values are plain values.
                     // Apply to the params immediately AND push a ParamChange event
@@ -567,6 +578,11 @@ unsafe fn convert_input_events<P: PluginExport>(
                     });
                 }
                 CLAP_EVENT_PARAM_MOD => {
+                    // Same rationale as PARAM_VALUE above: drop
+                    // pre-state-load mod packets.
+                    if state_loaded {
+                        continue;
+                    }
                     let mod_event = &*header.cast::<clap_event_param_value>();
                     data.event_list.push(Event {
                         sample_offset,
@@ -765,13 +781,16 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // single-slot queue means a rapid double-recall lands the
         // newest blob and the older one is dropped — preferred to
         // the audio thread chasing stale state across blocks.
-        if let Some(state) = data.pending_state.pop() {
+        let state_loaded = data.pending_state.pop().is_some_and(|state| {
             state::apply_state(&mut data.plugin, &state);
-        }
+            true
+        });
 
         // Convert CLAP input events to our EventList — sort by
         // sample offset so the plugin sees them in time order.
-        convert_input_events::<P>(data, proc.in_events, true);
+        // `state_loaded` causes ParamValue/ParamMod events to be
+        // dropped because they predate the state-load intent.
+        convert_input_events::<P>(data, proc.in_events, true, state_loaded);
 
         // Build transport info from the CLAP transport event (or default).
         let transport = if proc.transport.is_null() {
@@ -1024,6 +1043,12 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::ParamChange { id, value } => {
+                        // CLAP params are global, not tied to a specific
+                        // note/audio port — every key uses the `-1`
+                        // wildcard so hosts that route automation by
+                        // port_index match GUI-driven and process-driven
+                        // param events on the same key. The
+                        // `flush_gui_changes` path uses the same shape.
                         let ev = clap_event_param_value {
                             header: clap_event_header {
                                 size: truce_core::cast::size_of_u32::<clap_event_param_value>(),
@@ -1035,7 +1060,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             param_id: *id,
                             cookie: ptr::null_mut(),
                             note_id: -1,
-                            port_index: 0,
+                            port_index: -1,
                             channel: -1,
                             key: -1,
                             value: *value,
@@ -1227,7 +1252,9 @@ unsafe extern "C" fn params_flush<P: PluginExport>(
         // params_flush only forwards param values to the plugin and
         // sweeps GUI-driven changes outward; it doesn't iterate the
         // event list in time order, so skip the sort.
-        convert_input_events::<P>(data, in_events, false);
+        // params_flush is a non-audio-thread param sweep; no state-load
+        // race possible here, so the drain flag stays false.
+        convert_input_events::<P>(data, in_events, false, false);
         flush_gui_changes::<P>(data, out_events);
     }
 }
@@ -1260,7 +1287,7 @@ unsafe extern "C" fn state_save<P: PluginExport>(
         // is "save_state must be safe to call concurrently with
         // process"; impls that copy from atomic params are fine.
         let extra = data.plugin.save_state();
-        let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, extra.as_deref());
+        let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, &extra);
 
         // Write to the CLAP output stream
         let Some(write_fn) = (*stream).write else {
@@ -1765,7 +1792,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 }),
                 get_state: Box::new(move || {
                     let plugin = plugin_ptr.get();
-                    plugin.save_state().unwrap_or_default()
+                    plugin.save_state()
                 }),
                 set_state: Box::new(move |bytes| {
                     if let Some(deserialized) =

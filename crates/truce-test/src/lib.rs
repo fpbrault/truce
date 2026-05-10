@@ -791,8 +791,10 @@ impl<P: PluginExport> ScreenshotTest<P> {
 
         let mut plugin = P::create();
         plugin.init();
-        if let Some(bytes) = state_bytes.as_deref() {
-            plugin.load_state(bytes);
+        if let Some(bytes) = state_bytes.as_deref()
+            && let Err(e) = plugin.load_state(bytes)
+        {
+            eprintln!("truce-test: load_state failed: {e}");
         }
         for (id, value) in &param_overrides {
             plugin.params().set_normalized(*id, *value);

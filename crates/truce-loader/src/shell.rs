@@ -221,23 +221,25 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         status
     }
 
-    fn save_state(&self) -> Option<Vec<u8>> {
+    fn save_state(&self) -> Vec<u8> {
         let loader = self.loader.lock();
         loader
             .plugin()
             .map(truce_core::PluginLogic::save_state)
-            .filter(|s| !s.is_empty())
+            .unwrap_or_default()
     }
 
-    fn load_state(&mut self, data: &[u8]) {
+    fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
         let mut loader = self.loader.lock();
-        if let Some(plugin) = loader.plugin_mut() {
-            plugin.load_state(data);
-            // Plugin-side cache invalidation runs in the same
-            // `&mut` borrow window so the next `process()` block
-            // sees the refreshed caches.
-            plugin.state_changed();
-        }
+        let Some(plugin) = loader.plugin_mut() else {
+            return Ok(());
+        };
+        let result = plugin.load_state(data);
+        // Plugin-side cache invalidation runs in the same `&mut`
+        // borrow window so the next `process()` block sees the
+        // refreshed caches — fire even on partial state.
+        plugin.state_changed();
+        result
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {

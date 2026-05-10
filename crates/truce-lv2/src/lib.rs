@@ -26,11 +26,10 @@ mod urid;
 pub use types::*;
 
 use std::ffi::{CStr, CString, c_char, c_void};
-use std::mem::transmute;
 use std::ptr;
 use std::sync::Arc;
 
-use truce_core::buffer::AudioBuffer;
+use truce_core::buffer::RawBufferScratch;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
@@ -145,20 +144,13 @@ pub struct Lv2Instance<P: PluginExport> {
 
     urid_map: UridMap,
 
-    /// Scratch vectors so we don't allocate on the audio thread.
-    input_slices: Vec<&'static [f32]>,
-    output_slices: Vec<&'static mut [f32]>,
-
-    /// Per-channel input scratch used when an input port shares
-    /// memory with an output port (LV2 hosts may connect both to the
-    /// same buffer for in-place processing). `&[f32]` and `&mut [f32]`
-    /// to overlapping memory is UB regardless of the access order, so
-    /// in the aliased case we copy the input into this scratch first
-    /// and hand the scratch slice to the plugin instead.
-    /// One `Vec<f32>` per audio-in channel, sized to
-    /// [`LV2_MAX_PREALLOC_BLOCK`] in `activate()` and resized only on
-    /// the audio thread if `run()` exceeds that ceiling.
-    input_scratch: Vec<Vec<f32>>,
+    /// Reused per-block scratch for `RawBufferScratch::build`. Lives
+    /// here so the slice / per-channel-copy storage survives across
+    /// `run()` invocations without re-allocating on the audio thread.
+    /// LV2 hosts may connect an input and an output port to the same
+    /// buffer (in-place processing); the scratch handles the
+    /// alias-then-copy fallback internally.
+    scratch: RawBufferScratch,
 
     /// Shared transport slot — audio thread writes each block. LV2 UIs
     /// are out-of-process so the UI side still reads `None`; this slot
@@ -259,9 +251,7 @@ pub unsafe fn instantiate<P: PluginExport>(
 
             urid_map,
 
-            input_slices: Vec::with_capacity(audio_in_count),
-            output_slices: Vec::with_capacity(audio_out_count),
-            input_scratch: (0..audio_in_count).map(|_| Vec::new()).collect(),
+            scratch: RawBufferScratch::default(),
 
             transport_slot: truce_core::TransportSlot::new(),
         });
@@ -325,9 +315,11 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
     unsafe {
         let inst = &mut *handle;
         inst.max_block_size = LV2_MAX_PREALLOC_BLOCK;
-        for buf in &mut inst.input_scratch {
-            buf.resize(LV2_MAX_PREALLOC_BLOCK, 0.0);
-        }
+        inst.scratch.ensure_capacity(
+            inst.audio_inputs.len(),
+            inst.audio_outputs.len(),
+            LV2_MAX_PREALLOC_BLOCK,
+        );
         inst.plugin.reset(inst.sample_rate, LV2_MAX_PREALLOC_BLOCK);
         inst.plugin.params().set_sample_rate(inst.sample_rate);
         inst.plugin.params().snap_smoothers();
@@ -359,11 +351,8 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 "LV2 host delivered block of {n} samples, exceeding pre-allocated \
                  {LV2_MAX_PREALLOC_BLOCK} — input scratch will realloc on the audio thread",
             );
-            for buf in &mut inst.input_scratch {
-                if buf.len() < n {
-                    buf.resize(n, 0.0);
-                }
-            }
+            inst.scratch
+                .ensure_capacity(inst.audio_inputs.len(), inst.audio_outputs.len(), n);
             inst.max_block_size = n;
         }
 
@@ -418,87 +407,38 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             reader.apply_time_position(&mut transport);
         }
 
-        // Build AudioBuffer from port pointers.
+        // Build AudioBuffer from port pointers via the shared
+        // `RawBufferScratch::build` helper. The helper owns the
+        // raw-pointer-to-slice conversion plus the alias-detection
+        // copy-into-scratch fallback (LV2 hosts may connect an input
+        // and an output port to the same buffer for in-place
+        // processing). Plugins that want pass-through must do
+        // `output.copy_from_slice(input)` themselves — `build` does
+        // not auto-copy because that would clobber the previous-block
+        // tail delay / reverb feedback paths read from the output.
         //
-        // Three soundness considerations:
-        //
-        // 1. **Channel indexing.** A null `audio_inputs[ch]` becomes
-        //    an empty slice at the same index rather than being
-        //    dropped — preserving channel layout avoids the silent
-        //    re-mapping that the densifying loop used to produce.
-        // 2. **Input/output aliasing.** LV2 hosts may connect an
-        //    input and an output port to the same buffer (in-place
-        //    processing). Constructing both `&[f32]` and
-        //    `&mut [f32]` to that memory is UB. For each input we
-        //    check against every output pointer; if they alias, we
-        //    copy the input into `inst.input_scratch[ch]` first and
-        //    hand the scratch slice to the plugin.
-        // 3. **No auto input→output copy.** Plugins that want
-        //    pass-through must do `output.copy_from_slice(input)`
-        //    themselves; auto-copying clobbers the previous-block tail
-        //    that delay/reverb feedback paths read back from the output.
-        inst.input_slices.clear();
-        inst.output_slices.clear();
-
-        for (ch, &in_ptr) in inst.audio_inputs.iter().enumerate() {
-            let sl: &[f32] = if in_ptr.is_null() {
-                &[]
-            } else {
-                // Range-overlap check, not just exact start-pointer
-                // equality: a host that connects channel-0 input and
-                // channel-1 output to the same allocation at offsets
-                // 0 / sizeof(f32) would miss an exact-pointer test
-                // and produce a partial in-place run. LV2 hosts in
-                // practice hand each port a distinct allocation, so
-                // this is a contracts-edge guard rather than a
-                // real-world break — but the cost is just a couple
-                // of `usize` compares per output channel.
-                let in_start = in_ptr as usize;
-                let in_end = in_start + n * core::mem::size_of::<f32>();
-                let aliases_output = inst.audio_outputs.iter().any(|&out_ptr| {
-                    if out_ptr.is_null() {
-                        return false;
-                    }
-                    let out_start = out_ptr as usize;
-                    let out_end = out_start + n * core::mem::size_of::<f32>();
-                    in_start < out_end && out_start < in_end
-                });
-                if aliases_output {
-                    // Copy host's input bytes into our scratch *before* we
-                    // hand any `&mut [f32]` to the same memory below.
-                    let src = std::slice::from_raw_parts(in_ptr, n);
-                    let dst = &mut inst.input_scratch[ch][..n];
-                    dst.copy_from_slice(src);
-                    dst
-                } else {
-                    std::slice::from_raw_parts(in_ptr, n)
-                }
-            };
-            inst.input_slices
-                .push(transmute::<&[f32], &'static [f32]>(sl));
-        }
-        for &ptr in &inst.audio_outputs {
-            let sl: &mut [f32] = if ptr.is_null() {
-                &mut []
-            } else {
-                std::slice::from_raw_parts_mut(ptr, n)
-            };
-            inst.output_slices
-                .push(transmute::<&mut [f32], &'static mut [f32]>(sl));
-        }
-
-        // The scratch elements carry `'static` lifetimes (the slices
-        // actually point into the host's per-block buffers); a direct
-        // borrow would unify the AudioBuffer's lifetime with `'static`
-        // and pin the scratch forever. A fresh reborrow through a raw
-        // pointer scopes the borrow to `s`, so the post-process clears
-        // below can re-borrow `inst.input_slices` / `inst.output_slices`
-        // mutably.
+        // Reborrow `inst` through a raw pointer for the scratch +
+        // event-list arms so each can hold an independent `&mut`
+        // through the call. SAFETY: single-threaded LV2 instance
+        // (`run` is called on one thread at a time per host
+        // contract), so the simultaneous `&mut`s never alias an
+        // overlapping field — `scratch`, `output_events`, and the
+        // immutable reads of `audio_inputs` / `audio_outputs` /
+        // `event_list` / `sample_rate` are disjoint.
         {
             let inst_ptr: *mut Lv2Instance<P> = inst;
             let s = &mut *inst_ptr;
-            let mut audio: AudioBuffer<'_> = transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
-                AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, n),
+            let in_ptrs = s.audio_inputs.as_ptr();
+            let out_ptrs = s.audio_outputs.as_mut_ptr();
+            let num_in = u32::try_from(s.audio_inputs.len()).unwrap_or(u32::MAX);
+            let num_out = u32::try_from(s.audio_outputs.len()).unwrap_or(u32::MAX);
+            let mut audio = s.scratch.build(
+                in_ptrs,
+                out_ptrs,
+                num_in,
+                num_out,
+                n_samples,
+                P::supports_in_place(),
             );
             inst.transport_slot.write(&transport);
             let mut ctx =
@@ -530,15 +470,6 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         if !inst.notify_out_port.is_null() {
             atom::write_time_position_sequence(inst.notify_out_port, &transport, &inst.urid_map);
         }
-
-        // Drop the channel-slice borrows we transmuted to `'static`
-        // for the duration of this call. The host's port pointers may
-        // change between `run()` invocations (LV2 hosts are free to
-        // re-`connect_port` between blocks); leaving the slice scratch
-        // populated pins dangling pointers. Clear keeps the underlying
-        // capacity so the next block doesn't allocate.
-        inst.input_slices.clear();
-        inst.output_slices.clear();
     });
     if !ok {
         // Panic in plugin.process() — zero output port buffers so

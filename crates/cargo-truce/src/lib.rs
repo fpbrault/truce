@@ -8,11 +8,14 @@
 mod commands;
 mod config;
 pub(crate) mod dirs;
+mod error;
 mod format;
 mod install_scope;
 pub mod scaffold;
 mod templates;
 mod util;
+
+pub use error::CargoTruceError;
 
 #[cfg(target_os = "windows")]
 mod packaging_windows;
@@ -98,8 +101,8 @@ pub(crate) use util::{
 
 use std::process::ExitCode;
 
-pub type Res = std::result::Result<(), Box<dyn std::error::Error>>;
-pub type BoxErr = Box<dyn std::error::Error>;
+pub type Res = std::result::Result<(), CargoTruceError>;
+pub type BoxErr = CargoTruceError;
 
 /// Run a command with the given args (e.g. `["install", "--clap"]`).
 ///

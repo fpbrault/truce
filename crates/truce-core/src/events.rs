@@ -202,6 +202,11 @@ pub enum EventBody {
     Transport(TransportInfo),
 }
 
+/// Host-populated transport snapshot. Constructed by every format
+/// wrapper from the host's own transport struct via struct-literal
+/// expressions, so this stays "exhaustive" (no `#[non_exhaustive]`)
+/// — that attribute would block cross-crate construction. Adding a
+/// new field is a coordinated workspace-wide change.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TransportInfo {
     pub playing: bool,

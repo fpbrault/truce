@@ -668,8 +668,10 @@ impl<P: PluginExport> PluginDriver<P> {
                 })),
                 None => None,
             };
-        if let Some(bytes) = state_bytes.as_deref() {
-            plugin.load_state(bytes);
+        if let Some(bytes) = state_bytes.as_deref()
+            && let Err(e) = plugin.load_state(bytes)
+        {
+            eprintln!("truce-driver: load_state failed: {e}");
         }
 
         // 2. Param overrides (the `.set_param(...)` shortcuts).
