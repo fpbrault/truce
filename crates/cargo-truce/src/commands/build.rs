@@ -15,6 +15,12 @@ use crate::{Res, deployment_target, detect_default_features, load_config, projec
 use std::path::PathBuf;
 use truce_build::{BundleEntry, BundleManifest};
 
+struct TargetPlan<'a> {
+    target: Option<&'a str>,
+    stage_dir: PathBuf,
+    triple: String,
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_build(args: &[String]) -> Res {
     let config = load_config()?;
@@ -116,11 +122,6 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // historical flat layout (`target/bundles/<filename>`) so existing
     // macOS / Windows workflows that inspect that directory don't
     // change shape.
-    struct TargetPlan<'a> {
-        target: Option<&'a str>,
-        stage_dir: PathBuf,
-        triple: String,
-    }
     let target_plans: Vec<TargetPlan<'_>> = if targets.is_empty() {
         vec![TargetPlan {
             target: None,
@@ -219,10 +220,10 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 // get a bare `.so` / `.dll` since neither uses a bundle.
                 let staged = stage_vst2(&root, p, &config, &plan.stage_dir, plan.target)?;
                 crate::log_output(format!("VST2: {}", staged.display()));
-                let filename = staged
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| format!("{}.vst", p.name));
+                let filename = staged.file_name().map_or_else(
+                    || format!("{}.vst", p.name),
+                    |n| n.to_string_lossy().into_owned(),
+                );
                 produced.push(entry(p, "vst2", filename));
             }
             if lv2 {
@@ -352,13 +353,12 @@ fn write_bundle_manifest(
     let mut next = BundleManifest::new(target_triple, profile);
     next.bundles = produced.to_vec();
 
+    // Missing manifest is the common case (first build); start empty.
+    // Corrupt/incompatible is treated the same — the manifest is a
+    // derived artifact, not user data, so replacing beats failing.
     let mut manifest = match BundleManifest::load_if_present(bundles_dir) {
         Ok(Some(existing)) => existing,
-        // Missing manifest is the common case (first build); start empty.
-        Ok(None) => BundleManifest::new(target_triple, profile),
-        // Corrupt/incompatible — replace rather than fail the build.
-        // The manifest is a derived artifact, not user data.
-        Err(_) => BundleManifest::new(target_triple, profile),
+        Ok(None) | Err(_) => BundleManifest::new(target_triple, profile),
     };
     manifest.merge(next);
     manifest.save(bundles_dir)?;

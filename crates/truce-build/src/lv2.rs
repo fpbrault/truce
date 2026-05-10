@@ -119,7 +119,7 @@ struct Layout {
 }
 
 impl Layout {
-    fn audio_in_start(&self) -> u32 {
+    fn audio_in_start() -> u32 {
         0
     }
     fn audio_out_start(&self) -> u32 {
@@ -282,7 +282,7 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
 fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_symbols: &[String]) {
     let _ = writeln!(f);
     if index < layout.audio_out_start() {
-        let ch = index - layout.audio_in_start();
+        let ch = index - Layout::audio_in_start();
         let _ = writeln!(f, "        a lv2:InputPort, lv2:AudioPort ;");
         let _ = writeln!(f, "        lv2:index {index} ;");
         let _ = writeln!(f, "        lv2:symbol \"in_{ch}\" ;");

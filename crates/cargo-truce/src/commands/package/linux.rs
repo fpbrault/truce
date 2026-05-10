@@ -122,19 +122,20 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
             eprintln!("Target: {triple}");
         }
 
+        let ctx = TarballCtx {
+            root: &root,
+            config: &config,
+            dist_dir: &dist_dir,
+            version: &version,
+            bundles_dir,
+            manifest,
+            arch,
+        };
+
         if selection.want_per_plugin() {
             eprintln!("Per-plugin tarballs");
             for plugin in &config.plugin {
-                build_per_plugin_tarball(
-                    &root,
-                    &config,
-                    plugin,
-                    &dist_dir,
-                    &version,
-                    bundles_dir,
-                    manifest,
-                    arch,
-                )?;
+                build_per_plugin_tarball(&ctx, plugin)?;
             }
         } else {
             eprintln!("Skipping per-plugin tarballs (--no-per-plugin).");
@@ -143,16 +144,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         if !suites.is_empty() {
             eprintln!("\nSuite tarballs");
             for suite in &suites {
-                build_suite_tarball(
-                    &root,
-                    &config,
-                    suite,
-                    &dist_dir,
-                    &version,
-                    bundles_dir,
-                    manifest,
-                    arch,
-                )?;
+                build_suite_tarball(&ctx, suite)?;
             }
         }
         if plans.len() > 1 {
@@ -164,7 +156,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
     Ok(())
 }
 
-/// Validate that a loaded manifest's target_triple matches what we
+/// Validate that a loaded manifest's `target_triple` matches what we
 /// expected from its containing directory (or the host fallback for
 /// the flat layout). Catches the case where someone manually edits
 /// the manifest or copies a target/ tree across hosts.
@@ -190,26 +182,30 @@ fn arch_from_triple(triple: &str) -> &str {
     triple.split('-').next().unwrap_or("unknown")
 }
 
+/// Context shared by every tarball build: per-target directories plus
+/// the loaded manifest. Bundled into one struct so the per-plugin and
+/// per-suite builders stay under the workspace argument-count cap.
+struct TarballCtx<'a> {
+    root: &'a Path,
+    config: &'a Config,
+    dist_dir: &'a Path,
+    version: &'a str,
+    bundles_dir: &'a Path,
+    manifest: &'a BundleManifest,
+    arch: &'a str,
+}
+
 /// One tarball per plugin: `{bundle_id}-{version}-linux-{arch}.tar.gz`.
-fn build_per_plugin_tarball(
-    root: &Path,
-    config: &Config,
-    plugin: &PluginDef,
-    dist_dir: &Path,
-    version: &str,
-    bundles_dir: &Path,
-    manifest: &BundleManifest,
-    arch: &str,
-) -> Res {
-    let stem = format!("{}-{}-linux-{}", plugin.bundle_id, version, arch);
-    let staging = plugin_stage_dir(root, &plugin.bundle_id, arch)?;
+fn build_per_plugin_tarball(ctx: &TarballCtx<'_>, plugin: &PluginDef) -> Res {
+    let stem = format!("{}-{}-linux-{}", plugin.bundle_id, ctx.version, ctx.arch);
+    let staging = plugin_stage_dir(ctx.root, &plugin.bundle_id, ctx.arch)?;
 
-    let plugin_summary = stage_plugin_payload(plugin, &staging, bundles_dir, manifest)?;
+    let plugin_summary = stage_plugin_payload(plugin, &staging, ctx.bundles_dir, ctx.manifest)?;
     let install_paths = expected_tarball_paths(&stem, &[&plugin_summary]);
-    write_install_sh(&staging, config, &[plugin_summary], None)?;
-    write_readme(&staging, config, version, &[plugin], None)?;
+    write_install_sh(&staging, ctx.config, &[plugin_summary], None)?;
+    write_readme(&staging, ctx.config, ctx.version, &[plugin], None)?;
 
-    let out = dist_dir.join(format!("{stem}.tar.gz"));
+    let out = ctx.dist_dir.join(format!("{stem}.tar.gz"));
     create_tarball(&staging, &out, &stem)?;
 
     // Sanity-check the tarball: must contain install.sh and every
@@ -228,35 +224,29 @@ fn build_per_plugin_tarball(
 }
 
 /// One tarball per suite: `{suite.bundle_id}-{version}-linux-{arch}.tar.gz`.
-fn build_suite_tarball(
-    root: &Path,
-    config: &Config,
-    suite: &ResolvedSuite<'_>,
-    dist_dir: &Path,
-    version: &str,
-    bundles_dir: &Path,
-    manifest: &BundleManifest,
-    arch: &str,
-) -> Res {
-    let suite_version = suite.def.version.as_deref().unwrap_or(version);
-    let stem = format!("{}-{}-linux-{}", suite.def.bundle_id, suite_version, arch);
-    let staging = suite_stage_dir(root, &suite.def.bundle_id, arch)?;
+fn build_suite_tarball(ctx: &TarballCtx<'_>, suite: &ResolvedSuite<'_>) -> Res {
+    let suite_version = suite.def.version.as_deref().unwrap_or(ctx.version);
+    let stem = format!(
+        "{}-{}-linux-{}",
+        suite.def.bundle_id, suite_version, ctx.arch
+    );
+    let staging = suite_stage_dir(ctx.root, &suite.def.bundle_id, ctx.arch)?;
 
     let mut summaries = Vec::with_capacity(suite.plugins.len());
     for plugin in &suite.plugins {
         summaries.push(stage_plugin_payload(
             plugin,
             &staging,
-            bundles_dir,
-            manifest,
+            ctx.bundles_dir,
+            ctx.manifest,
         )?);
     }
     let summary_refs: Vec<&PluginSummary> = summaries.iter().collect();
     let install_paths = expected_tarball_paths(&stem, &summary_refs);
-    write_install_sh(&staging, config, &summaries, Some(suite))?;
-    write_readme(&staging, config, suite_version, &suite.plugins, Some(suite))?;
+    write_install_sh(&staging, ctx.config, &summaries, Some(suite))?;
+    write_readme(&staging, ctx.config, suite_version, &suite.plugins, Some(suite))?;
 
-    let out = dist_dir.join(format!("{stem}.tar.gz"));
+    let out = ctx.dist_dir.join(format!("{stem}.tar.gz"));
     create_tarball(&staging, &out, &stem)?;
 
     // Suite tarball must contain install.sh + every bundle the manifest

@@ -34,6 +34,7 @@
 use crate::{MeterField, ParamField};
 use proc_macro::TokenStream;
 use quote::quote;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use syn::Type;
 
@@ -53,37 +54,37 @@ pub(crate) fn write_struct_sidecar(
         return;
     }
     let mut buf = String::new();
-    buf.push_str(&format!("struct = \"{struct_name}\"\n\n"));
+    let _ = writeln!(buf, "struct = \"{struct_name}\"\n");
     for p in params {
         buf.push_str("[[param]]\n");
-        buf.push_str(&format!("id = {}\n", p.id()));
+        let _ = writeln!(buf, "id = {}", p.id());
         let name = p.attrs.name.clone().unwrap_or_else(|| p.ident.to_string());
-        buf.push_str(&format!("name = \"{}\"\n", toml_escape(&name)));
-        buf.push_str(&format!("kind = \"{}\"\n", param_kind_str(p.kind)));
+        let _ = writeln!(buf, "name = \"{}\"", toml_escape(&name));
+        let _ = writeln!(buf, "kind = \"{}\"", param_kind_str(p.kind));
         if let Some(r) = &p.attrs.range {
-            buf.push_str(&format!("range = \"{}\"\n", toml_escape(r)));
+            let _ = writeln!(buf, "range = \"{}\"", toml_escape(r));
         }
         if let Some(d) = p.attrs.default {
-            buf.push_str(&format!("default = {d}\n"));
+            let _ = writeln!(buf, "default = {d}");
         }
         if let Some(u) = &p.attrs.unit {
-            buf.push_str(&format!("unit = \"{}\"\n", toml_escape(u)));
+            let _ = writeln!(buf, "unit = \"{}\"", toml_escape(u));
         }
         if let Some(f) = &p.attrs.flags {
-            buf.push_str(&format!("flags = \"{}\"\n", toml_escape(f)));
+            let _ = writeln!(buf, "flags = \"{}\"", toml_escape(f));
         }
         buf.push('\n');
     }
     for m in meters {
         if let Some(id) = m.id {
             buf.push_str("[[meter]]\n");
-            buf.push_str(&format!("id = {id}\n\n"));
+            let _ = writeln!(buf, "id = {id}\n");
         }
     }
     for (_field, ty) in nested {
         if let Some(t) = type_last_segment(ty) {
             buf.push_str("[[nested]]\n");
-            buf.push_str(&format!("type = \"{t}\"\n\n"));
+            let _ = writeln!(buf, "type = \"{t}\"\n");
         }
     }
     let _ = std::fs::write(out_dir.join(format!("{struct_name}.params.toml")), buf);
@@ -213,10 +214,10 @@ fn aggregate(
     }
     if let Some(toml::Value::Array(arr)) = toml.get("meter") {
         for entry in arr {
-            if let Some(id) = entry.get("id").and_then(|v| v.as_integer()) {
-                if let Ok(id) = u32::try_from(id) {
-                    meter_ids.push(id);
-                }
+            if let Some(id) = entry.get("id").and_then(toml::Value::as_integer)
+                && let Ok(id) = u32::try_from(id)
+            {
+                meter_ids.push(id);
             }
         }
     }
@@ -234,7 +235,7 @@ fn parse_param_entry(v: &toml::Value) -> Result<truce_build::lv2::Lv2Param, Stri
     use truce_build::lv2::{Lv2Param, Lv2Range};
     let id = v
         .get("id")
-        .and_then(|x| x.as_integer())
+        .and_then(toml::Value::as_integer)
         .and_then(|i| u32::try_from(i).ok())
         .ok_or("[[param]].id missing or out of range")?;
     let name = v
@@ -253,10 +254,13 @@ fn parse_param_entry(v: &toml::Value) -> Result<truce_build::lv2::Lv2Param, Stri
     let range = parse_range_value(range_str, kind)?;
     let default_plain = if default.is_nan() {
         match (kind, &range) {
-            ("Bool" | "Enum", _) => 0.0,
-            (_, Lv2Range::Linear { min, .. } | Lv2Range::Logarithmic { min, .. }) => *min,
-            (_, Lv2Range::Discrete { min, .. }) => *min,
-            (_, Lv2Range::Enum { .. }) => 0.0,
+            ("Bool" | "Enum", _) | (_, Lv2Range::Enum { .. }) => 0.0,
+            (
+                _,
+                Lv2Range::Linear { min, .. }
+                | Lv2Range::Logarithmic { min, .. }
+                | Lv2Range::Discrete { min, .. },
+            ) => *min,
         }
     } else {
         default

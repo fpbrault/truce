@@ -126,7 +126,7 @@ impl BundleManifest {
             .map_err(|e| format!("failed to write build manifest at {}: {e}", path.display()))
     }
 
-    /// Merge `incoming` into `self`. If target_triple or profile
+    /// Merge `incoming` into `self`. If `target_triple` or `profile`
     /// differs, `incoming` replaces `self` wholesale — bundles built
     /// for a different target/profile aren't usable alongside the new
     /// ones. Otherwise, entries with matching `(plugin_crate, format)`
