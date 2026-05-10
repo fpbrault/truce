@@ -1103,27 +1103,6 @@ fn cargo_build_inner(
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] deployment_target: &str,
     profile: &str,
 ) -> crate::Res {
-    let mut cmd = make_cargo_build_command(env_vars, extra_args, deployment_target, profile)?;
-    let status = cmd.status()?;
-    if !status.success() {
-        return Err("cargo build failed".into());
-    }
-    Ok(())
-}
-
-/// Build a `Command` that runs `cargo build` with the same args /
-/// env munging `cargo_build` applies — sccache, `MACOSX_DEPLOYMENT_TARGET`,
-/// rustup target ensure, profile flag. Stdio is left at the default
-/// (inherited); callers wire `.status()` or `.output()` themselves
-/// depending on whether they want live progress or captured output
-/// (the parallel per-arch path needs capture so threaded builds don't
-/// interleave their progress lines).
-fn make_cargo_build_command(
-    env_vars: &[(&str, &str)],
-    extra_args: &[&str],
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] deployment_target: &str,
-    profile: &str,
-) -> Result<Command, crate::BoxErr> {
     // If the caller passed `--target <triple>`, make sure rustup has
     // it installed before firing cargo. Catches the common "cross-arch
     // build fails with E0463 can't find crate for core" failure mode.
@@ -1167,85 +1146,9 @@ fn make_cargo_build_command(
     for arg in extra_args {
         cmd.arg(arg);
     }
-    Ok(cmd)
-}
-
-/// Run a release `cargo build` per arch in parallel, capturing each
-/// invocation's output. Per-arch target dirs live at
-/// `target/<triple>/release/` so concurrent invocations don't contend
-/// on cargo's per-target lock. Stdout/stderr from each build is
-/// captured and dumped in arch order after all threads join, so live
-/// progress lines from different arches don't interleave.
-///
-/// Single-arch (`--host-only`) short-circuits to the inherited-stdio
-/// path so the user keeps live progress when there's no parallelism
-/// to be had.
-///
-/// `base_args` is the cargo args *without* `--target` (this helper
-/// adds it per arch). Mirrors `cargo_build_for_arch`.
-#[cfg(target_os = "macos")]
-pub(crate) fn cargo_build_per_arch_parallel(
-    archs: &[MacArch],
-    base_args: &[&str],
-    dt: &str,
-) -> crate::Res {
-    use std::io::Write as _;
-
-    if archs.len() == 1 {
-        return cargo_build_for_arch(&[], base_args, archs[0], dt);
-    }
-
-    let dt_owned = dt.to_string();
-    let base_owned: Vec<String> = base_args.iter().map(|s| (*s).to_string()).collect();
-
-    // `crate::BoxErr` isn't `Send`, so convert errors to `String` at the
-    // thread boundary and re-wrap them on the joining side.
-    let results: Vec<Result<(MacArch, std::process::Output), String>> =
-        std::thread::scope(|scope| {
-            let handles: Vec<_> = archs
-                .iter()
-                .map(|&arch| {
-                    let base_owned = base_owned.clone();
-                    let dt_owned = dt_owned.clone();
-                    scope.spawn(move || -> Result<(MacArch, std::process::Output), String> {
-                        let mut args: Vec<String> = vec!["--target".into(), arch.triple().into()];
-                        args.extend(base_owned.iter().cloned());
-                        let arg_refs: Vec<&str> =
-                            args.iter().map(std::string::String::as_str).collect();
-                        let mut cmd =
-                            make_cargo_build_command(&[], &arg_refs, &dt_owned, "release")
-                                .map_err(|e| e.to_string())?;
-                        let output = cmd.output().map_err(|e| e.to_string())?;
-                        Ok((arch, output))
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| h.join().expect("cargo build thread panicked"))
-                .collect()
-        });
-
-    let mut first_err: Option<crate::BoxErr> = None;
-    for r in results {
-        match r {
-            Ok((arch, out)) => {
-                eprintln!("==> {}", arch.triple());
-                let _ = std::io::stderr().write_all(&out.stderr);
-                let _ = std::io::stdout().write_all(&out.stdout);
-                if !out.status.success() && first_err.is_none() {
-                    first_err = Some(format!("cargo build failed for {}", arch.triple()).into());
-                }
-            }
-            Err(e) => {
-                if first_err.is_none() {
-                    first_err = Some(e.into());
-                }
-            }
-        }
-    }
-    if let Some(e) = first_err {
-        return Err(e);
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err("cargo build failed".into());
     }
     Ok(())
 }
@@ -1364,6 +1267,39 @@ pub(crate) fn cargo_build_for_arch(
     }
     let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
     cargo_build(env_vars, &arg_refs, dt)
+}
+
+/// Build for every Apple arch in `archs` in a single cargo invocation
+/// by passing multiple `--target <triple>` flags. Cargo 1.64+ accepts
+/// this and parallelizes codegen across targets internally — shared
+/// `.rmeta` is computed once, target-specific codegen runs per-arch
+/// inside the same process — so the user gets:
+///
+/// - One `target/.cargo-lock` acquisition (no inter-process lock
+///   contention on the workspace lock file).
+/// - One progress display, with cargo's normal terminal styling /
+///   color / progress bar inherited.
+/// - One dep-graph resolution + process startup cost amortized
+///   across all arches.
+///
+/// Per-target outputs land at `target/<triple>/release/` exactly as
+/// `cargo_build_for_arch` would deposit them.
+#[cfg(target_os = "macos")]
+pub(crate) fn cargo_build_multi_arch(
+    archs: &[MacArch],
+    base_args: &[&str],
+    dt: &str,
+) -> crate::Res {
+    let mut args: Vec<String> = Vec::with_capacity(archs.len() * 2 + base_args.len());
+    for arch in archs {
+        args.push("--target".into());
+        args.push(arch.triple().into());
+    }
+    for a in base_args {
+        args.push((*a).into());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
+    cargo_build(&[], &arg_refs, dt)
 }
 
 /// Recursive copy that preserves symlinks (critical for macOS .framework
