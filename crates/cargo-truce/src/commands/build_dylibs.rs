@@ -74,7 +74,6 @@ impl BuildFormat {
             BuildFormat::Aax => "_aax",
         }
     }
-
 }
 
 /// Returns a skip-reason string if AAX cannot be built on this host —

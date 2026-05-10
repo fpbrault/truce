@@ -404,4 +404,3 @@ fn sidecar_dir_for(pkg_name: &str, truce_toml: &std::path::Path) -> Option<PathB
     let target_dir = truce_build::target_dir(workspace_root);
     Some(target_dir.join("lv2-meta").join(pkg_name))
 }
-

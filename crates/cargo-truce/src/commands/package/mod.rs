@@ -138,7 +138,6 @@ impl PkgFormat {
             PkgFormat::Standalone => "Standalone",
         }
     }
-
 }
 
 // macOS-only `pkgbuild` / `productbuild` plumbing — extensions,
