@@ -33,7 +33,9 @@ use std::process::Command;
 ///
 /// Steps:
 /// 1. Build the Rust framework dylib once per arch, then `lipo -create`
-///    into the canonical `lib{stem}_v3.dylib` path.
+///    into the canonical `lib{stem}_au.dylib` path. When `reuse_au_artifacts`
+///    is true (package mode with AU2 selected first), skip the cargo +
+///    lipo redo and reuse AU2's universal dylib directly.
 /// 2. Assemble the `.framework` bundle in `tmp_dir()` (install-name
 ///    fixup + Versions/Current symlinks + Info.plist + initial sign).
 /// 3. Materialize the Xcode project from embedded templates into
@@ -52,6 +54,7 @@ pub(crate) fn emit_au_v3_bundle(
     config: &Config,
     plugins: &[&PluginDef],
     archs: &[MacArch],
+    reuse_au_artifacts: bool,
 ) -> Res {
     let sign_id = crate::application_identity();
     let team_id = extract_team_id(&sign_id);
@@ -87,6 +90,7 @@ pub(crate) fn emit_au_v3_bundle(
             &team_id,
             &dt,
             &bundles_dir,
+            reuse_au_artifacts,
         )?;
     }
     Ok(())
@@ -106,6 +110,7 @@ fn build_au_v3_for_plugin(
     team_id: &str,
     dt: &str,
     bundles_dir: &Path,
+    reuse_au_artifacts: bool,
 ) -> Res {
     let fw_name = p.fw_name();
     let au_v3_root = tmp_au_v3(&p.bundle_id);
@@ -115,7 +120,7 @@ fn build_au_v3_for_plugin(
 
     crate::vprintln!("Building AU v3 ({})...", p.name);
 
-    let lipo_dst = build_rust_framework_dylib(root, p, archs, dt)?;
+    let lipo_dst = build_rust_framework_dylib(root, p, archs, dt, reuse_au_artifacts)?;
     assemble_framework_bundle(&fw_build, &fw_name, &lipo_dst, p, config, sign_id)?;
     write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
@@ -127,25 +132,34 @@ fn build_au_v3_for_plugin(
 }
 
 /// Build the Rust framework dylib once per arch, then `lipo -create`
-/// into the canonical `target/release/lib{stem}_v3.dylib` path.
+/// into the canonical `target/release/lib{stem}_au.dylib` path.
 /// Returns the lipo output path.
+///
+/// The framework dylib is identical to AU v2's `--features au` build —
+/// AU v3's appex compiles its Swift `AudioUnitFactory` /
+/// `TruceAUAudioUnit` separately via xcodebuild, and display-name
+/// overrides (`au_name`) travel via `PluginInfo` rather than env vars,
+/// so the dylib bytes don't depend on v2 vs v3. When `reuse_au_artifacts`
+/// is true (set by `cargo truce package` after AU2 built the same archs
+/// in this process), skip the cargo + lipo redo and return the existing
+/// universal dylib path.
 fn build_rust_framework_dylib(
     root: &Path,
     p: &PluginDef,
     archs: &[MacArch],
     dt: &str,
+    reuse_au_artifacts: bool,
 ) -> Result<PathBuf, crate::BoxErr> {
+    let lipo_dst =
+        truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
+
+    if reuse_au_artifacts && lipo_dst.exists() {
+        crate::vprintln!("  Reusing AU2 build at {}", lipo_dst.display());
+        return Ok(lipo_dst);
+    }
+
     for &arch in archs {
         crate::vprintln!("  Building Rust framework ({})...", arch.triple());
-        // AU v3's appex compiles its Swift `AudioUnitFactory` and
-        // `TruceAUAudioUnit` separately via xcodebuild — those classes
-        // are scoped to the appex bundle, not the framework dylib, so
-        // the framework no longer needs a per-plugin id baked in.
-        // Display-name overrides (`au_name`) travel via `PluginInfo`
-        // (baked by `truce::plugin_info!`) instead of env vars; the
-        // v3 host gets its display name from the appex plist's
-        // `AUNAME` (set elsewhere in this file) so the framework
-        // dylib is identical to the v2 build, no env hop needed.
         cargo_build_for_arch(
             &[],
             &[
@@ -160,15 +174,13 @@ fn build_rust_framework_dylib(
         )?;
         let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
         let saved =
-            release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(arch.triple()));
+            release_lib_for_target(root, &format!("{}_au", p.dylib_stem()), Some(arch.triple()));
         fs_ctx::copy(&src, &saved)?;
     }
     let fw_inputs: Vec<PathBuf> = archs
         .iter()
-        .map(|a| release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple())))
+        .map(|a| release_lib_for_target(root, &format!("{}_au", p.dylib_stem()), Some(a.triple())))
         .collect();
-    let lipo_dst =
-        truce_build::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
     lipo_into(&fw_inputs, &lipo_dst)?;
     Ok(lipo_dst)
 }
@@ -639,8 +651,9 @@ pub(crate) fn build_and_install_au_v3(
     }
     if !no_build {
         // `cargo truce install` only needs the host arch — universal
-        // builds are reserved for the packaging path.
-        emit_au_v3_bundle(root, config, plugins, &[MacArch::host()])?;
+        // builds are reserved for the packaging path. AU2 isn't built
+        // here, so the AU3 path can't reuse an AU2 artifact.
+        emit_au_v3_bundle(root, config, plugins, &[MacArch::host()], false)?;
     }
     install_au_v3(root, config, plugins)
 }

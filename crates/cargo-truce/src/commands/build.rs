@@ -293,6 +293,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                             &config,
                             &plugins,
                             &[MacArch::host()],
+                            // `cargo truce build --au3` doesn't run AU2,
+                            // so there's no AU artifact to reuse.
+                            false,
                         )?;
                         for p in &plugins {
                             let filename = format!("{}.app", p.au3_app_name());

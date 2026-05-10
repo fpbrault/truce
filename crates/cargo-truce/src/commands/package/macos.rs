@@ -580,7 +580,19 @@ fn build_all_formats(
         // Build per-arch Rust framework, lipo, xcodebuild, sign
         // inside-out → `target/bundles/{Plugin Name}.app/`. `stage_au3`
         // copies from there into the packaging staging tree.
-        crate::commands::install::au_v3::emit_au_v3_bundle(root, config, plugins, archs)?;
+        //
+        // AU2 and AU3 share `--features au` byte-for-byte. When AU2 was
+        // built first in this same run, the universal `lib<stem>_au.dylib`
+        // is already on disk — let AU3 reuse it instead of re-running
+        // cargo + lipo for an identical artifact.
+        let reuse_au_artifacts = formats.contains(&PkgFormat::Au2);
+        crate::commands::install::au_v3::emit_au_v3_bundle(
+            root,
+            config,
+            plugins,
+            archs,
+            reuse_au_artifacts,
+        )?;
     }
     if formats.contains(&PkgFormat::Standalone) {
         // Standalone is a `[[bin]]`, not a cdylib — the per-arch
