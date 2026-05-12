@@ -248,7 +248,7 @@ impl PluginLogic for Arpeggio {
         }
 
         let beats_per_step = self.params.rate.value().beats_per_step();
-        let gate_frac = self.params.gate.value_f64();
+        let gate_frac = f64::from(self.params.gate.value());
 
         // Phase-lock to the host beat grid whenever the host reports
         // transport with a real tempo. Otherwise fall back to a

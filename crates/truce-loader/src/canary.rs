@@ -155,7 +155,7 @@ impl<S: Sample> PluginLogic<S> for ProbePlugin {
 
     fn process(
         &mut self,
-        _buffer: &mut AudioBuffer<'_, S>,
+        _buffer: &mut AudioBuffer<S>,
         _events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {

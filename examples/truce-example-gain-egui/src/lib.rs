@@ -58,8 +58,8 @@ impl PluginLogic for GainEgui {
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let gain_db = self.params.gain.smoothed_next();
-            let pan = self.params.pan.smoothed_next();
+            let gain_db = self.params.gain.read();
+            let pan = self.params.pan.read();
             let gain_linear = db_to_linear(gain_db);
 
             let gain_l = gain_linear * (1.0 - pan.max(0.0));

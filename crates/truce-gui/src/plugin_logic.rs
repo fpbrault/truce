@@ -84,7 +84,7 @@ pub trait PluginLogic<S: Sample = f32>: Send + 'static {
     /// `S = f32` (and reads params at `f64` for stable math).
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer<'_, S>,
+        buffer: &mut AudioBuffer<S>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus;

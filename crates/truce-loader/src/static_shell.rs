@@ -107,7 +107,7 @@ impl<P: Params + Default + 'static, L: PluginLogic<S> + 'static, S: Sample> Plug
 
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer<'_, S>,
+        buffer: &mut AudioBuffer<S>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
@@ -262,7 +262,7 @@ macro_rules! export_static {
 
             fn process(
                 &mut self,
-                buffer: &mut $crate::__macro_deps::truce_core::buffer::AudioBuffer<'_, Sample>,
+                buffer: &mut $crate::__macro_deps::truce_core::buffer::AudioBuffer<Sample>,
                 events: &$crate::__macro_deps::truce_core::events::EventList,
                 context: &mut $crate::__macro_deps::truce_core::process::ProcessContext,
             ) -> $crate::__macro_deps::truce_core::process::ProcessStatus {
