@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use truce_core::editor::PluginContext;
+use truce_core::editor::{PluginContext, PluginContextReadF64};
 use truce_params::Params;
 
 /// Cached parameter values for iced widget consumption.

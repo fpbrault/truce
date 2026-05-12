@@ -99,7 +99,11 @@ macro_rules! bind {
     };
     (@sync $state:expr, $ui:expr, $id:expr, $name:ident) => {
         $crate::paste! {
-            $ui.[<set_ $name>]($state.get_param($id.into()) as f32);
+            // `state.get_param` resolves through the user's
+            // prelude's `PluginContextReadF{32,64}` trait — could
+            // be either precision. `.to_f32()` narrows uniformly,
+            // matching slint's `f32`-typed property setter.
+            $ui.[<set_ $name>]($state.get_param($id.into()).to_f32());
         }
     };
 
@@ -147,7 +151,10 @@ macro_rules! bind {
     (@sync $state:expr, $ui:expr, $id:expr, $name:ident : choice($count:expr)) => {
         {
             let count: u32 = $count;
-            let norm = $state.get_param($id.into());
+            // `discrete_index` takes `f64`; `.to_f64()` widens
+            // uniformly regardless of which prelude routed
+            // `get_param`.
+            let norm = $state.get_param($id.into()).to_f64();
             let idx = $crate::truce_core::cast::discrete_index(norm, count as usize) as i32;
             $crate::paste! {
                 $ui.[<set_ $name>](idx);

@@ -1,7 +1,6 @@
 //! Rotary knob control bound to a truce parameter.
 
-use truce_core::Float;
-use truce_core::editor::PluginContext;
+use truce_core::editor::{PluginContext, PluginContextReadF32};
 
 const KNOB_SIZE: f32 = 60.0;
 const KNOB_TOTAL_H: f32 = 82.0;
@@ -26,7 +25,7 @@ pub fn param_knob<P: ?Sized>(
     let desired = egui::vec2(KNOB_SIZE, KNOB_TOTAL_H);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::drag());
 
-    let mut value = f32::from_f64(state.get_param(id));
+    let mut value = state.get_param(id);
 
     // Handle vertical drag
     if response.drag_started() {

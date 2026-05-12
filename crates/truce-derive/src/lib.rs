@@ -225,7 +225,6 @@ pub fn __truce_lv2_emit_root(input: TokenStream) -> TokenStream {
     lv2_emit::emit_root_impl(input)
 }
 
-
 /// Recognized parameter field types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParamKind {

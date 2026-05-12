@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use truce_core::Float;
-use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, PluginContextReadF32, RawWindowHandle};
 use truce_params::Params;
 
 use crate::backend_cpu::CpuBackend;
@@ -269,16 +269,19 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let get_param: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| f32::from_f64(c.get_param(id)))
+                // `c.get_param` resolves through `PluginContextReadF32`
+                // (imported above) so the bridge's `f64` is narrowed
+                // inside the trait method.
+                Box::new(move |id| c.get_param(id))
             }
-            None => Box::new(move |id| f32::from_f64(p_get.get_normalized(id).unwrap_or(0.0))),
+            None => Box::new(move |id| p_get.get_normalized(id).unwrap_or(0.0).to_f32()),
         };
         let get_param_plain: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| f32::from_f64(c.get_param_plain(id)))
+                Box::new(move |id| c.get_param_plain(id))
             }
-            None => Box::new(move |id| f32::from_f64(p_get_plain.get_plain(id).unwrap_or(0.0))),
+            None => Box::new(move |id| p_get_plain.get_plain(id).unwrap_or(0.0).to_f32()),
         };
         let format_param: Box<dyn Fn(u32) -> String> = match &ctx {
             Some(c) => {
@@ -531,7 +534,8 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
     }
     for region in &mut editor.interaction.knob_regions {
         if let Some(ref ctx) = editor.context {
-            region.normalized_value = f32::from_f64(ctx.get_param(region.param_id));
+            // Resolves through `PluginContextReadF32` — bridge's `f64` narrows inside.
+            region.normalized_value = ctx.get_param(region.param_id);
         } else {
             region.normalized_value =
                 f32::from_f64(editor.params.get_normalized(region.param_id).unwrap_or(0.0));

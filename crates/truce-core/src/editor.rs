@@ -2,6 +2,7 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use truce_params::Params;
+use truce_params::sample::Float;
 
 use crate::events::TransportInfo;
 
@@ -364,12 +365,6 @@ impl<P: ?Sized> PluginContext<P> {
     pub fn request_resize(&self, w: u32, h: u32) -> bool {
         self.bridge.request_resize(w, h)
     }
-    pub fn get_param(&self, id: impl Into<u32>) -> f64 {
-        self.bridge.get_param(id.into())
-    }
-    pub fn get_param_plain(&self, id: impl Into<u32>) -> f64 {
-        self.bridge.get_param_plain(id.into())
-    }
     pub fn format_param(&self, id: impl Into<u32>) -> String {
         self.bridge.format_param(id.into())
     }
@@ -464,4 +459,62 @@ pub fn for_test_params(params: Arc<dyn Params>) -> PluginContext<dyn Params> {
         },
         params,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Precision-routed parameter reads
+//
+// The editor-bridge surface is sample-agnostic (`f64` on the wire, the
+// lossless lowest-common-denominator that round-trips any host
+// automation precision). These two extension traits route the call
+// site to the user's chosen precision — same pattern as
+// `FloatParamReadF32` / `FloatParamReadF64` for the audio-thread
+// param reads. Brought into scope via `pub use ... as _;` in each
+// prelude:
+//   - `prelude` / `prelude32`        → `PluginContextReadF32`
+//   - `prelude64` / `prelude64m`     → `PluginContextReadF64`
+//
+// Single-prelude code dispatches unambiguously. Importing both
+// preludes in the same file collides on `get_param` — the right
+// error if the file hasn't committed to a precision.
+// ---------------------------------------------------------------------------
+
+/// `f32`-precision parameter reads on `PluginContext`. Brought into
+/// scope by `truce::prelude` / `truce::prelude32` / `truce::prelude64m`
+/// (the `f32`-buffer preludes). GUI binding crates (slint, egui,
+/// iced) take `f32` natively, so this is the common case.
+pub trait PluginContextReadF32 {
+    /// Normalized `[0, 1]` value of the parameter, narrowed to `f32`.
+    fn get_param(&self, id: impl Into<u32>) -> f32;
+    /// Plain (denormalized) value of the parameter, narrowed to `f32`.
+    fn get_param_plain(&self, id: impl Into<u32>) -> f32;
+}
+
+/// `f64`-precision parameter reads on `PluginContext`. Brought into
+/// scope by `truce::prelude64`. Same surface as
+/// [`PluginContextReadF32`] but returns the bridge's `f64` value
+/// directly without narrowing.
+pub trait PluginContextReadF64 {
+    /// Normalized `[0, 1]` value of the parameter.
+    fn get_param(&self, id: impl Into<u32>) -> f64;
+    /// Plain (denormalized) value of the parameter.
+    fn get_param_plain(&self, id: impl Into<u32>) -> f64;
+}
+
+impl<P: ?Sized> PluginContextReadF32 for PluginContext<P> {
+    fn get_param(&self, id: impl Into<u32>) -> f32 {
+        self.bridge.get_param(id.into()).to_f32()
+    }
+    fn get_param_plain(&self, id: impl Into<u32>) -> f32 {
+        self.bridge.get_param_plain(id.into()).to_f32()
+    }
+}
+
+impl<P: ?Sized> PluginContextReadF64 for PluginContext<P> {
+    fn get_param(&self, id: impl Into<u32>) -> f64 {
+        self.bridge.get_param(id.into())
+    }
+    fn get_param_plain(&self, id: impl Into<u32>) -> f64 {
+        self.bridge.get_param_plain(id.into())
+    }
 }
