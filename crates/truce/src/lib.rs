@@ -43,10 +43,15 @@ mod prelude_impl {
     pub use truce_core::sample::{Float, Sample as SampleTrait};
     pub use truce_core::state::StateLoadError;
     pub use truce_core::util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
+    // `AudioBuffer` is *not* re-exported from `truce_core` here —
+    // each prelude module declares its own per-precision
+    // `pub type AudioBuffer<'a> = truce_core::buffer::AudioBuffer<'a, $sample>;`
+    // so the `#[plugin_logic]`-rewritten user impl sees the right
+    // buffer precision through scope resolution.
     pub use truce_core::{
-        AudioBuffer, BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody,
-        EventList, Plugin, PluginCategory, PluginContext, PluginExport, PluginInfo, ProcessContext,
-        ProcessStatus, TransportInfo,
+        BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody, EventList, Plugin,
+        PluginCategory, PluginContext, PluginExport, PluginInfo, ProcessContext, ProcessStatus,
+        TransportInfo,
     };
     pub use truce_derive::{ParamEnum, Params, State, plugin_info};
     pub use truce_gui::PluginLogic;
@@ -80,6 +85,16 @@ pub mod prelude32 {
     pub use truce_params::FloatParamReadF32 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f32;
+    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`.
+    ///
+    /// The defaulted type parameter (stable since Rust 1.27) lets
+    /// plugin code use the precision-pinned shorthand
+    /// `&mut AudioBuffer` *and* still override it explicitly when
+    /// some piece of code needs a different precision in the same
+    /// file (e.g., a helper that processes both `AudioBuffer<f32>`
+    /// and `AudioBuffer<f64>`). `S` only defaults when the type-arg
+    /// list is empty.
+    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
 }
 
 /// `f64`-flavoured prelude. Re-exports every symbol from [`prelude`]
@@ -103,6 +118,11 @@ pub mod prelude64 {
     pub use truce_params::FloatParamReadF64 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f64;
+    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`
+    /// (`f64`). Plugin code writes `&mut AudioBuffer` for the
+    /// common case and can still spell out `AudioBuffer<f32>` (or
+    /// any other precision) when interop demands it.
+    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
 }
 
 /// Mixed-precision prelude (`m` for "mixed"). The audio buffer
@@ -135,6 +155,10 @@ pub mod prelude64m {
     /// Audio sample type for this prelude — `f32` (host wire),
     /// despite param reads being `f64`.
     pub type Sample = f32;
+    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`
+    /// (`f32`, matching the host wire). Override per-call when a
+    /// helper needs another precision.
+    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
 }
 
 /// Default prelude. Alias for [`prelude32`] — `f32` audio path. Use
@@ -144,4 +168,8 @@ pub mod prelude {
     pub use truce_params::FloatParamReadF32 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f32;
+    /// `AudioBuffer` with `S` defaulted to this prelude's `Sample`.
+    /// Plugin code writes `&mut AudioBuffer` for the common case;
+    /// `AudioBuffer<f64>` (or any other) still works when needed.
+    pub type AudioBuffer<'a, S = Sample> = truce_core::buffer::AudioBuffer<'a, S>;
 }

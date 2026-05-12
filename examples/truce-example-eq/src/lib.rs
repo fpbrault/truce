@@ -155,7 +155,7 @@ impl PluginLogic<Sample> for Eq {
 
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer<Sample>,
+        buffer: &mut AudioBuffer,
         _events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {

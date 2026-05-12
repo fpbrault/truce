@@ -159,7 +159,7 @@ impl PluginLogic<Sample> for Synth {
 
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer<Sample>,
+        buffer: &mut AudioBuffer,
         events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
