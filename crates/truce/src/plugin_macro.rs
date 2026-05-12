@@ -340,7 +340,7 @@ macro_rules! __plugin_hot_reload {
 
             fn process(
                 &mut self,
-                buffer: &mut $crate::core::buffer::AudioBuffer<'_, f32>,
+                buffer: &mut $crate::core::buffer::AudioBuffer<f32>,
                 events: &$crate::core::events::EventList,
                 context: &mut $crate::core::process::ProcessContext,
             ) -> $crate::core::process::ProcessStatus {

@@ -101,7 +101,7 @@ pub trait Plugin: Send + 'static {
     /// Real-time audio processing.
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer<'_, Self::Sample>,
+        buffer: &mut AudioBuffer<Self::Sample>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus;

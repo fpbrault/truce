@@ -153,7 +153,7 @@ impl PluginLogic for Tremolo {
         let mut free_phase = self.free_phase;
 
         for i in 0..buffer.num_samples() {
-            let depth = self.params.depth.smoothed_next();
+            let depth = self.params.depth.read();
             let phase = if host_sync { host_phase } else { free_phase };
             let lfo = shape.at(phase); // in [0, 1]
             // `lfo` is in [0, 1]; the f32 cast is exact for that range.

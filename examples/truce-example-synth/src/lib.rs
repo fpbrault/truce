@@ -1,5 +1,9 @@
-use truce::prelude::*;
-use truce_core::cast::sample_f32;
+// Synth runs ADSR + voice rendering in f64 for cumulative-state
+// stability (phase accumulator, envelope coefficients); the f64
+// prelude makes that the buffer precision too — the format wrapper
+// widens the host's f32 audio buffer to f64 at the block boundary
+// and narrows on the way out.
+use truce::prelude64::*;
 use truce_core::midi::norm_7bit;
 use truce_gui::layout::{GridLayout, dropdown, knob, section, widgets};
 
@@ -112,10 +116,10 @@ impl Synth {
 
     fn note_on(&mut self, note: u8, velocity: f32) {
         let freq = midi_note_to_freq(note);
-        let attack = f64::from(self.params.attack.value());
-        let decay = f64::from(self.params.decay.value());
-        let sustain = f64::from(self.params.sustain.value());
-        let release = f64::from(self.params.release.value());
+        let attack = self.params.attack.value();
+        let decay = self.params.decay.value();
+        let sustain = self.params.sustain.value();
+        let release = self.params.release.value();
 
         self.voices.push(Voice::new(
             note,
@@ -141,7 +145,7 @@ impl Synth {
     }
 }
 
-impl PluginLogic for Synth {
+impl PluginLogic<Sample> for Synth {
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
@@ -155,7 +159,7 @@ impl PluginLogic for Synth {
 
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer,
+        buffer: &mut AudioBuffer<Sample>,
         events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
@@ -177,9 +181,9 @@ impl PluginLogic for Synth {
             }
 
             let waveform_idx = self.params.waveform.index();
-            let cutoff = self.params.cutoff.smoothed_next_f64();
-            let resonance = self.params.resonance.smoothed_next_f64();
-            let volume = db_to_linear(self.params.volume.smoothed_next_f64());
+            let cutoff = self.params.cutoff.read();
+            let resonance = self.params.resonance.read();
+            let volume = db_to_linear(self.params.volume.read());
 
             let mut sample = 0.0f64;
             for voice in &mut self.voices {
@@ -187,7 +191,7 @@ impl PluginLogic for Synth {
             }
             sample *= volume;
 
-            let out = sample_f32(sample).clamp(-1.0, 1.0);
+            let out = sample.clamp(-1.0, 1.0);
             buffer.output(0)[i] = out;
             buffer.output(1)[i] = out;
         }
