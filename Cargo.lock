@@ -6480,6 +6480,7 @@ name = "truce-slint-build"
 version = "0.37.0"
 dependencies = [
  "slint-build",
+ "truce-font",
 ]
 
 [[package]]
