@@ -58,7 +58,11 @@ const WIDGET_SOURCES: &[(&str, &str)] = &[
     ("xy_pad.slint", include_str!("../ui/xy_pad.slint")),
 ];
 
-const FONT_BYTES: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
+/// `JetBrains` Mono Regular bytes, sourced from the `truce-font`
+/// crate so the TTF + OFL license live in exactly one place across
+/// the workspace. The built-in editor, the egui / iced backends, and
+/// this slint build helper all materialise the same bytes.
+const FONT_BYTES: &[u8] = truce_font::JETBRAINS_MONO;
 
 // --- Public API -----------------------------------------------------------
 
