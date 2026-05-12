@@ -10,6 +10,12 @@
 - Enum parameter (`EnumParam<Waveform>`) with dropdown widget
 - Voice stealing (oldest-first) and tail mode
 - Section-based grid layout (`FILTER`, `ENVELOPE`)
+- **`f64` audio path** via `use truce::prelude64::*` —
+  `param.read()` returns `f64`, `&mut AudioBuffer` is the
+  defaulted alias for `AudioBuffer<f64>`, and the format wrapper
+  widens host `f32` → plugin `f64` at the block boundary
+  (voice phase accumulators want the precision headroom over
+  long-running sessions)
 
 ## Parameters
 

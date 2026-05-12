@@ -4,10 +4,12 @@ Plugin runtime + hot-reload infrastructure for truce.
 
 ## Overview
 
-Hot-reload mechanics for truce: dylib loading, ABI canary, vtable
-probe, and the shells (`HotShell`, `StaticShell`) that bridge the
-user-facing traits onto `truce_core::Plugin` for format wrappers.
-Used by every truce plugin, in two modes:
+Hot-reload mechanics for truce: dylib loading, ABI canary
+(including a `sample_precision` field that pins `f32` vs `f64`),
+vtable probe, and the shells (`HotShell<P, S>`, `StaticShell<P,
+L, S>`) that bridge the user-facing leaf traits onto
+`truce_core::Plugin` for format wrappers. Used by every truce
+plugin, in two modes:
 
 - **Static (default).** `export_static!` embeds the user's struct
   directly into the format wrapper at compile time. Zero runtime
@@ -19,23 +21,32 @@ Used by every truce plugin, in two modes:
   Preserves audio continuity.
 
 Plugin authors don't reach into this crate directly. They write
-a single `impl PluginLogic` (in `truce-gui`) on their plugin
+a single `impl PluginLogic` (from `truce-plugin`) on their plugin
 struct -- one trait covering both DSP (`reset`, `process`, …) and
 GUI (`layout`, `custom_editor`, …) -- and `truce::plugin!` emits
 the right `export_*!` call based on the `shell` Cargo feature.
 
 ## Key types and macros
 
-- **`PluginLogic`** -- the user-facing trait crossed across the
-  dylib boundary as `Box<dyn PluginLogic>` in shell mode.
-- **`HotShell`** -- shell-side dylib loader and hot-swap manager.
-- **`StaticShell`** -- shell-side wrapper that embeds the plugin
-  at compile time.
+- **`HotShell<P, S = f32>`** -- shell-side dylib loader and
+  hot-swap manager, generic over the plugin's sample type.
+- **`StaticShell<P, L, S = f32>`** -- shell-side wrapper that
+  embeds the plugin at compile time, generic over the sample
+  type.
+- **`NativeLoader<S>`** -- the `libloading`-backed dylib loader
+  that holds `Box<dyn PluginLogicCore<S>>` and the canary +
+  vtable-probe machinery.
+- **`AbiCanary`** -- ABI fingerprint compared between shell and
+  dylib before loading. Includes `sample_precision: u8` so a
+  prelude64 logic dylib loaded by an f32 shell (or vice versa)
+  fails the canary check rather than binding to a wrong-layout
+  vtable.
 - **`export_static!`** -- emits the `__HotShellWrapper` for static
   mode.
 - **`export_plugin!`** -- emits the `#[no_mangle]` C ABI symbols
   for shell mode (`truce_create`, `truce_abi_canary`,
-  `truce_vtable_probe`).
+  `truce_vtable_probe`). Each one carries the plugin's chosen
+  precision (via the prelude's `Sample` alias).
 
 ## Features
 

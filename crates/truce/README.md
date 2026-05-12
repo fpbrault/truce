@@ -13,11 +13,26 @@ and `plugin_info!()`), giving you a single import path for everything.
 
 - `Plugin`, `PluginExport`, `AudioBuffer`, `Editor` -- from truce-core
 - `FloatParam`, `IntParam`, `BoolParam`, `EnumParam`, `Smoother` -- from truce-params
+- `FloatParamReadF32` / `FloatParamReadF64` extension traits — bring `param.read()` into scope at the prelude's precision
 - `#[derive(Params)]`, `#[derive(ParamEnum)]`, `#[derive(State)]`, `plugin_info!()` -- from truce-derive
-- `PluginLogic` -- from truce-gui (combined DSP + GUI surface)
+- `PluginLogic` -- from truce-plugin (the user-facing leaf trait — `PluginLogic` for `f32`, `PluginLogic64` for `f64`; the prelude aliases the right one as `PluginLogic`)
 - `export_plugin!`, `export_static!`, `HotShell` -- from truce-loader
 - The `truce::plugin!` macro -- generates all the format-export glue from
   one declaration
+
+## Preludes
+
+Four flavours, each pinning a different precision combination:
+
+| Prelude | Audio buffer | `param.read()` returns | When to pick |
+|---|---|---|---|
+| `prelude` / `prelude32` | `f32` | `f32` | Default — host wire is `f32` everywhere |
+| `prelude64m` | `f32` | `f64` | Stable `f64` intermediate math, narrow on buffer write |
+| `prelude64` | `f64` | `f64` | Wrapper widens host `f32` → plugin `f64` once per block |
+
+Each prelude also defines `pub type AudioBuffer<'a, S = Sample> = ...`,
+so `&mut AudioBuffer` resolves to the prelude's chosen precision
+(and `&mut AudioBuffer<f32>` still works as an explicit override).
 
 ## Features
 

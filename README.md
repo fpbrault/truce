@@ -99,7 +99,7 @@ screenshots.
 
 ```rust
 use truce::prelude::*;
-use truce_gui::layout::{knob, widgets, GridLayout};
+use truce_gui_types::layout::{knob, widgets, GridLayout};
 
 #[derive(Params)]
 pub struct GainParams {
@@ -124,7 +124,7 @@ impl PluginLogic for Gain {
     fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
                _ctx: &mut ProcessContext) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let gain = db_to_linear(self.params.gain.smoothed_next());
+            let gain = db_to_linear(self.params.gain.read());
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
                 out[i] = inp[i] * gain;
@@ -140,6 +140,11 @@ impl PluginLogic for Gain {
 
 truce::plugin! { logic: Gain, params: GainParams }
 ```
+
+> Switch the import to `truce::prelude64::*` to write `f64` DSP
+> instead — `param.read()` returns `f64`, the audio buffer is
+> `f64`, and the format wrapper widens/narrows at the block
+> boundary. Same `impl PluginLogic` header on both precisions.
 
 A complete plugin with smoothed params, a GPU-rendered GUI knob, and
 the CLAP + VST3 + standalone defaults. Add `vst2`, `lv2`, `au`, or `aax`

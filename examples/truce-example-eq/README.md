@@ -9,6 +9,10 @@
 - Logarithmic parameter ranges for frequency and Q
 - Section-based grid layout (`LOW`, `MID`, `HIGH`)
 - Auto-bypass when band gain is near 0 dB
+- **`f64` end-to-end** via `use truce::prelude64::*` — biquad
+  coefficient computation is precision-sensitive (especially at
+  low Q × low frequency); the wrapper widens host `f32` to plugin
+  `f64` at the block boundary so the DSP path stays in `f64`
 
 ## Parameters
 
