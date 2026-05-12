@@ -82,6 +82,7 @@ mod prelude_impl {
 /// `prelude` / `prelude32`.
 pub mod prelude32 {
     pub use super::prelude_impl::*;
+    pub use truce_core::editor::PluginContextReadF32 as _;
     pub use truce_params::FloatParamReadF32 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f32;
@@ -115,6 +116,7 @@ pub mod prelude32 {
 /// hasn't committed to a precision.
 pub mod prelude64 {
     pub use super::prelude_impl::*;
+    pub use truce_core::editor::PluginContextReadF64 as _;
     pub use truce_params::FloatParamReadF64 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f64;
@@ -151,6 +153,13 @@ pub mod prelude64 {
 /// otherwise [`prelude64`] is the cleaner choice.
 pub mod prelude64m {
     pub use super::prelude_impl::*;
+    // `prelude64m` keeps audio buffers at `f32` (host wire) but reads
+    // params at `f64` for stable internal DSP math. The editor-side
+    // `get_param` follows the param-read precision — the GUI is the
+    // editor caller, but plugin code that reaches into a
+    // `PluginContext` from a build-helper expects the same precision
+    // its `param.read()` calls return.
+    pub use truce_core::editor::PluginContextReadF64 as _;
     pub use truce_params::FloatParamReadF64 as _;
     /// Audio sample type for this prelude — `f32` (host wire),
     /// despite param reads being `f64`.
@@ -165,6 +174,7 @@ pub mod prelude64m {
 /// whichever name reads better at the import site.
 pub mod prelude {
     pub use super::prelude_impl::*;
+    pub use truce_core::editor::PluginContextReadF32 as _;
     pub use truce_params::FloatParamReadF32 as _;
     /// Audio sample type for this prelude.
     pub type Sample = f32;

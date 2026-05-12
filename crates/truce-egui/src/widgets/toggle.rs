@@ -1,6 +1,6 @@
 //! Toggle switch bound to a truce parameter.
 
-use truce_core::editor::PluginContext;
+use truce_core::editor::{PluginContext, PluginContextReadF32};
 
 /// Show a toggle switch bound to a truce boolean parameter.
 ///

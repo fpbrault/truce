@@ -1,5 +1,4 @@
 use truce::prelude::*;
-use truce_core::Float;
 use truce_slint::{PluginContext, SlintEditor, SyncFn};
 
 slint::include_modules!();
@@ -92,8 +91,8 @@ impl PluginLogic for GainSlint {
 
                 // host → UI (params + meters)
                 Box::new(move |state: &PluginContext<GainParams>| {
-                    ui.set_gain(f32::from_f64(state.get_param(P::Gain)));
-                    ui.set_pan(f32::from_f64(state.get_param(P::Pan)));
+                    ui.set_gain(state.get_param(P::Gain));
+                    ui.set_pan(state.get_param(P::Pan));
                     ui.set_gain_text(slint::SharedString::from(state.format_param(P::Gain)));
                     ui.set_pan_text(slint::SharedString::from(state.format_param(P::Pan)));
                     ui.set_meter_left(meter_display(state.get_meter(P::MeterLeft)));

@@ -1,6 +1,6 @@
 //! Parameter selector (dropdown/cycle) bound to a truce parameter.
 
-use truce_core::editor::PluginContext;
+use truce_core::editor::{PluginContext, PluginContextReadF32};
 
 /// Show a cycling selector bound to a truce parameter.
 ///
@@ -24,10 +24,12 @@ pub fn param_selector<P: ?Sized>(
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
 
     if response.clicked() {
-        let value = state.get_param(id);
-        let new_value = if step_count > 1 {
-            // Cycle through discrete steps
-            let step = 1.0 / f64::from(step_count - 1);
+        let value: f32 = state.get_param(id);
+        // `step_count - 1` denominator fits losslessly in `f32` —
+        // typical discrete-param ranges are well under `2^24`.
+        #[allow(clippy::cast_precision_loss)]
+        let new_value: f32 = if step_count > 1 {
+            let step = 1.0 / (step_count - 1) as f32;
             let next = value + step;
             if next > 1.0 + step * 0.5 {
                 0.0
@@ -35,11 +37,10 @@ pub fn param_selector<P: ?Sized>(
                 next.min(1.0)
             }
         } else {
-            // Cycle in 0.1 increments
             let next = ((value * 10.0).round() + 1.0) / 10.0;
             if next > 1.0 { 0.0 } else { next }
         };
-        state.automate(id, new_value);
+        state.automate(id, f64::from(new_value));
     }
 
     if ui.is_rect_visible(rect) {
