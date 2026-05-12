@@ -9,11 +9,11 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_gui::PluginLogic;
-use truce_params::sample::Sample;
 use truce_gui::interaction::WidgetRegion;
 use truce_gui::layout::GridLayout;
 use truce_gui::render::RenderBackend;
 use truce_gui::theme::{Color, Theme};
+use truce_params::sample::Sample;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
@@ -40,14 +40,31 @@ pub struct AbiCanary {
     pub result_tail_disc: u8,
     pub result_keepalive_disc: u8,
     pub rustc_version_hash: u64,
+    /// Bit-width of the plugin's chosen sample type — `32` for `f32`,
+    /// `64` for `f64`. Without this field, a shell built against
+    /// `prelude` (f32) loading a logic dylib built against `prelude64`
+    /// would bind to a vtable whose `process()` slot expects
+    /// `AudioBuffer<f64>` — silent UB on the first audio block. The
+    /// width difference between the two `AudioBuffer<S>` instantiations
+    /// (and `dyn PluginLogic<S>`) is invisible at the dyn-trait
+    /// boundary, so a structural canary alone wouldn't catch it.
+    pub sample_precision: u8,
 }
 
 impl AbiCanary {
+    /// Build the canary for a specific sample precision `S`. The
+    /// shell calls this with its own `S`; the dylib's
+    /// `truce_abi_canary` export does the same with its own (from the
+    /// prelude alias). The two are compared at load time.
     #[must_use]
-    pub fn current() -> Self {
+    pub fn current<S: truce_params::sample::Sample>() -> Self {
+        // 8× sizeof gives us 32 for f32 / 64 for f64; the cast to u8
+        // can't overflow for any plausible sample type.
+        #[allow(clippy::cast_possible_truncation)]
+        let sample_precision = (size_of::<S>() * 8) as u8;
         Self {
-            trait_object_size: size_of::<*const dyn PluginLogic>() * 2,
-            audio_buffer_size: size_of::<AudioBuffer>(),
+            trait_object_size: size_of::<*const dyn PluginLogic<S>>() * 2,
+            audio_buffer_size: size_of::<AudioBuffer<S>>(),
             process_context_size: size_of::<ProcessContext>(),
             process_status_size: size_of::<ProcessStatus>(),
             event_size: size_of::<Event>(),
@@ -59,12 +76,13 @@ impl AbiCanary {
             color_size: size_of::<Color>(),
             vec_u8_size: size_of::<Vec<u8>>(),
             option_usize_size: size_of::<Option<usize>>(),
-            audio_buffer_align: align_of::<AudioBuffer>(),
+            audio_buffer_align: align_of::<AudioBuffer<S>>(),
             process_status_align: align_of::<ProcessStatus>(),
             result_normal_disc: discriminant_byte(&ProcessStatus::Normal),
             result_tail_disc: discriminant_byte(&ProcessStatus::Tail(0)),
             result_keepalive_disc: discriminant_byte(&ProcessStatus::KeepAlive),
             rustc_version_hash: rustc_hash(),
+            sample_precision,
         }
     }
 
@@ -119,6 +137,7 @@ impl AbiCanary {
         check!(result_tail_disc);
         check!(result_keepalive_disc);
         check!(rustc_version_hash);
+        check!(sample_precision);
         diffs
     }
 }
@@ -227,7 +246,7 @@ impl<S: Sample> PluginLogic<S> for ProbePlugin {
 /// failed to round-trip — distinct messages for `latency`, `tail`,
 /// `layout`, `hit_test`, `save_state` (default and echo paths),
 /// `uses_custom_render`, `custom_editor`, and `load_state`.
-pub fn verify_probe(probe: &mut dyn PluginLogic) -> Result<(), String> {
+pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogic<S>) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
         return Err(format!(
             "latency: expected 0xAAAA, got 0x{:X}",

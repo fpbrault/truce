@@ -76,7 +76,10 @@ macro_rules! export_plugin {
 
         #[unsafe(no_mangle)]
         pub fn truce_abi_canary() -> $crate::AbiCanary {
-            $crate::AbiCanary::current()
+            // `Sample` from the prelude — the dylib stamps its
+            // chosen precision into the canary so the shell can
+            // reject a mismatched load before vtable-binding.
+            $crate::AbiCanary::current::<Sample>()
         }
 
         #[unsafe(no_mangle)]

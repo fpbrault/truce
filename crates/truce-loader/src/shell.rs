@@ -18,6 +18,7 @@ use truce_core::info::PluginInfo;
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
+use truce_params::sample::Sample;
 
 use crate::loader::NativeLoader;
 
@@ -35,11 +36,18 @@ macro_rules! hot_debug {
 /// A hot-reloadable plugin shell.
 ///
 /// `P` is the parameter type (owned by the shell, survives reload).
+/// `S` is the plugin's sample type (defaults to `f32` — the host wire
+/// format). A `prelude64` plugin needs `S = f64`; the precision is
+/// embedded in `AbiCanary::sample_precision`, so loading an `f64`
+/// logic dylib into an `f32` shell (or vice versa) fails the canary
+/// check at load time rather than silently binding to a vtable whose
+/// `process()` slot expects a different `AudioBuffer<S>`.
+///
 /// All plugin logic (DSP, GUI rendering, layout) is delegated to
-/// the `PluginLogic` trait object in the loaded dylib.
-pub struct HotShell<P: Params> {
+/// the `PluginLogic<S>` trait object in the loaded dylib.
+pub struct HotShell<P: Params, S: Sample = f32> {
     pub params: Arc<P>,
-    loader: Arc<Mutex<NativeLoader>>,
+    loader: Arc<Mutex<NativeLoader<S>>>,
     /// Meter values written by DSP, read by GUI.
     meters: Arc<[AtomicU32; 256]>,
     sample_rate: f64,
@@ -56,9 +64,9 @@ pub struct HotShell<P: Params> {
     tail_cache: AtomicU32,
 }
 
-unsafe impl<P: Params> Send for HotShell<P> {}
+unsafe impl<P: Params, S: Sample> Send for HotShell<P, S> {}
 
-impl<P: Params + 'static> HotShell<P> {
+impl<P: Params + 'static, S: Sample> HotShell<P, S> {
     pub fn new(params: P, dylib_path: PathBuf) -> Self {
         let params = Arc::new(params);
         let params_ptr = Arc::as_ptr(&params).cast::<()>();
@@ -106,13 +114,8 @@ impl<P: Params + 'static> HotShell<P> {
     }
 }
 
-impl<P: Params + 'static> Plugin for HotShell<P> {
-    // Hot-reload mode is `f32`-only for now: the dylib boundary
-    // (`Box<dyn PluginLogic>`) takes the trait's default `S = f32`,
-    // so a `prelude64` plugin built as a logic dylib won't satisfy
-    // the loader's expected vtable. Static-mode shells (the common
-    // case for release builds) support `f64` plugins end-to-end.
-    type Sample = f32;
+impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
+    type Sample = S;
 
     fn info() -> PluginInfo
     where
@@ -154,7 +157,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer,
+        buffer: &mut AudioBuffer<S>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
@@ -255,7 +258,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         // Custom editor path (egui, iced)
         if let Some(custom) = self.try_custom_editor() {
             hot_debug!("[truce-hot] using custom editor");
-            return Some(Box::new(HotEditor::<P>::new_custom(custom)));
+            return Some(Box::new(HotEditor::<P, S>::new_custom(custom)));
         }
 
         // Built-in editor path (layout + GPU). Shares `self.loader`
@@ -310,28 +313,29 @@ enum HotEditorInner<P: Params> {
     Custom { editor: Box<dyn Editor> },
 }
 
-struct HotEditor<P: Params> {
+struct HotEditor<P: Params, S: Sample = f32> {
     kind: HotEditorInner<P>,
     /// Background thread handle for the GUI reload watcher.
     _watcher: Option<std::thread::JoinHandle<()>>,
     /// Set to true when the editor is dropped so the watcher thread exits.
     stop: Arc<AtomicBool>,
+    _sample: std::marker::PhantomData<fn() -> S>,
 }
 
-unsafe impl<P: Params> Send for HotEditor<P> {}
+unsafe impl<P: Params, S: Sample> Send for HotEditor<P, S> {}
 
-impl<P: Params> Drop for HotEditor<P> {
+impl<P: Params, S: Sample> Drop for HotEditor<P, S> {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         hot_debug!("[truce-gui-reload] stop flag set (editor dropped)");
     }
 }
 
-impl<P: Params + 'static> HotEditor<P> {
+impl<P: Params + 'static, S: Sample> HotEditor<P, S> {
     fn new_builtin(
         gpu: truce_gpu::GpuEditor<P>,
         inner: &Arc<StdMutex<truce_gui::editor::BuiltinEditor<P>>>,
-        loader: &Arc<Mutex<NativeLoader>>,
+        loader: &Arc<Mutex<NativeLoader<S>>>,
         params: &Arc<P>,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
@@ -469,6 +473,7 @@ impl<P: Params + 'static> HotEditor<P> {
             kind: HotEditorInner::Builtin { gpu },
             _watcher: watcher,
             stop,
+            _sample: std::marker::PhantomData,
         }
     }
 
@@ -479,11 +484,12 @@ impl<P: Params + 'static> HotEditor<P> {
             kind: HotEditorInner::Custom { editor },
             _watcher: None,
             stop: Arc::new(AtomicBool::new(false)),
+            _sample: std::marker::PhantomData,
         }
     }
 }
 
-impl<P: Params + 'static> Editor for HotEditor<P> {
+impl<P: Params + 'static, S: Sample> Editor for HotEditor<P, S> {
     fn size(&self) -> (u32, u32) {
         match &self.kind {
             HotEditorInner::Builtin { gpu, .. } => gpu.size(),

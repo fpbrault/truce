@@ -358,8 +358,7 @@ impl<S: Sample> RawBufferScratch<S> {
         // When matched, we zero-copy host pointers into the slice
         // arrays; when not, we widen/narrow through input_copies and
         // output_buffers.
-        let same_precision =
-            std::any::TypeId::of::<S>() == std::any::TypeId::of::<f32>();
+        let same_precision = std::any::TypeId::of::<S>() == std::any::TypeId::of::<f32>();
 
         unsafe {
             let nf = num_frames as usize;

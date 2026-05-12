@@ -38,8 +38,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use truce_core::TransportSlot;
 use truce_core::Float;
+use truce_core::TransportSlot;
 use truce_core::cast::len_u32;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::TransportInfo;

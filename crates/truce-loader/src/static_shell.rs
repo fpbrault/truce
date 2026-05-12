@@ -235,7 +235,8 @@ macro_rules! export_static {
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_gui::PluginLogic<Sample>>::supports_in_place()
+                <$logic as $crate::__macro_deps::truce_gui::PluginLogic<Sample>>::supports_in_place(
+                )
             }
 
             fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo

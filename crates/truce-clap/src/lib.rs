@@ -70,15 +70,15 @@ use clap_sys::stream::{clap_istream, clap_ostream};
 use clap_sys::string_sizes::{CLAP_NAME_SIZE, CLAP_PATH_SIZE};
 use clap_sys::version::CLAP_VERSION;
 
+use truce_core::Float;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
-use truce_core::plugin::Plugin;
-use truce_core::Float;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::midi::{denorm_7bit, pitch_bend_from_bytes, pitch_bend_to_bytes};
+use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state;
 use truce_core::wrapper::run_audio_block_with;
@@ -855,8 +855,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // output pointers after `process()` returns. Compares
         // `TypeId` at runtime; the same-precision path stays a
         // single pointer cast.
-        let same_precision = std::any::TypeId::of::<P::Sample>()
-            == std::any::TypeId::of::<f32>();
+        let same_precision = std::any::TypeId::of::<P::Sample>() == std::any::TypeId::of::<f32>();
 
         data.input_slices.clear();
         data.input_widen.clear();
@@ -892,10 +891,8 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     // SAFETY: `scratch` lives in `data` which outlives this block.
                     std::slice::from_raw_parts(scratch.as_ptr(), num_frames)
                 };
-                data.input_slices.push(transmute::<
-                    &[P::Sample],
-                    &'static [P::Sample],
-                >(slice));
+                data.input_slices
+                    .push(transmute::<&[P::Sample], &'static [P::Sample]>(slice));
                 flat_in_idx += 1;
             }
         }
@@ -927,10 +924,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     scratch.resize(num_frames, P::Sample::default());
                     std::slice::from_raw_parts_mut(scratch.as_mut_ptr(), num_frames)
                 };
-                data.output_slices.push(transmute::<
-                    &mut [P::Sample],
-                    &'static mut [P::Sample],
-                >(slice));
+                data.output_slices
+                    .push(transmute::<&mut [P::Sample], &'static mut [P::Sample]>(
+                        slice,
+                    ));
                 flat_out_idx += 1;
             }
         }
@@ -943,14 +940,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // pattern as `RawBufferScratch::build`.
         let data_ptr: *mut ClapPluginData<P> = data;
         let s = &mut *data_ptr;
-        let mut audio_buffer = transmute::<
-            AudioBuffer<'static, P::Sample>,
-            AudioBuffer<'_, P::Sample>,
-        >(AudioBuffer::from_slices(
-            &s.input_slices,
-            &mut s.output_slices,
-            num_frames,
-        ));
+        let mut audio_buffer =
+            transmute::<AudioBuffer<'static, P::Sample>, AudioBuffer<'_, P::Sample>>(
+                AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, num_frames),
+            );
 
         data.output_events.clear();
 
@@ -976,8 +969,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                 if host_ptr.is_null() || i >= data.output_narrow.len() {
                     continue;
                 }
-                let host =
-                    std::slice::from_raw_parts_mut(*host_ptr, num_frames);
+                let host = std::slice::from_raw_parts_mut(*host_ptr, num_frames);
                 let plugin = &data.output_narrow[i];
                 for (h, &p) in host.iter_mut().zip(plugin.iter()) {
                     *h = p.to_f32();

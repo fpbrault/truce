@@ -241,7 +241,15 @@ macro_rules! __plugin_impl {
 macro_rules! __plugin_hot_reload {
     ($logic:ty, $params:ty) => {
         pub struct __HotShellWrapper {
-            inner: $crate::__reexport::HotShell<$params>,
+            // `Sample` is the prelude's type alias (`f32` for
+            // `prelude` / `prelude32` / `prelude64m`, `f64` for
+            // `prelude64`). `HotShell` is generic over the sample
+            // type so a `prelude64` plugin can hot-reload too; the
+            // matching dylib must have been built against the same
+            // prelude (its `AbiCanary::sample_precision` is checked
+            // at load time, so a mismatch is a clean canary failure
+            // rather than a silent UB on the first audio block).
+            inner: $crate::__reexport::HotShell<$params, Sample>,
         }
 
         impl __HotShellWrapper {
@@ -296,16 +304,13 @@ macro_rules! __plugin_hot_reload {
         }
 
         impl $crate::core::plugin::Plugin for __HotShellWrapper {
-            // Hot-reload pins to `f32` regardless of which prelude
-            // the plugin imports; the loader's `Box<dyn PluginLogic>`
-            // ABI takes the trait's default `S = f32`.
-            type Sample = f32;
+            type Sample = Sample;
 
             fn supports_in_place() -> bool
             where
                 Self: Sized,
             {
-                <$logic as $crate::gui::PluginLogic>::supports_in_place()
+                <$logic as $crate::gui::PluginLogic<Sample>>::supports_in_place()
             }
 
             fn info() -> $crate::core::info::PluginInfo
@@ -327,7 +332,7 @@ macro_rules! __plugin_hot_reload {
                 // re-discovery anyway. Reloading the logic dylib
                 // can iterate DSP and GUI freely; bus layouts
                 // changes warrant a shell rebuild + DAW rescan.
-                <$logic as $crate::gui::PluginLogic>::bus_layouts()
+                <$logic as $crate::gui::PluginLogic<Sample>>::bus_layouts()
             }
 
             fn init(&mut self) {
@@ -340,7 +345,7 @@ macro_rules! __plugin_hot_reload {
 
             fn process(
                 &mut self,
-                buffer: &mut $crate::core::buffer::AudioBuffer<f32>,
+                buffer: &mut $crate::core::buffer::AudioBuffer<Sample>,
                 events: &$crate::core::events::EventList,
                 context: &mut $crate::core::process::ProcessContext,
             ) -> $crate::core::process::ProcessStatus {
