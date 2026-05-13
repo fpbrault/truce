@@ -90,17 +90,26 @@ pub(crate) struct MacosPackagingConfig {
     /// `APPLE_ID` + `TEAM_ID` + `APP_SPECIFIC_PASSWORD`).
     #[serde(default)]
     pub(crate) notarize: bool,
+    /// Welcome-page HTML for the productbuild Distribution wizard
+    /// (relative to workspace root). macOS-only — Windows has its own
+    /// `[windows.packaging] welcome_bmp` slot with a different file
+    /// format (164x314 .bmp).
+    pub(crate) welcome_html: Option<String>,
+    /// License-page HTML for the productbuild Distribution wizard.
+    /// macOS-only — Windows uses `[windows.packaging] license_rtf`.
+    pub(crate) license_html: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
 pub(crate) struct PackagingConfig {
+    /// Default format list for `cargo truce package` when no
+    /// `--formats` flag is passed. Cross-platform — both the macOS
+    /// `.pkg` and Windows Inno Setup paths read it. Linux's tarball
+    /// pipeline ignores it (Linux ships every default-feature format
+    /// the plugin built, no opt-in).
     #[serde(default)]
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) formats: Vec<String>,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) welcome_html: Option<String>,
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) license_html: Option<String>,
     /// Preferred scope for `cargo truce package`: `"user"`,
     /// `"system"`, or `"ask"`. Absent = `"ask"` (the indie-installer
     /// convention where the end user picks at install time). CLI

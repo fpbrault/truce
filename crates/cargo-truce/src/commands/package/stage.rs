@@ -9,7 +9,7 @@ use crate::install_scope::PkgScope;
 use crate::pace_sign_aax_macos;
 use crate::{Config, PluginDef, Res, codesign_bundle};
 #[cfg(target_os = "macos")]
-use crate::{PackagingConfig, copy_dir_recursive};
+use crate::{MacosPackagingConfig, copy_dir_recursive};
 #[cfg(target_os = "macos")]
 use std::fmt::Write;
 use std::fs;
@@ -608,7 +608,7 @@ pub(crate) fn generate_distribution_xml(
     bundle_id: &str,
     formats: &[PkgFormat],
     version: &str,
-    resources: Option<&PackagingConfig>,
+    resources: Option<&MacosPackagingConfig>,
     scope: PkgScope,
 ) -> String {
     let mut choices_outline = String::new();

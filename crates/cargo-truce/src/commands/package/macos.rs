@@ -242,7 +242,7 @@ fn package_one_suite(
         &o.config.vendor.id,
         o.formats,
         suite_version,
-        Some(&o.config.packaging),
+        Some(&o.config.macos.packaging),
         o.effective_scope,
     );
     let dist_xml_path = suite_staging.join("distribution.xml");
@@ -251,8 +251,14 @@ fn package_one_suite(
     let resources_dir = suite_staging.join("resources");
     fs::create_dir_all(&resources_dir)?;
     for (key, dst_name) in [
-        (o.config.packaging.welcome_html.as_deref(), "welcome.html"),
-        (o.config.packaging.license_html.as_deref(), "license.html"),
+        (
+            o.config.macos.packaging.welcome_html.as_deref(),
+            "welcome.html",
+        ),
+        (
+            o.config.macos.packaging.license_html.as_deref(),
+            "license.html",
+        ),
     ] {
         if let Some(html) = key {
             let src = root.join(html);
@@ -324,7 +330,7 @@ fn generate_suite_distribution_xml(
     vendor_id: &str,
     formats: &[PkgFormat],
     version: &str,
-    resources: Option<&crate::config::PackagingConfig>,
+    resources: Option<&crate::config::MacosPackagingConfig>,
     scope: crate::install_scope::PkgScope,
 ) -> String {
     use std::fmt::Write as _;
@@ -815,7 +821,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &p.bundle_id,
         o.formats,
         o.version,
-        Some(&o.config.packaging),
+        Some(&o.config.macos.packaging),
         o.effective_scope,
     );
     let dist_xml_path = staging.join("distribution.xml");
@@ -825,8 +831,14 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     let resources_dir = staging.join("resources");
     fs::create_dir_all(&resources_dir)?;
     for (key, dst_name) in [
-        (o.config.packaging.welcome_html.as_deref(), "welcome.html"),
-        (o.config.packaging.license_html.as_deref(), "license.html"),
+        (
+            o.config.macos.packaging.welcome_html.as_deref(),
+            "welcome.html",
+        ),
+        (
+            o.config.macos.packaging.license_html.as_deref(),
+            "license.html",
+        ),
     ] {
         if let Some(html) = key {
             let src = root.join(html);
