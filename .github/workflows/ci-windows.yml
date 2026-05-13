@@ -18,12 +18,12 @@ concurrency:
 
 jobs:
   test:
-    name: windows-latest (1.88)
+    name: windows-latest (1.90)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
         with:
           components: clippy
 
