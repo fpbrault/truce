@@ -1065,19 +1065,46 @@ fn build_and_lipo_format(
     label: &str,
 ) -> Res {
     let suffix = format!("_{feature}");
-    let mut base: Vec<&str> = Vec::new();
-    for p in plugins {
-        base.push("-p");
-        base.push(&p.crate_name);
-    }
-    base.extend_from_slice(&["--no-default-features", "--features", feature]);
 
-    if archs.len() == 1 {
-        eprintln!("Building {label} ({})...", archs[0].triple());
+    // AU v2 needs a unique cocoa-view class name per dylib so hosts
+    // that look up classes via `[NSBundle classNamed:]` (REAPER) can
+    // find the right one — see `truce-au`'s `build.rs`. That means
+    // one cargo invocation per plugin with `TRUCE_AU_PLUGIN_ID` set,
+    // instead of one batched build for all plugins.
+    if feature == "au" {
+        if archs.len() == 1 {
+            eprintln!("Building {label} ({})...", archs[0].triple());
+        } else {
+            eprintln!("Building {label} for {} archs...", archs.len());
+        }
+        for p in plugins {
+            let env = [("TRUCE_AU_PLUGIN_ID", p.bundle_id.as_str())];
+            let args: Vec<&str> = vec![
+                "-p",
+                &p.crate_name,
+                "--no-default-features",
+                "--features",
+                feature,
+            ];
+            for &arch in archs {
+                crate::cargo_build_for_arch(&env, &args, arch, dt)?;
+            }
+        }
     } else {
-        eprintln!("Building {label} for {} archs...", archs.len());
+        let mut base: Vec<&str> = Vec::new();
+        for p in plugins {
+            base.push("-p");
+            base.push(&p.crate_name);
+        }
+        base.extend_from_slice(&["--no-default-features", "--features", feature]);
+
+        if archs.len() == 1 {
+            eprintln!("Building {label} ({})...", archs[0].triple());
+        } else {
+            eprintln!("Building {label} for {} archs...", archs.len());
+        }
+        cargo_build_multi_arch(archs, &base, dt)?;
     }
-    cargo_build_multi_arch(archs, &base, dt)?;
 
     for &arch in archs {
         for p in plugins {

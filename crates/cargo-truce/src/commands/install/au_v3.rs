@@ -161,8 +161,15 @@ fn build_rust_framework_dylib(
 
     for &arch in archs {
         crate::vprintln!("  Building Rust framework ({})...", arch.triple());
+        // Same `TRUCE_AU_PLUGIN_ID` as AU v2 so the truce-au build
+        // cache is shared across the v2 and v3 paths for one plugin —
+        // and so the framework dylib's cocoa-view class name matches
+        // what the .component build produced. v3 doesn't itself need
+        // unique class names (the .appex runs sandboxed per-process),
+        // but keeping the env in lockstep with v2 avoids invalidating
+        // the truce-au compile when packaging both formats.
         cargo_build_for_arch(
-            &[],
+            &[("TRUCE_AU_PLUGIN_ID", p.bundle_id.as_str())],
             &[
                 "-p",
                 &p.crate_name,
