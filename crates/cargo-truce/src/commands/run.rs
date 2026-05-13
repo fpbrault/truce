@@ -169,7 +169,35 @@ fn stage_macos_app_bundle(
     let exe_name = bin_filename(bin_stem);
     fs_ctx::copy(built, macos.join(&exe_name))?;
 
-    crate::commands::package::stage::write_standalone_info_plist(staged, plugin, &exe_name, vendor)
+    // Per-plugin icon: same logic the packaging path uses, so the
+    // live `cargo truce run` window shows the same icon as the
+    // installed app. Missing-file is a hard error to keep dev /
+    // packaging behaviour symmetric.
+    let icon_present = if let Some(icon_rel) = &plugin.macos_icon {
+        let icon_src = crate::project_root().join(icon_rel);
+        if !icon_src.exists() {
+            return Err(format!(
+                "macos_icon for `{}` points to {} but no file is there.",
+                plugin.name,
+                icon_src.display()
+            )
+            .into());
+        }
+        let resources_dir = staged.join("Contents").join("Resources");
+        fs_ctx::create_dir_all(&resources_dir)?;
+        fs_ctx::copy(&icon_src, resources_dir.join("icon.icns"))?;
+        true
+    } else {
+        false
+    };
+
+    crate::commands::package::stage::write_standalone_info_plist(
+        staged,
+        plugin,
+        &exe_name,
+        vendor,
+        icon_present,
+    )
 }
 
 /// On macOS the staged path is `<Plugin>.app/`; the real binary

@@ -505,7 +505,29 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
     perms.set_mode(0o755);
     fs::set_permissions(&exe_dst, perms)?;
 
-    write_standalone_info_plist(&staged_app, p, &bin_stem, &config.vendor)?;
+    // Optional per-plugin app icon. Drop the `.icns` into
+    // `Contents/Resources/icon.icns` and let `write_standalone_info_plist`
+    // emit the matching `CFBundleIconFile` key. Absent = no icon
+    // (system default folder-with-cog).
+    let icon_present = if let Some(icon_rel) = &p.macos_icon {
+        let icon_src = crate::project_root().join(icon_rel);
+        if !icon_src.exists() {
+            return Err(format!(
+                "macos_icon for `{}` points to {} but no file is there.",
+                p.name,
+                icon_src.display()
+            )
+            .into());
+        }
+        let resources_dir = staged_app.join("Contents/Resources");
+        fs::create_dir_all(&resources_dir)?;
+        fs::copy(&icon_src, resources_dir.join("icon.icns"))?;
+        true
+    } else {
+        false
+    };
+
+    write_standalone_info_plist(&staged_app, p, &bin_stem, &config.vendor, icon_present)?;
 
     codesign_bundle(
         staged_app.to_str().unwrap(),
@@ -527,11 +549,20 @@ pub(crate) fn write_standalone_info_plist(
     plugin: &PluginDef,
     bin_stem: &str,
     vendor: &crate::config::VendorConfig,
+    icon_present: bool,
 ) -> Res {
     let mic_usage = format!(
         "{} would like to use the microphone for plugin audio input.",
         plugin.name
     );
+    // Emit `CFBundleIconFile` only when the caller staged an
+    // `icon.icns` next to Info.plist. macOS will otherwise scribble a
+    // missing-resource error in the system log on first launch.
+    let icon_key = if icon_present {
+        "    <key>CFBundleIconFile</key>\n    <string>icon</string>\n"
+    } else {
+        ""
+    };
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -545,7 +576,7 @@ pub(crate) fn write_standalone_info_plist(
     <string>{vendor_id}.{bundle_id}.standalone</string>
     <key>CFBundleExecutable</key>
     <string>{exe}</string>
-    <key>CFBundlePackageType</key>
+{icon_key}    <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
     <string>1</string>

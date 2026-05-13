@@ -146,15 +146,22 @@ pub(crate) struct PluginDef {
     pub(crate) au_tag: String,
     /// Per-plugin Windows app icon (`.ico`, path relative to workspace
     /// root). Embedded as `RT_GROUP_ICON` in the standalone `.exe`.
-    /// macOS (`.icns`) and Linux icon support land as separate fields
-    /// when those branches arrive — file formats don't survive a
-    /// single cross-OS slot. Distinct from `[windows.packaging]
-    /// installer_icon` (Inno-wizard chrome): a vendor with one
-    /// installer-window logo can still ship different per-product app
-    /// icons.
+    /// Distinct from `[windows.packaging] installer_icon` (Inno-wizard
+    /// chrome): a vendor with one installer-window logo can still ship
+    /// different per-product app icons.
     #[serde(default)]
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) windows_icon: Option<String>,
+    /// Per-plugin macOS app icon (`.icns`, path relative to workspace
+    /// root). Copied into the standalone `.app`'s `Contents/Resources/`
+    /// and referenced by `CFBundleIconFile` so Finder, the Dock,
+    /// Launchpad, and Spotlight pick it up. Linux uses `.desktop` +
+    /// freedesktop icons — file formats don't survive a single
+    /// cross-OS slot. macOS has no installer-chrome icon equivalent;
+    /// `.pkg` files inherit Installer.app's icon by design.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) macos_icon: Option<String>,
 }
 
 impl std::ops::Deref for PluginDef {
@@ -445,6 +452,7 @@ mod suite_tests {
             au3_subtype: None,
             au_tag: default_au_tag(),
             windows_icon: None,
+            macos_icon: None,
         }
     }
 
