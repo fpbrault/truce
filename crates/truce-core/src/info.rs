@@ -7,6 +7,12 @@ pub struct PluginInfo {
     pub version: &'static str,
     pub category: PluginCategory,
 
+    /// Short identifier (`bundle_id` in `truce.toml`). Used to derive
+    /// the LV2 plugin URI (`{vendor.url}/lv2/{bundle_id}`); also a
+    /// stable, vendor-agnostic key for "this plugin" that doesn't
+    /// drift with display-name changes the way `clap_id` does.
+    pub bundle_id: &'static str,
+
     // Format-specific IDs
     pub vst3_id: &'static str,
     pub clap_id: &'static str,
