@@ -78,11 +78,11 @@ pub(crate) use util::tag_info;
 pub(crate) use util::{rustup_has_target, tmp_aax_template};
 
 // macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline. The
-// `PackagingConfig` / `copy_dir_recursive` re-exports land here too —
-// only `commands::package::{macos, stage}` consume them, and both are
-// macOS-gated.
+// `MacosPackagingConfig` / `copy_dir_recursive` re-exports land here
+// too — only `commands::package::{macos, stage}` consume them, and
+// both are macOS-gated.
 #[cfg(target_os = "macos")]
-pub(crate) use config::PackagingConfig;
+pub(crate) use config::MacosPackagingConfig;
 #[cfg(target_os = "macos")]
 pub(crate) use util::{
     MacArch, cargo_build_for_arch, cargo_build_multi_arch, copy_dir_recursive, extract_team_id,
