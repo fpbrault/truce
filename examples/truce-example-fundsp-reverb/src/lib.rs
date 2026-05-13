@@ -85,8 +85,7 @@ pub struct FundspReverb {
     mix_shared: Shared,
     graph: Box<dyn AudioUnit>,
     // Inputs the current graph was built with. `reset()` skips the
-    // rebuild when neither changed — many DAWs call `reset()` on
-    // every transport stop/start, and rebuilding would drop the tail.
+    // rebuild when neither changed.
     last_built_sr: f64,
     last_built_time_s: f32,
 }
@@ -104,11 +103,10 @@ impl FundspReverb {
         }
     }
 
-    /// Allocates via `allocate()` — must stay off the audio thread.
+    /// Allocates via `allocate()`.
     fn rebuild_graph(&mut self, sample_rate: f64, time_s: f32) {
         // fundsp SVFs take inputs positionally as `(signal, cutoff, Q)`;
-        // every input is `f32` so the type system can't catch a swap —
-        // a wrong stack order feeds the cutoff as audio.
+        // every input is `f32` so the type system can't catch a swap.
         let hp_l = (pass() | var(&self.low_cut_shared) | dc(FILTER_Q)) >> highpass::<f32>();
         let hp_r = (pass() | var(&self.low_cut_shared) | dc(FILTER_Q)) >> highpass::<f32>();
         let lp_l = (pass() | var(&self.high_cut_shared) | dc(FILTER_Q)) >> lowpass::<f32>();
@@ -138,8 +136,7 @@ impl PluginLogic for FundspReverb {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
         let time_s = self.params.time.value();
-        // SR is a discrete host setting, not a measurement — exact-bit
-        // compare avoids epsilon false-positives that would rebuild.
+        // SR is a discrete host setting, not a measurement.
         let sr_changed = sample_rate.to_bits() != self.last_built_sr.to_bits();
         let time_changed = (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
         if sr_changed || time_changed {
