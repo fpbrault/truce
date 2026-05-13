@@ -343,6 +343,7 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = sizeof(AudioUnitCocoaViewInfo); break;
         }
         case 64000: /* kTrucePrivateProperty_RustContext */
+        case 64001: /* kTrucePrivateProperty_AuCallbacks */
             size = sizeof(void*); break;
         default:
             return kAudioUnitErr_InvalidProperty;
@@ -579,6 +580,17 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
 
         case 64000: { /* kTrucePrivateProperty_RustContext */
             *(void **)outData = inst->rustCtx;
+            *ioSize = sizeof(void*);
+            return noErr;
+        }
+
+        case 64001: { /* kTrucePrivateProperty_AuCallbacks */
+            /* The cocoa view class is shared across every truce plugin
+             * dylib loaded in the host process, so it must not read
+             * per-dylib globals. It pulls the right callbacks table
+             * through the AudioUnit's dispatch table instead — which
+             * lands here, in the dylib that owns this instance. */
+            *(const AuCallbacks **)outData = g_callbacks;
             *ioSize = sizeof(void*);
             return noErr;
         }

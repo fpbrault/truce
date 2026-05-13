@@ -6,9 +6,6 @@
 
 pub mod ffi;
 
-#[cfg(target_os = "macos")]
-mod cocoa_view;
-
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
@@ -836,16 +833,6 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             len_u32(param_descs.len()),
         );
     }
-
-    // Register the Cocoa UI view factory class with the ObjC runtime
-    // under a unique per-plugin name. Replaces the C/ObjC build-time
-    // `-DTRUCE_AU_VIEW_FACTORY_NAME=...` define so this crate's shim
-    // compilation is plugin-agnostic.
-    #[cfg(target_os = "macos")]
-    cocoa_view::register(
-        std::ptr::from_ref::<AuPluginDescriptor>(descriptor),
-        std::ptr::from_ref::<AuCallbacks>(callbacks),
-    );
 }
 
 // ---------------------------------------------------------------------------

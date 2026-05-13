@@ -6,6 +6,7 @@ fn main() {
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
     println!("cargo:rerun-if-changed=shim/au_v2_shim.c");
+    println!("cargo:rerun-if-changed=shim/au_v2_view.m");
     println!("cargo:rerun-if-changed=shim/au_shim_common.c");
     let shim_include = truce_shim_types::include_dir();
     println!(
@@ -16,10 +17,13 @@ fn main() {
     // The C/ObjC shim is plugin-id agnostic and version-agnostic —
     // both production AU paths share the same compiled framework dylib:
     //
-    // - AU v2 (.component): the cocoa view factory class is allocated
-    //   at runtime with a unique name in `cocoa_view::register`. The
-    //   v2 shim is otherwise pure C using the AudioComponentPlugIn
-    //   interface (a function-pointer table, not ObjC subclassing).
+    // - AU v2 (.component): plain-C `AudioComponentPlugInInterface`
+    //   dispatch + a single ObjC class (`TruceAUCocoaViewProxy`)
+    //   compiled into every plugin so it appears in `__objc_classlist`,
+    //   which `[NSBundle classNamed:]`-based hosts (REAPER) require.
+    //   The class is shared across plugins; methods route through the
+    //   AudioUnit's private callbacks property so per-dylib globals
+    //   stay correct.
     //
     // - AU v3 (.appex): the AUAudioUnit subclass + factory are
     //   compiled in Swift (templates/au3/AudioUnitFactory.swift) into
@@ -32,6 +36,7 @@ fn main() {
     let mut build = cc::Build::new();
     build.file("shim/au_shim_common.c");
     build.file("shim/au_v2_shim.c");
+    build.file("shim/au_v2_view.m");
 
     build
         .include(&shim_include)
