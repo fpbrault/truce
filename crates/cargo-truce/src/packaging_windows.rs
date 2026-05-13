@@ -250,7 +250,7 @@ pub(crate) fn cmd_package(
 
         let installer = dist_dir.join(format!(
             "{}-{}-windows{}.exe",
-            p.name,
+            p.crate_name,
             version,
             scope.dist_suffix()
         ));
@@ -1282,10 +1282,15 @@ fn render_iss(
     );
     setup.push_str("DisableDirPage=yes\r\n");
     let _ = write!(setup, "OutputDir={}\r\n", iss_escape_path(dist_dir));
+    // Output filename uses `crate_name` so plugins-vs-suites + the
+    // three OSes all line up on a single slug-style basename — see
+    // matching note in `macos.rs::run_productbuild` for the
+    // reasoning. The wizard UI still shows the display `p.name`
+    // (set above as the `AppName`); only the .exe filename changes.
     let _ = write!(
         setup,
         "OutputBaseFilename={}-{}-windows\r\n",
-        iss_escape(&p.name),
+        iss_escape(&p.crate_name),
         iss_escape(version),
     );
     setup.push_str("Compression=lzma2\r\n");

@@ -198,9 +198,11 @@ struct TarballCtx<'a> {
     arch: &'a str,
 }
 
-/// One tarball per plugin: `{bundle_id}-{version}-linux-{arch}.tar.gz`.
+/// One tarball per plugin: `{crate_name}-{version}-linux-{arch}.tar.gz`.
+/// Uses `crate_name` (not `bundle_id`) so the dist filename matches
+/// the macOS `.pkg` / Windows `.exe` produced for the same plugin.
 fn build_per_plugin_tarball(ctx: &TarballCtx<'_>, plugin: &PluginDef) -> Res {
-    let stem = format!("{}-{}-linux-{}", plugin.bundle_id, ctx.version, ctx.arch);
+    let stem = format!("{}-{}-linux-{}", plugin.crate_name, ctx.version, ctx.arch);
     let staging = plugin_stage_dir(ctx.root, &plugin.bundle_id, ctx.arch)?;
 
     let plugin_summary = stage_plugin_payload(plugin, &staging, ctx.bundles_dir, ctx.manifest)?;
