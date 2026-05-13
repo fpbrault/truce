@@ -358,10 +358,13 @@ Usage: cargo truce package [-p <crate>] [--suite <name>] \
 [--user|--system|--ask] [--no-notarize] [--no-sign|--no-pace-sign] \
 [--host-only|--universal]
 
-Build, sign, and package plugins into installers:
-  - macOS:   `target/dist/<Name>-<version>-<platform>.pkg` (productbuild)
-  - Windows: `target/dist/<Name>-<version>-<platform>.exe` (Inno Setup)
-  - Linux:   `target/dist/<Name>-<version>-<platform>.tar.gz` + install.sh
+Build, sign, and package plugins into installers. Per-plugin dist
+filenames use the cargo crate name (e.g. `truce-example-gain`);
+suite filenames use the suite's bundle_id. Same slug across
+macOS / Windows / Linux:
+  - macOS:   `target/dist/<crate>-<version>-macos.pkg` (productbuild)
+  - Windows: `target/dist/<crate>-<version>-windows.exe` (Inno Setup)
+  - Linux:   `target/dist/<crate>-<version>-linux-<arch>.tar.gz` + install.sh
 
 Suites: declare one or more `[[suite]]` entries in truce.toml to bundle
 multiple plugins into a single installer per platform. With suites

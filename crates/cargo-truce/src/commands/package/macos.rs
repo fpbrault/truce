@@ -893,9 +893,17 @@ fn run_productbuild(
     resources_dir: &Path,
     o: &PackageOpts,
 ) -> Result<PathBuf, crate::BoxErr> {
+    // Filename uses `crate_name` for per-plugin installers so the
+    // output is consistent across macOS / Windows / Linux and across
+    // plugins vs suites (which already key off a bundle/crate-style
+    // slug). Display names with spaces (`Truce Gain.pkg`) sort weirdly
+    // in directory listings, embed funny in URLs / artifact-uploaders,
+    // and don't match the Linux tarball's slug. Keep the user-facing
+    // bundle name + Info.plist `CFBundleName` etc. on `p.name` — only
+    // the dist artifact's filename changes.
     let pkg_name = format!(
         "{}-{}-macos{}.pkg",
-        p.name,
+        p.crate_name,
         o.version,
         o.scope.dist_suffix()
     );
