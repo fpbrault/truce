@@ -182,6 +182,64 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
         self.io_pair(ch, ch)
     }
 
+    /// Iterate per-frame and hand a fixed-size `(input, output)`
+    /// stack-array pair to `tick`. Sized at the type level by const
+    /// generic `N`, which must equal [`Self::channels`].
+    ///
+    /// `io()` / `io_pair()` give a per-channel slice view, which is
+    /// the right shape for "process channel `ch` in isolation"
+    /// loops. But libraries that expect a per-frame `(in: &[S],
+    /// out: &mut [S])` callback — `fundsp::AudioUnit::tick`,
+    /// `nih_plug`'s frame iterators, custom per-sample DSP nodes —
+    /// can't take that shape directly without either copying inputs
+    /// into a scratch first (heap allocation on the audio thread)
+    /// or fighting the borrow checker over two simultaneous `&mut`
+    /// borrows of the buffer.
+    ///
+    /// This helper does the per-frame transpose in-place against a
+    /// stack-allocated `[S; N]` pair, calls `tick` `num_samples()`
+    /// times, and writes back. No heap, no borrow gymnastics at the
+    /// call site:
+    ///
+    /// ```ignore
+    /// // Stereo plugin delegating per-frame DSP to fundsp:
+    /// buffer.for_each_frame::<2, _>(|frame_in, frame_out| {
+    ///     self.graph.tick(frame_in, frame_out);
+    /// });
+    /// ```
+    ///
+    /// `&[S; N]` deref-coerces to `&[S]` at the call site, so
+    /// callers can pass the arrays straight to slice-taking APIs
+    /// like fundsp's `tick`.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds panic if `N != self.channels()`. Release builds
+    /// rely on the same precondition without checking; reading past
+    /// the actual channel count would index out of bounds anyway.
+    pub fn for_each_frame<const N: usize, F>(&mut self, mut tick: F)
+    where
+        F: FnMut(&[S; N], &mut [S; N]),
+    {
+        debug_assert_eq!(
+            N,
+            self.channels(),
+            "for_each_frame::<{N}> requires the buffer to have exactly {N} channels"
+        );
+        let mut frame_in = [S::default(); N];
+        let mut frame_out = [S::default(); N];
+        let end = self.offset + self.num_samples;
+        for i in self.offset..end {
+            for (ch, slot) in frame_in.iter_mut().enumerate() {
+                *slot = self.inputs[ch][i];
+            }
+            tick(&frame_in, &mut frame_out);
+            for (ch, sample) in frame_out.iter().enumerate() {
+                self.outputs[ch][i] = *sample;
+            }
+        }
+    }
+
     /// Peak absolute value across an output channel, returned as `f32`
     /// because meters / UI display always work in `f32` regardless of
     /// the plugin's internal precision.
