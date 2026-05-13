@@ -542,13 +542,19 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
 /// URI under the vendor's URL so that LV2 hosts that expect well-formed
 /// web URIs (notably the lilv reference loader used by Ardour/Reaper) are
 /// happy. Falls back to `urn:truce:{id}` if the vendor URL is empty.
+///
+/// Keyed off `bundle_id` (not `clap_id`) so the URI matches what the
+/// manifest writer in `truce-derive::lv2_emit` puts in `manifest.ttl`
+/// — those two strings MUST agree or hosts reject the plugin at scan
+/// time (or discover under one URI then fail to look up the saved
+/// project's stored URI).
 #[must_use]
 pub fn plugin_uri(info: &PluginInfo) -> String {
     if info.url.is_empty() {
-        return format!("urn:truce:{}", info.clap_id);
+        return format!("urn:truce:{}", info.bundle_id);
     }
     let base = info.url.trim_end_matches('/');
-    format!("{base}/lv2/{}", info.clap_id)
+    format!("{base}/lv2/{}", info.bundle_id)
 }
 
 // ---------------------------------------------------------------------------

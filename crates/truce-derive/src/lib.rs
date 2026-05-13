@@ -95,6 +95,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let plugin = find_plugin(&config, &pkg_name);
 
     let name = &plugin.name;
+    let bundle_id = &plugin.bundle_id;
     let vendor = &config.vendor.name;
     let url = &config.vendor.url;
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
@@ -192,6 +193,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 url: #url,
                 version: #version,
                 category: #category,
+                bundle_id: #bundle_id,
                 vst3_id: #plugin_id,
                 clap_id: #plugin_id,
                 fourcc: ::truce::core::info::fourcc(#resolved_fourcc.as_bytes()),
