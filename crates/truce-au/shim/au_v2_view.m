@@ -1,25 +1,21 @@
 /**
  * AU v2 Cocoa UI view factory.
  *
- * Defines `TruceAUCocoaViewProxy` — the `AUCocoaUIBase` class the
- * host instantiates after reading our `kAudioUnitProperty_CocoaUI`.
- * Compiled into every truce plugin dylib so the class appears in
- * `__objc_classlist`, which hosts like REAPER require for their
- * `[NSBundle classNamed:]`-based view lookup. Hosts that fall through
- * to `NSClassFromString` (Logic, auval) don't care, but the
- * statically-listed class works for them too.
+ * Defines the `AUCocoaUIBase` class the host instantiates after
+ * reading our `kAudioUnitProperty_CocoaUI`. The class is compiled
+ * into every truce plugin dylib so it appears in `__objc_classlist`,
+ * which `[NSBundle classNamed:]`-based hosts (REAPER) require.
  *
- * One stable class name across every plugin instead of a unique name
- * per dylib: Logic loads many .components into one process; if every
- * dylib publishes a different class name, each gets a unique
- * `__objc_classlist` entry too, but per-dylib unique names + static
- * registration would require recompiling this shim per plugin.
- * Keeping the name fixed means `libobjc` emits a duplicate-class
- * warning at load time and picks one dylib's class as "the winner".
- * The winner's method implementations dispatch through the
- * AudioUnit's private callbacks property (NOT through per-dylib
- * statics), so the AU instance always reaches its own plugin's
- * callbacks regardless of which dylib's copy of the class won.
+ * The class name MUST be unique per plugin. AppKit/AudioUnit hosts
+ * load every installed `.component` into one process; if two plugins
+ * publish a class with the same name, `libobjc` keeps the first one
+ * and `[NSBundle classNamed:name]` on the loser's bundle returns nil
+ * — the host then thinks the plugin has no GUI. Uniqueness comes
+ * from the `TRUCE_AU_PLUGIN_ID` env var that `cargo-truce` sets at
+ * build time; the build.rs sanitises and passes it as a `-D` define.
+ * Without that env (plain `cargo build` for unit tests), the class
+ * falls back to a default name — fine for isolated tests, not for
+ * multi-plugin hosting.
  */
 
 @import AppKit;
@@ -32,15 +28,21 @@
 //   64000: AuPlugin context pointer (rustCtx)
 //   64001: pointer to the AU's AuCallbacks table (g_callbacks of the
 //          dylib that owns this AudioUnit). Reading both via the AU
-//          dispatch table makes this class plugin-agnostic — the
-//          per-dylib globals reached are always the right ones.
+//          dispatch table keeps the methods plugin-agnostic — per-
+//          dylib globals reached are always the right ones.
 #define kTrucePrivateProperty_RustContext  64000
 #define kTrucePrivateProperty_AuCallbacks  64001
 
-@interface TruceAUCocoaViewProxy : NSObject <AUCocoaUIBase>
+#ifndef TRUCE_AU_VIEW_FACTORY_NAME
+// Default name when `TRUCE_AU_PLUGIN_ID` is unset — keeps `cargo build`
+// of the workspace cdylibs working for unit tests.
+#define TRUCE_AU_VIEW_FACTORY_NAME TruceAUCocoaViewProxy
+#endif
+
+@interface TRUCE_AU_VIEW_FACTORY_NAME : NSObject <AUCocoaUIBase>
 @end
 
-@implementation TruceAUCocoaViewProxy
+@implementation TRUCE_AU_VIEW_FACTORY_NAME
 
 - (unsigned)interfaceVersion {
     return 0;
@@ -75,8 +77,11 @@
 
 @end
 
-// Class-name lookup for the v2 shim's `kAudioUnitProperty_CocoaUI`
-// response. Stable string — matches the `@interface` above.
+// Stringify the class name for the v2 shim's `kAudioUnitProperty_CocoaUI`
+// response. Two-step macro so the argument is expanded before stringification.
+#define _TRUCE_STRINGIFY(x) #x
+#define TRUCE_STRINGIFY(x) _TRUCE_STRINGIFY(x)
+
 const char *truce_au_view_factory_class_name(void) {
-    return "TruceAUCocoaViewProxy";
+    return TRUCE_STRINGIFY(TRUCE_AU_VIEW_FACTORY_NAME);
 }

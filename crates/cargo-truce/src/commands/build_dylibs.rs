@@ -166,33 +166,49 @@ pub(crate) fn build_format_dylibs(
     format_features.extend_from_slice(extra_features);
     let combined = format_features.join(",");
 
-    // No per-plugin or per-format env vars left — display-name
-    // overrides moved into `PluginInfo` (`truce::plugin_info!`), and
-    // the v2/v3 distinction in `truce-au`'s name resolution went
-    // away once the v3 host's display name was traced to the appex
-    // plist rather than the framework dylib. Every plugin in the
-    // batch can share one cargo invocation with empty env.
-    let env_pairs: &[(&str, &str)] = &[];
-
-    // Single `cargo build -p a -p b -p c …` for every plugin in this
-    // format batch. Two wins: cargo pays the dep-graph-resolve and
-    // process-startup cost once instead of N times, and codegen for
-    // the leaf example crates parallelises across the plugins (cargo
-    // can't parallelise across separate invocations).
-    let mut cargo_args: Vec<String> = Vec::with_capacity(plugins.len() * 2 + 5);
-    for p in plugins {
-        cargo_args.push("-p".into());
-        cargo_args.push(p.crate_name.clone());
+    // AU v2 needs a per-plugin `TRUCE_AU_PLUGIN_ID` env so each
+    // dylib's cocoa-view class lands in `__objc_classlist` under a
+    // unique name. Hosts load every `.component` into one process;
+    // libobjc dedupes classes by name and `[NSBundle classNamed:]`
+    // returns nil on the loser's bundle — host then thinks the
+    // plugin has no GUI. Splitting AU2 into one cargo invocation per
+    // plugin is the cost of correctness here; truce-au's tiny C/ObjC
+    // shim recompiles per plugin but the leaf cdylib link cost
+    // dominates anyway.
+    let batched = format != BuildFormat::Au2;
+    if batched {
+        let env_pairs: &[(&str, &str)] = &[];
+        let mut cargo_args: Vec<String> = Vec::with_capacity(plugins.len() * 2 + 5);
+        for p in plugins {
+            cargo_args.push("-p".into());
+            cargo_args.push(p.crate_name.clone());
+        }
+        cargo_args.push("--no-default-features".into());
+        cargo_args.push("--features".into());
+        cargo_args.push(combined.clone());
+        if let Some(t) = target {
+            cargo_args.push("--target".into());
+            cargo_args.push(t.into());
+        }
+        let cargo_arg_refs: Vec<&str> = cargo_args.iter().map(String::as_str).collect();
+        cargo_build(env_pairs, &cargo_arg_refs, deployment_target)?;
+    } else {
+        for p in plugins {
+            let env_pairs: &[(&str, &str)] = &[("TRUCE_AU_PLUGIN_ID", p.bundle_id.as_str())];
+            let mut cargo_args: Vec<String> = Vec::with_capacity(7);
+            cargo_args.push("-p".into());
+            cargo_args.push(p.crate_name.clone());
+            cargo_args.push("--no-default-features".into());
+            cargo_args.push("--features".into());
+            cargo_args.push(combined.clone());
+            if let Some(t) = target {
+                cargo_args.push("--target".into());
+                cargo_args.push(t.into());
+            }
+            let cargo_arg_refs: Vec<&str> = cargo_args.iter().map(String::as_str).collect();
+            cargo_build(env_pairs, &cargo_arg_refs, deployment_target)?;
+        }
     }
-    cargo_args.push("--no-default-features".into());
-    cargo_args.push("--features".into());
-    cargo_args.push(combined.clone());
-    if let Some(t) = target {
-        cargo_args.push("--target".into());
-        cargo_args.push(t.into());
-    }
-    let cargo_arg_refs: Vec<&str> = cargo_args.iter().map(String::as_str).collect();
-    cargo_build(env_pairs, &cargo_arg_refs, deployment_target)?;
 
     // Post-build per-plugin staging: copy the produced `.dylib` to
     // its format-suffixed name and (for AAX) assemble the
