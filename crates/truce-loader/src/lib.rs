@@ -21,7 +21,7 @@
 //! the canary check before vtable-binding).
 //!
 //! ```ignore
-//! use truce_loader::prelude::*;
+//! use truce_loader::{AbiCanary, PluginLogic, PluginLogicCore};
 //!
 //! struct MyPlugin { /* ... */ }
 //! impl PluginLogic for MyPlugin { /* DSP + GUI */ }
@@ -29,7 +29,10 @@
 //! // Emitted by `truce::plugin!`; plugin authors don't write these
 //! // by hand. `Sample` resolves through the prelude alias
 //! // (`f32` for `prelude` / `prelude32` / `prelude64m`,
-//! // `f64` for `prelude64`).
+//! // `f64` for `prelude64`). The macro also emits a
+//! // `truce_vtable_probe` symbol that constructs an internal
+//! // `ProbePlugin`; that type lives in `__macro_deps` and isn't
+//! // intended for direct use.
 //! #[unsafe(no_mangle)]
 //! pub fn truce_create(p: *const ()) -> Box<dyn PluginLogicCore<Sample>> {
 //!     Box::new(MyPlugin::new(/* params from p */))
@@ -37,17 +40,20 @@
 //!
 //! #[unsafe(no_mangle)]
 //! pub fn truce_abi_canary() -> AbiCanary { AbiCanary::current::<Sample>() }
-//!
-//! #[unsafe(no_mangle)]
-//! pub fn truce_vtable_probe() -> Box<dyn PluginLogicCore<Sample>> {
-//!     Box::new(ProbePlugin::default())
-//! }
 //! ```
 
 #[doc(hidden)]
 pub mod __macro_deps {
     pub use truce_core;
     pub use truce_gui;
+    // `ProbePlugin` is a vtable-binding shim emitted into every
+    // `export_plugin!` expansion as the `truce_vtable_probe` symbol.
+    // It is not a public type — plugin authors never name it. Kept
+    // reachable here under `$crate::__macro_deps::` so the macro can
+    // resolve it without leaking the type at the crate root (where a
+    // prior version of this re-export was, and where the v0.40 audit
+    // re-flagged it as an unintended surface).
+    pub use crate::canary::ProbePlugin;
 }
 
 mod canary;
@@ -59,14 +65,15 @@ mod loader;
 pub mod shell;
 pub mod static_shell;
 
-pub use canary::{AbiCanary, ProbePlugin};
-// `verify_probe` + `ProbeError` are loader-internal and only used
-// by `NativeLoader::build_candidate` (gated on `feature = "shell"`).
-// Plugin authors / format wrappers reach the probe via the
-// `export_plugin!` macro's emitted `truce_vtable_probe` symbol
-// path, which dlopens by name rather than by `use` import.
-// `loader.rs` imports them directly from `crate::canary`; no
-// crate-root re-export needed.
+pub use canary::AbiCanary;
+// `ProbePlugin`, `verify_probe`, and `ProbeError` are loader-internal.
+// `ProbePlugin` lives under `__macro_deps` so the `export_plugin!`
+// macro's `truce_vtable_probe` body can name it without leaking the
+// type at the crate root. `verify_probe` / `ProbeError` are only used
+// by `NativeLoader::build_candidate` (gated on `feature = "shell"`)
+// and are reached via `crate::canary` directly inside `loader.rs`.
+// Format wrappers and plugin authors reach the probe by dlopening
+// the `truce_vtable_probe` symbol the macro emits, not by `use` import.
 pub use safe_types::*;
 pub use truce_gui::{PluginLogic, PluginLogic64, PluginLogicCore};
 
@@ -111,21 +118,7 @@ macro_rules! export_plugin {
 
         #[unsafe(no_mangle)]
         pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogicCore<Sample>> {
-            Box::new($crate::ProbePlugin::default())
+            Box::new($crate::__macro_deps::ProbePlugin::default())
         }
     };
-}
-
-/// Convenience prelude for logic dylib authors.
-pub mod prelude {
-    pub use crate::canary::{AbiCanary, ProbePlugin};
-    pub use crate::safe_types::*;
-    pub use crate::{PluginLogic, PluginLogic64, PluginLogicCore};
-
-    // Re-export param types so the developer can own params in their struct.
-    pub use truce_params::{BoolParam, EnumParam, FloatParam, IntParam, ParamEnum, Params};
-    pub use truce_params::{Smoother, SmoothingStyle};
-
-    // Re-export utility functions.
-    pub use truce_core::util::{db_to_linear, linear_to_db, midi_note_to_freq};
 }

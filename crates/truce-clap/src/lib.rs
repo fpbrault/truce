@@ -894,10 +894,18 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         let same_precision = std::any::TypeId::of::<P::Sample>() == std::any::TypeId::of::<f32>();
 
         data.input_slices.clear();
-        data.input_widen.clear();
-        // Pre-grow widening scratch on the f64 path. Cheap when
-        // `Vec`s already have capacity; a one-time alloc per channel
-        // on the first block that touches it.
+        // Reset each inner scratch buffer's length to 0 (preserves
+        // its heap allocation), don't `.clear()` the outer
+        // `Vec<Vec<_>>` — that would drop every inner Vec and force
+        // the per-channel `Vec::with_capacity` push below to
+        // re-allocate every block, defeating the activate-time
+        // pre-grow.
+        for buf in &mut data.input_widen {
+            buf.clear();
+        }
+        // The outer Vec is pre-sized in `clap_plugin_activate`; the
+        // while-loop below only runs as a fallback if the pre-grow
+        // didn't cover the bus layout the host actually picked.
         let mut flat_in_idx = 0usize;
         for bus_idx in 0..proc.audio_inputs_count {
             let buf = &*proc.audio_inputs.add(bus_idx as usize);
@@ -934,7 +942,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         }
 
         data.output_slices.clear();
-        data.output_narrow.clear();
+        // Same reasoning as `input_widen` above: clear each inner
+        // scratch buffer in place so its heap allocation survives.
+        for buf in &mut data.output_narrow {
+            buf.clear();
+        }
         data.host_out_ptrs.clear();
         let mut flat_out_idx = 0usize;
         for bus_idx in 0..proc.audio_outputs_count {
