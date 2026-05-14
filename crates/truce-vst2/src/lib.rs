@@ -20,7 +20,8 @@ use truce_core::midi::pitch_bend_from_bytes;
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block, run_register,
+    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block,
+    run_extern_callback_with, run_register,
 };
 use truce_params::{ParamFlags, Params};
 
@@ -567,7 +568,14 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     out_data: *mut *mut u8,
     out_len: *mut u32,
 ) {
+    // Pre-zero the out pointers so a panic anywhere in the body below
+    // leaves the host seeing an empty blob rather than a stale buffer
+    // pointer paired with whatever length was last written.
     unsafe {
+        *out_data = std::ptr::null_mut();
+        *out_len = 0;
+    }
+    run_extern_callback_with::<P, ()>("vst2", "save_state", (), || unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
         let (ids, values) = inst.params_arc.collect_values();
         // `plugin.save_state()` reads through the plugin reference: a
@@ -595,7 +603,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         std::mem::forget(boxed);
         *out_data = ptr;
         *out_len = len_u32(len);
-    }
+    });
 }
 
 unsafe extern "C" fn cb_state_load<P: PluginExport>(
@@ -603,7 +611,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     data: *const u8,
     len: u32,
 ) {
-    unsafe {
+    run_extern_callback_with::<P, ()>("vst2", "load_state", (), || unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
 
         // `slice::from_raw_parts(null, 0)` is sound but `from_raw_parts(null, n)`
@@ -663,7 +671,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         }
 
         inst.state_loaded = true;
-    }
+    });
 }
 
 /// Free a state blob handed out by [`cb_state_save`].

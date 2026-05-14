@@ -178,6 +178,39 @@ pub fn run_audio_block_with<P, R>(format: &str, fallback: R, body: impl FnOnce()
     }
 }
 
+/// Run a generic `extern "C"` callback body under
+/// [`std::panic::catch_unwind`]. Returns `body`'s value on a clean
+/// exit, `fallback` if the body panicked.
+///
+/// Same shape as [`run_audio_block_with`] but parameterized on
+/// `action` (e.g. `"save_state"`, `"load_state"`) so the panic log
+/// pinpoints which callback boundary fired. Use this for non-process
+/// FFI surfaces — state save / load, param formatting, anything the
+/// host calls through an `extern "C" fn` where a panic would unwind
+/// across an ABI that doesn't promise abort-on-unwind.
+///
+/// Audio-thread process bodies should keep using
+/// [`run_audio_block`] / [`run_audio_block_with`] — the hardcoded
+/// `"process()"` label there keeps existing log lines stable.
+pub fn run_extern_callback_with<P, R>(
+    format: &str,
+    action: &str,
+    fallback: R,
+    body: impl FnOnce() -> R,
+) -> R {
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(r) => r,
+        Err(payload) => {
+            eprintln!(
+                "[truce {format}] panic in {action} for {}: {}",
+                type_name::<P>(),
+                extract_panic_msg(&payload),
+            );
+            fallback
+        }
+    }
+}
+
 fn extract_panic_msg(payload: &Box<dyn std::any::Any + Send>) -> &str {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         s

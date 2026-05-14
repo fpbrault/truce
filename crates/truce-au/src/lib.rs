@@ -20,7 +20,8 @@ use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, log_missing_bus_layout, run_audio_block, run_register,
+    default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
+    run_register,
 };
 use truce_params::{ParamFlags, Params};
 
@@ -399,7 +400,14 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     out_data: *mut *mut u8,
     out_len: *mut u32,
 ) {
+    // Pre-zero the out pointers so a panic anywhere in the body below
+    // leaves the host seeing an empty blob rather than a stale buffer
+    // pointer paired with whatever length was last written.
     unsafe {
+        *out_data = std::ptr::null_mut();
+        *out_len = 0;
+    }
+    run_extern_callback_with::<P, ()>("au", "save_state", (), || unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
         let (ids, values) = inst.params_arc.collect_values();
         // `plugin.save_state()` reads through the plugin reference: a
@@ -419,17 +427,14 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         let len = blob.len();
         let ptr = malloc(len).cast::<u8>();
         if ptr.is_null() {
-            // malloc failed — tell the host we wrote nothing rather
-            // than leaving `*out_data` as a stale value while
-            // `*out_len = len` claims `len` bytes are there.
-            *out_data = std::ptr::null_mut();
-            *out_len = 0;
+            // malloc failed — `*out_data` is already null and
+            // `*out_len` already 0 from the pre-zero above.
             return;
         }
         std::ptr::copy_nonoverlapping(blob.as_ptr(), ptr, len);
         *out_data = ptr;
         *out_len = len_u32(len);
-    }
+    });
 }
 
 unsafe extern "C" fn cb_state_load<P: PluginExport>(
@@ -437,7 +442,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     data: *const u8,
     len: u32,
 ) {
-    unsafe {
+    run_extern_callback_with::<P, ()>("au", "load_state", (), || unsafe {
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
         // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
@@ -460,7 +465,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
                 editor.state_changed();
             }
         }
-    }
+    });
 }
 
 unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {

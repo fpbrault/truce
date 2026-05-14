@@ -28,7 +28,8 @@ use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block, run_register,
+    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block,
+    run_extern_callback_with, run_register,
 };
 use truce_params::{ParamFlags, Params};
 
@@ -979,6 +980,22 @@ pub unsafe fn _save_state<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
 ) -> u32 {
+    // Pre-zero the out pointer so a panic anywhere in the body below
+    // (caught via `run_extern_callback_with`) leaves the host seeing
+    // an empty blob rather than a stale buffer pointer. The fallback
+    // `0` returned on panic matches the `*out_data = null` state.
+    unsafe {
+        *out_data = std::ptr::null_mut();
+    }
+    run_extern_callback_with::<P, u32>("aax", "save_state", 0, || unsafe {
+        save_state_body::<P>(ctx, out_data)
+    })
+}
+
+unsafe fn save_state_body<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    out_data: *mut *mut u8,
+) -> u32 {
     // Allocator pin: AAX uses the Rust global allocator on both the
     // save (`finalize_blob` boxes a `Vec`) and free (`_free_state`
     // reconstitutes a `Vec` via `Vec::from_raw_parts`) paths. VST3 / AU
@@ -1099,35 +1116,37 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
 }
 
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
-    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
-    // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
-    // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
-    if data.is_null() || len == 0 {
-        return;
-    }
-    let blob = unsafe { slice::from_raw_parts(data, len as usize) };
-    if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
-        // Apply params synchronously on the host thread (atomic-safe)
-        // so host queries that read parameter values right after the
-        // state load see the restored values without first running a
-        // process block.
-        state::apply_params(&*inst.params_arc, &deserialized);
-        // Hand the deserialized state to the audio thread for
-        // application. `force_push` overwrites any older pending blob
-        // — see the `pending_state` field comment for why
-        // newest-wins is the right policy. The audio thread's drain
-        // bumps `state_revision`, so the cache invalidation is
-        // covered there; we still drop the cached `Arc<[u8]>` here
-        // so the multi-KB blob isn't pinned across the gap before
-        // the next `_save_state` would replace it.
-        let _ = inst.pending_state.force_push(deserialized);
-        if let Ok(mut guard) = inst.state_cache.lock() {
-            *guard = None;
+    run_extern_callback_with::<P, ()>("aax", "load_state", (), || unsafe {
+        let inst = &mut *ctx.cast::<AaxInstance<P>>();
+        // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
+        // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
+        if data.is_null() || len == 0 {
+            return;
         }
-        if let Some(ref mut editor) = inst.editor {
-            editor.state_changed();
+        let blob = slice::from_raw_parts(data, len as usize);
+        if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+            // Apply params synchronously on the host thread (atomic-safe)
+            // so host queries that read parameter values right after the
+            // state load see the restored values without first running a
+            // process block.
+            state::apply_params(&*inst.params_arc, &deserialized);
+            // Hand the deserialized state to the audio thread for
+            // application. `force_push` overwrites any older pending blob
+            // — see the `pending_state` field comment for why
+            // newest-wins is the right policy. The audio thread's drain
+            // bumps `state_revision`, so the cache invalidation is
+            // covered there; we still drop the cached `Arc<[u8]>` here
+            // so the multi-KB blob isn't pinned across the gap before
+            // the next `_save_state` would replace it.
+            let _ = inst.pending_state.force_push(deserialized);
+            if let Ok(mut guard) = inst.state_cache.lock() {
+                *guard = None;
+            }
+            if let Some(ref mut editor) = inst.editor {
+                editor.state_changed();
+            }
         }
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
