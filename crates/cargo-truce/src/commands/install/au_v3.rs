@@ -126,6 +126,7 @@ fn build_au_v3_for_plugin(
     write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
     embed_framework_into_app(&xcodebuild_app, &final_app, &fw_build, &fw_name)?;
+    stage_au_v3_icon(&final_app, p)?;
     sign_au_v3_inside_out(&final_app, &build_dir, &fw_name, sign_id)?;
 
     crate::vprintln!("  AU v3: {}", final_app.display());
@@ -361,10 +362,17 @@ fn write_xcode_project_files(
         ),
     )?;
 
-    fs_ctx::write_if_changed(
-        build_dir.join("App/Info.plist"),
-        templates::au3::APP_INFO_PLIST,
-    )?;
+    // CFBundleIconFile is only emitted when the plugin declares a
+    // `macos_icon` (the file is copied into Contents/Resources after
+    // xcodebuild). Without the file present, macOS scribbles a
+    // missing-resource error into the system log on first launch.
+    let icon_keys = if p.macos_icon.is_some() {
+        "    <key>CFBundleIconFile</key>\n    <string>icon</string>\n"
+    } else {
+        ""
+    };
+    let app_plist = templates::au3::APP_INFO_PLIST.replace("APPICON_KEYS", icon_keys);
+    fs_ctx::write_if_changed(build_dir.join("App/Info.plist"), app_plist)?;
     Ok(())
 }
 
@@ -459,6 +467,33 @@ fn embed_framework_into_app(
     if !ditto_status.success() {
         return Err("ditto failed copying framework into .app".into());
     }
+    Ok(())
+}
+
+/// Drop the plugin's `macos_icon` into `Contents/Resources/icon.icns`
+/// so the outer `.app` shows up in Finder / Launchpad with the same
+/// art the standalone host uses. No-op when `macos_icon` is unset (the
+/// matching `CFBundleIconFile` plist key is also omitted in that case,
+/// so macOS falls back to the system default without logging a
+/// missing-resource error). Runs before signing so the icon lands
+/// inside the signed seal.
+#[cfg(target_os = "macos")]
+fn stage_au_v3_icon(final_app: &Path, p: &PluginDef) -> Res {
+    let Some(icon_rel) = &p.macos_icon else {
+        return Ok(());
+    };
+    let icon_src = crate::project_root().join(icon_rel);
+    if !icon_src.exists() {
+        return Err(format!(
+            "macos_icon for `{}` points to {} but no file is there.",
+            p.name,
+            icon_src.display()
+        )
+        .into());
+    }
+    let resources_dir = final_app.join("Contents/Resources");
+    fs_ctx::create_dir_all(&resources_dir)?;
+    fs_ctx::copy(&icon_src, resources_dir.join("icon.icns"))?;
     Ok(())
 }
 
