@@ -228,7 +228,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
     unsafe {
         let class_name_owned = format!(
             "TruceSlintiOSEditorView_{:x}",
-            seahash(type_name::<Inner<P>>().as_bytes())
+            fnv1a_64(type_name::<Inner<P>>().as_bytes())
         );
         let class_name = std::ffi::CString::new(class_name_owned).expect("ascii");
         let uiview = AnyClass::get(c"UIView").expect("UIView missing");
@@ -541,7 +541,7 @@ unsafe fn blit_pixmap_to_layer(view: *mut AnyObject, width: u32, height: u32, rg
 // Utilities
 // ---------------------------------------------------------------------------
 
-fn seahash(bytes: &[u8]) -> u64 {
+fn fnv1a_64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
         h ^= u64::from(b);

@@ -784,7 +784,18 @@ fn install_ios(plugin_filter: Option<&str>, target: au_ios::IosTarget) -> Res {
     // + embedded `.appex` so iterating is linear in plugin count,
     // but that's the same trade the other formats make.
     let plugins = super::pick_plugins(&config, plugin_filter)?;
-    for p in plugins {
+    let total = plugins.len();
+    for (i, p) in plugins.into_iter().enumerate() {
+        // Outer-loop counter — distinguishes the per-plugin pass
+        // from the `[N/5]` inner build stages `install_one` emits.
+        // The iOS pipeline takes ~30-60 s per plugin, so a workspace
+        // install (12 plugins) is several minutes of cargo + swiftc
+        // chatter without this; the prefix is the only signal the
+        // user has that the loop is making progress vs hung. Skip it
+        // for single-plugin runs to avoid `[1/1]` noise.
+        if total > 1 {
+            eprintln!("==> [{}/{total}] {}", i + 1, p.crate_name);
+        }
         au_ios::install_one(&root, p, target)?;
     }
     Ok(())

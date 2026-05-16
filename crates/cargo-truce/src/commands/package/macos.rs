@@ -1173,7 +1173,7 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
     Ok(PkgScope::os_default())
 }
 
-/// Notarize a .pkg and staple the ticket. (Phase 3)
+/// Notarize a .pkg and staple the ticket.
 #[allow(clippy::too_many_lines)]
 fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
     let pkg = pkg_path.to_str().unwrap();
