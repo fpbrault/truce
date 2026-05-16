@@ -126,59 +126,30 @@ jobs:
       # (dlopen of the cdylib) can't see iOS-specific compositing
       # like the BuiltinEditor's CGImage blit. `--ios` captures the
       # simulator's actual rendered output via simctl io screenshot.
-      - name: iOS screenshot smoke
+      # `--check` diffs the captured PNG against the committed
+      # baseline at `examples/truce-example-gain/screenshots/`; CI
+      # fails non-zero on regression. Re-bake via the
+      # `.github/workflows/bake-screenshots.yml` workflow's `ios`
+      # job — runs on every PR and on manual dispatch, uploads the
+      # full set of `_default_ios` + `_container_ios` PNGs as the
+      # `baked-screenshots-ios` artifact.
+      - name: iOS screenshot smoke (gain default)
         run: |
-          ./target/debug/cargo-truce screenshot --ios --out target/screenshots/gain_default_ios.png -p truce-example-gain
+          ./target/debug/cargo-truce screenshot --ios --check \
+            --out examples/truce-example-gain/screenshots/gain_default_ios.png \
+            -p truce-example-gain
 
-      # Framework-level container-mode screenshots for every example
-      # we ship. `--crop-mode container` crops only the iOS status
-      # bar band (the variable clock) and keeps the rest of the
-      # container chrome — title, embedded editor, Play button,
-      # status line — so the screenshot gates on the framework's
-      # container app layout independently of the per-plugin editor
-      # pixel diff.
-      #
-      # Bake step: just capture + write to `target/screenshots/`,
-      # no diff against committed baselines. The diff step below
-      # runs `--check` with `continue-on-error: true` so reviewers
-      # see the per-example diff counts without the build failing
-      # — useful while the runner image's device / iOS version
-      # doesn't yet match what baked the committed baselines.
+      # Soft diff: run `--check` against every committed container-
+      # mode baseline and let the build keep going on regression.
+      # Failing entries log the per-example pixel-diff count, which
+      # is enough for a reviewer to decide whether the runner image
+      # needs re-baking (download the artifact from
+      # `bake-screenshots.yml` for the same PR, drop into
+      # `examples/`, commit) or whether the new render is a
+      # legitimate regression that warrants attention.
       #
       # `truce-example-gain-iced` is skipped: iced's iOS backend is
-      # broken upstream (iced_winit doesn't currently build for iOS)
-      # and its container app never wires the editor, so no stable
-      # baseline is possible.
-      - name: iOS container screenshots (bake)
-        run: |
-          set -e
-          for crate in \
-              truce-example-gain \
-              truce-example-synth \
-              truce-example-eq \
-              truce-example-transpose \
-              truce-example-gain-egui \
-              truce-example-arpeggio \
-              truce-example-gain-slint \
-              truce-example-tremolo \
-              truce-example-state \
-              truce-example-fundsp-reverb-worker \
-              truce-example-fundsp-reverb-simple; do
-            short=${crate#truce-example-}
-            short_under=${short//-/_}
-            ./target/debug/cargo-truce screenshot --ios \
-              --crop-mode container \
-              --out "target/screenshots/${short_under}_container_ios.png" \
-              -p "$crate"
-          done
-
-      # Soft diff: run `--check` against every committed baseline
-      # and let the build keep going on regression. Failing entries
-      # log the per-example pixel-diff count from
-      # `diff_simctl_screenshot`, which is enough for a reviewer
-      # to decide whether the runner image needs re-baking (size
-      # mismatch / large diff) or whether the new render is a
-      # legitimate regression that warrants attention.
+      # broken upstream and its container app never wires the editor.
       - name: iOS container screenshots (diff vs baselines)
         continue-on-error: true
         run: |
@@ -206,15 +177,6 @@ jobs:
               -p "$crate" || fail=$((fail + 1))
           done
           echo "container-mode regressions: $fail / 11"
-
-      - name: upload iOS screenshot
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-screenshots
-          path: target/screenshots/
-          if-no-files-found: ignore
-          retention-days: 14
 
       # The Swift templates that `cargo truce install --ios` feeds to
       # swiftc live alongside the Rust code. A drift between the

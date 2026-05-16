@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: "Platforms to bake (any combination of linux,macos,windows)"
+        description: "Platforms to bake (any combination of linux,macos,windows,ios)"
         type: string
-        default: "linux,macos,windows"
+        default: "linux,macos,windows,ios"
         required: false
   # Run on every PR so reviewers can grab the just-rendered PNGs as
   # an artifact — useful for intentional GUI changes (preview the
@@ -40,9 +40,12 @@ env:
   CARGO_INCREMENTAL: 0
   # Keep this list in sync with truce.toml's [[plugin]] entries that
   # have screenshot tests under examples/<crate>/src/lib.rs. The
-  # `_linux` / `_macos` / `_windows` suffix on the output filename
-  # matches the convention enforced by each example's
-  # `gui_screenshot_<os>` test.
+  # `_linux` / `_macos` / `_windows` / `_default_ios` / `_container_ios`
+  # suffix on the output filename matches the convention enforced by
+  # each example's `gui_screenshot_<os>` test (linux/macos/windows) or
+  # the `cargo truce screenshot --ios [--crop-mode container]` pipeline.
+  # The iOS bake skips `truce-example-gain-iced`: iced's iOS backend
+  # is broken upstream and its container app never wires the editor.
   EXAMPLE_CRATES: >-
     truce-example-gain
     truce-example-synth
@@ -190,5 +193,78 @@ jobs:
         with:
           name: baked-screenshots-windows
           path: examples/*/screenshots/*_windows.png
+          if-no-files-found: error
+          retention-days: 30
+
+  ios:
+    if: github.event_name != 'workflow_dispatch' || contains(inputs.platforms, 'ios')
+    name: bake (macos-latest, iOS Simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # iOS-sim slice needs the `-sim` rustup target; the desktop
+      # `cargo-truce` runs on the host triple (already covered by
+      # the default toolchain).
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bake-macos-latest-ios
+          cache-bin: false
+
+      # Discover the runner's iOS runtime + a matching iPhone Pro
+      # device type at runtime; hard-coding (say) "iPhone 17 Pro /
+      # iOS 26.3" breaks the next time the image rev moves. Same
+      # pattern as `.github/workflows/ci-ios.yml`.
+      - name: Boot iOS Simulator
+        run: |
+          set -euo pipefail
+          RUNTIME=$(xcrun simctl list runtimes -j \
+            | python3 -c 'import json,sys; rs=[r for r in json.load(sys.stdin)["runtimes"] if r["isAvailable"] and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")]; rs.sort(key=lambda r: tuple(int(x) for x in r["version"].split("."))); print(rs[-1]["identifier"])')
+          DEVICE=$(xcrun simctl list devicetypes -j \
+            | python3 -c 'import json,sys; ds=[d for d in json.load(sys.stdin)["devicetypes"] if "iPhone" in d["name"] and "Pro" in d["name"] and "Max" not in d["name"]]; ds.sort(key=lambda d: d["name"]); print(ds[-1]["identifier"])')
+          xcrun simctl create truce-bake "$DEVICE" "$RUNTIME"
+          xcrun simctl boot truce-bake
+          xcrun simctl bootstatus truce-bake
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce --release
+
+      # Each iOS install is a fresh `cargo build` + `swiftc` + sign +
+      # `simctl install` + launch + `simctl io screenshot` pass, ~30-60s
+      # per crate. The artifact uploads `_default_ios.png` (editor crop)
+      # and `_container_ios.png` (container chrome) per crate. iced is
+      # excluded — its iOS backend doesn't build (winit upstream issue)
+      # and its container app never wires the editor.
+      - name: Bake iOS screenshots
+        run: |
+          set -euo pipefail
+          for crate in $EXAMPLE_CRATES; do
+            if [ "$crate" = "truce-example-gain-iced" ]; then
+              continue
+            fi
+            short="${crate#truce-example-}"
+            short="${short//-/_}"
+            for mode in default container; do
+              out="examples/${crate}/screenshots/${short}_${mode}_ios.png"
+              echo "::group::Baking $out"
+              if [ "$mode" = "container" ]; then
+                ./target/release/cargo-truce screenshot --ios \
+                  --crop-mode container --out "$out" -p "$crate"
+              else
+                ./target/release/cargo-truce screenshot --ios \
+                  --out "$out" -p "$crate"
+              fi
+              echo "::endgroup::"
+            done
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baked-screenshots-ios
+          path: examples/*/screenshots/*_ios.png
           if-no-files-found: error
           retention-days: 30
