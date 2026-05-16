@@ -293,7 +293,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
     unsafe {
         let class_name_owned = format!(
             "TruceEguiiOSEditorView_{:x}",
-            seahash(type_name::<Inner<P>>().as_bytes())
+            fnv1a_64(type_name::<Inner<P>>().as_bytes())
         );
         let class_name = std::ffi::CString::new(class_name_owned).expect("ascii");
         let uiview = AnyClass::get(c"UIView").expect("UIView missing");
@@ -723,7 +723,7 @@ unsafe fn dispatch_touch<P: Params + 'static>(
 // crates need them, and the helper is six lines).
 // ---------------------------------------------------------------------------
 
-fn seahash(bytes: &[u8]) -> u64 {
+fn fnv1a_64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for &b in bytes {
         h ^= u64::from(b);

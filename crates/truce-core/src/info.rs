@@ -46,12 +46,18 @@ pub struct PluginInfo {
     pub aax_name: Option<&'static str>,
     pub lv2_name: Option<&'static str>,
 
-    /// Silence the audio output in *preview* hosts (truce-standalone
-    /// and the iOS `AUv3` container app). `process()` still runs so
-    /// editors that visualise an input signal — analyzers, tuners,
-    /// spectrum displays — keep updating from mic / file input. Set
-    /// from `mute_preview_output` in `truce.toml`; real DAW hosts
-    /// ignore this since they own their own output graph.
+    /// Standalone-only. Format wrappers MUST NOT read this — it
+    /// exists for preview hosts (truce-standalone, the iOS `AUv3`
+    /// container app) that need a TOML-driven way to mute the
+    /// plug-in's audio output while keeping `process()` ticking, so
+    /// editors that visualise an input signal (analyzers, tuners,
+    /// spectrum displays) update from mic / file input without
+    /// closing a mic → speakers feedback loop. Set from
+    /// `mute_preview_output` in `truce.toml`. Real DAW hosts own
+    /// their own output graph; consulting this flag from a wrapper
+    /// would let plug-in authors silence the DAW's mix bus, which
+    /// is never what they want.
+    #[doc(hidden)]
     pub mute_preview_output: bool,
 }
 

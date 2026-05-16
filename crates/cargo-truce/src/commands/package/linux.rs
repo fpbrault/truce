@@ -1,10 +1,10 @@
-//! `cargo truce package` on Linux — phase 1: tarball + install.sh.
+//! `cargo truce package` on Linux: tarball + `install.sh`.
 //!
-//! Per linux-package.md (internal design doc): produces a tarball
-//! per declared `[[suite]]` (and per plugin, unless `--no-per-plugin`).
-//! Each tarball contains the staged plugin bundles + a generated
-//! `install.sh` that picks user vs system paths and per-plugin
-//! components.
+//! Produces a tarball per declared `[[suite]]` (and per plugin,
+//! unless `--no-per-plugin`). Each tarball contains the staged
+//! plugin bundles + a generated `install.sh` that picks user vs
+//! system paths and per-plugin components. Native package formats
+//! (`.deb`, `.rpm`, `AppImage`, AUR) are out of scope here.
 //!
 //! The actual cross-compile to `x86_64-unknown-linux-gnu` is the
 //! plugin author's responsibility — this code organises whatever's
@@ -13,9 +13,6 @@
 //! macOS host produces a Linux tarball whose bundles are the host's
 //! Mach-O binaries; that's a developer error to catch in CI, not
 //! something the packager corrects automatically.
-//!
-//! Phase 1 deliberately stops at `.tar.gz` + `install.sh`. `.deb`,
-//! `.rpm`, `AppImage`, and AUR are deferred (see linux-package.md).
 
 use std::fmt::Write as _;
 use std::fs;
