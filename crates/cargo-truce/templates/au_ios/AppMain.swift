@@ -396,11 +396,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             previewHost.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
             previewHost.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
         ]
+        // The trailing inset reserves a strip on the right for the
+        // hamburger button (top-trailing of the safe area) so a
+        // scale-to-fit editor never expands underneath the
+        // hamburger's tap target. The hamburger button itself is
+        // ~32pt wide with ~8pt margins; 56pt total is enough to
+        // keep it visible regardless of font scaling. Without the
+        // reservation, a scale-to-fit landscape editor renders
+        // through the hamburger and the user can't open the
+        // sidebar.
         self.previewHostLandscapeConstraints = [
             previewHost.topAnchor.constraint(equalTo: g.topAnchor),
             previewHost.bottomAnchor.constraint(equalTo: g.bottomAnchor),
             previewHost.leadingAnchor.constraint(equalTo: g.leadingAnchor),
-            previewHost.trailingAnchor.constraint(equalTo: g.trailingAnchor),
+            previewHost.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -56),
         ]
         NSLayoutConstraint.activate(self.previewHostPortraitConstraints)
         self.previewHost = previewHost
