@@ -130,7 +130,7 @@ pub(crate) fn build_bundle(
     target: IosTarget,
 ) -> Result<PathBuf, crate::BoxErr> {
     let out = truce_build::target_dir(root)
-        .join("ios-poc")
+        .join("ios")
         .join(target.label());
     let _ = std::fs::remove_dir_all(&out);
     fs_ctx::create_dir_all(&out)?;
@@ -616,12 +616,12 @@ fn device_install(bundle: &Path, app_bundle_id: &str) -> Res {
 
 /// Build a two-slice `.xcframework` containing the iOS device +
 /// simulator `.framework` slices for the plugin. Output lands at
-/// `<target>/ios-poc/xcframework/<fw_name>.xcframework`. Consumed by
+/// `<target>/ios/xcframework/<fw_name>.xcframework`. Consumed by
 /// the `package --ios` path; install paths pick a single slice and
 /// skip this step.
 pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::BoxErr> {
     let cfg = crate::load_config()?;
-    let out = truce_build::target_dir(root).join("ios-poc/xcframework");
+    let out = truce_build::target_dir(root).join("ios/xcframework");
     let _ = std::fs::remove_dir_all(&out);
     fs_ctx::create_dir_all(&out)?;
     let fw_name = format!("{}AU", capitalise_id(&p.bundle_id));
@@ -704,7 +704,7 @@ pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, c
 pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::BoxErr> {
     let cfg = crate::load_config()?;
     let app_dir = build_bundle(root, p, &cfg, IosTarget::Device)?;
-    let out_dir = truce_build::target_dir(root).join("ios-poc/ipa");
+    let out_dir = truce_build::target_dir(root).join("ios/ipa");
     let _ = std::fs::remove_dir_all(&out_dir);
     fs_ctx::create_dir_all(&out_dir)?;
     let payload = out_dir.join("Payload");

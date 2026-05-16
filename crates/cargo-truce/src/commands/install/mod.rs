@@ -771,9 +771,6 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
 /// chosen slice, compile the Swift `.appex` via `swiftc`, assemble
 /// the container `.app`, sign, and install onto the simulator or a
 /// tethered device.
-///
-/// Native Rust port of `scripts/build-ios-poc.sh`. The shell script
-/// stays in the tree as an executable spec / fallback.
 #[cfg(target_os = "macos")]
 fn install_ios(plugin_filter: Option<&str>, target: au_ios::IosTarget) -> Res {
     let root = crate::project_root();
