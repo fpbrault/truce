@@ -72,6 +72,7 @@
 
 /* VstEvent types */
 #define kVstMidiType 1
+#define kVstSysExType 6
 
 typedef intptr_t VstIntPtr;
 
@@ -178,6 +179,19 @@ typedef struct {
     char reserved2;
 } VstMidiEvent;
 
+/* SysEx event. The dump buffer is the inner SysEx payload without the
+ * 0xF0 / 0xF7 framing — that matches the VST2 SDK convention. */
+typedef struct {
+    int32_t type;               /* kVstSysExType = 6 */
+    int32_t byteSize;           /* sizeof(VstMidiSysExEvent) */
+    int32_t deltaFrames;        /* Sample offset */
+    int32_t flags;
+    int32_t dumpBytes;          /* Length of `sysexDump` */
+    VstIntPtr resvd1;
+    char* sysexDump;            /* Inner SysEx bytes (no framing) */
+    VstIntPtr resvd2;
+} VstMidiSysExEvent;
+
 /* Event container passed to effProcessEvents */
 typedef struct {
     int32_t type;
@@ -253,6 +267,24 @@ typedef struct {
      * filtered out on the Rust side so [0..count) maps cleanly. */
     uint32_t (*output_event_count)(void* ctx);
     void (*output_event_at)(void* ctx, uint32_t index, Vst2MidiEventCompact* out);
+    /* SysEx input — shim calls once per kVstSysExType event in
+     * effProcessEvents, AFTER the shim has stripped any leading
+     * 0xF0 / trailing 0xF7 framing the host included. Rust always
+     * sees inner bytes; the host-side framing convention is the
+     * shim's problem. Valid only for the duration of this call. */
+    void (*push_sysex_input)(void* ctx, uint32_t delta_frames,
+                             const uint8_t* bytes, uint32_t len);
+    /* SysEx output — Rust returns inner bytes (no framing); the
+     * shim re-adds 0xF0 / 0xF7 before handing the bytes to the
+     * host via VstMidiSysExEvent. Bytes returned here point into
+     * the plug-in's EventList SysEx pool, valid until the next
+     * process() clears it (which is after the host has consumed
+     * the event). */
+    uint32_t (*output_sysex_count)(void* ctx);
+    void (*output_sysex_at)(void* ctx, uint32_t index,
+                            uint32_t* out_delta_frames,
+                            const uint8_t** out_bytes,
+                            uint32_t* out_len);
     void (*state_save)(void* ctx, uint8_t** out_data, uint32_t* out_len);
     void (*state_load)(void* ctx, const uint8_t* data, uint32_t len);
     void (*state_free)(uint8_t* data, uint32_t len);

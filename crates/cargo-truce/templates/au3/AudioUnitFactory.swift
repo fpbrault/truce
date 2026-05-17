@@ -154,11 +154,11 @@ class TruceAUAudioUnit: AUAudioUnit {
         // the sample rate for MIDI timing, and rejects plugins
         // with an empty output bus array via -10868
         // (kAudioUnitErr_FormatNotSupported) at instantiation.
-        // Same workaround JUCE uses — see commit a66fd53:
-        //   "A MIDI effect requires an output bus in order to
-        //    determine the sample rate. No audio will be written
-        //    to the output bus."
-        // The render block ignores this dummy bus for aumi plugins
+        // The output bus exists purely so the framework can read a
+        // sample rate from its format — no audio is ever written
+        // to it. The render block below memsets the output buffer
+        // to 0 for aumi plugins to satisfy strict hosts that audit
+        // for stale data.
         // (numOut=0 in `render()` skips the output pointer setup).
         let outChans = numOut > 0 ? numOut : 2
         let outputFmt = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: outChans)!
@@ -187,8 +187,7 @@ class TruceAUAudioUnit: AUAudioUnit {
     /// must advertise at least one MIDI output for Apple's AU
     /// infrastructure to accept instantiation. Plugins with audio
     /// outputs (`aufx`, `aumu`, `aumf`) return an empty array so
-    /// hosts don't surface phantom MIDI ports. Same pattern JUCE's
-    /// `getMIDIOutputNames()` uses.
+    /// hosts don't surface phantom MIDI ports.
     override var midiOutputNames: [String] {
         if let d = g_descriptor?.pointee, d.num_outputs == 0 {
             return ["MIDI Out"]
@@ -268,8 +267,11 @@ class TruceAUAudioUnit: AUAudioUnit {
         midiBuf: UnsafeMutablePointer<AuMidiEvent>,
         midi2Buf: UnsafeMutablePointer<AuMidi2Event>,
         transportBuf: UnsafeMutablePointer<AuTransportSnapshot>,
+        sysexOutScratch: UnsafeMutablePointer<UInt8>,
+        sysexOutScratchCap: Int,
         musicalContext: AUHostMusicalContextBlock?,
-        transportState: AUHostTransportStateBlock?
+        transportState: AUHostTransportStateBlock?,
+        midiOutputBlock: AUMIDIOutputEventBlock?
     ) -> AUAudioUnitStatus {
         if numIn > 0, let pull = pull {
             var f = AudioUnitRenderActionFlags()
@@ -381,6 +383,60 @@ class TruceAUAudioUnit: AUAudioUnit {
                            frameCount, midiBuf, numMidi,
                            midi2Buf, numMidi2,
                            transportBuf)
+
+        // Drain plug-in → host MIDI output. AU v3 hosts expose a
+        // `midiOutputEventBlock` that accepts a raw MIDI 1.0 byte
+        // stream; we call it once per event. `eventSampleTime` is
+        // the host's absolute sample time, so the plug-in's
+        // within-block `delta` is added to the buffer's starting
+        // sample. The block is nil when the host doesn't accept
+        // MIDI output; skipping the drain is correct in that case.
+        if let outputBlock = midiOutputBlock {
+            let bufStart = Int64(timestamp.pointee.mSampleTime)
+            // Channel-voice events. 2-byte messages (Program Change,
+            // Channel Pressure) emit only the bytes that matter;
+            // 3-byte messages emit all three. Buffer is stack-local
+            // because the call is synchronous.
+            let cvCount = cb.pointee.output_event_count(ctx)
+            for i in 0..<cvCount {
+                var ev = AuMidiEvent(
+                    sample_offset: 0, status: 0, data1: 0, data2: 0, _pad: 0)
+                cb.pointee.output_event_at(ctx, i, &ev)
+                let st = ev.status & 0xF0
+                let len = (st == 0xC0 || st == 0xD0) ? 2 : 3
+                var bytes: [UInt8] = [ev.status, ev.data1, ev.data2]
+                let evTime = AUEventSampleTime(bufStart + Int64(ev.sample_offset))
+                _ = bytes.withUnsafeBufferPointer { buf in
+                    outputBlock(evTime, 0 /* cable */, len, buf.baseAddress!)
+                }
+            }
+
+            // SysEx events. Each event's framed payload (`0xF0` +
+            // inner + `0xF7`) lands in `sysexOutScratch` so the
+            // pointer the host receives stays valid for the call
+            // duration. Scratch advances per event so concurrent
+            // events within one block don't overwrite each other.
+            let sxCount = cb.pointee.output_sysex_count(ctx)
+            var scratchUsed = 0
+            for i in 0..<sxCount {
+                var delta: UInt32 = 0
+                var bytes: UnsafePointer<UInt8>? = nil
+                var len: UInt32 = 0
+                cb.pointee.output_sysex_at(ctx, i, &delta, &bytes, &len)
+                guard let payload = bytes else { continue }
+                let framedLen = Int(len) + 2 // +0xF0 / +0xF7
+                if scratchUsed + framedLen > sysexOutScratchCap { break }
+                let dst = sysexOutScratch.advanced(by: scratchUsed)
+                dst[0] = 0xF0
+                if len > 0 {
+                    dst.advanced(by: 1).update(from: payload, count: Int(len))
+                }
+                dst[Int(len) + 1] = 0xF7
+                let evTime = AUEventSampleTime(bufStart + Int64(delta))
+                _ = outputBlock(evTime, 0 /* cable */, framedLen, UnsafePointer(dst))
+                scratchUsed += framedLen
+            }
+        }
         return noErr
     }
 
@@ -394,6 +450,17 @@ class TruceAUAudioUnit: AUAudioUnit {
         let midiBuf = UnsafeMutablePointer<AuMidiEvent>.allocate(capacity: 256)
         let midi2Buf = UnsafeMutablePointer<AuMidi2Event>.allocate(capacity: 256)
         let transportBuf = UnsafeMutablePointer<AuTransportSnapshot>.allocate(capacity: 1)
+        // Scratch for output SysEx framing: each plug-in event
+        // becomes `0xF0` + inner + `0xF7` in this buffer before
+        // being handed to `midiOutputEventBlock`. Sized to
+        // `TRUCE_SYSEX_POOL_PREALLOC` (mirrored from
+        // `truce_core::SYSEX_POOL_PREALLOC`, 128 KiB by default —
+        // the worst-case sum of all inner payloads in one block)
+        // plus 512 B of framing headroom (2 bytes × up to 256
+        // events).
+        let sysexOutScratchCap = Int(TRUCE_SYSEX_POOL_PREALLOC) + 512
+        let sysexOutScratch =
+            UnsafeMutablePointer<UInt8>.allocate(capacity: sysexOutScratchCap)
 
         // Snapshot the host blocks at render-graph compile time. AU v3
         // guarantees these are realtime-safe to call from the render
@@ -401,6 +468,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         // will be nil for plugins instantiated outside a musical context.
         let musicalContext = self.musicalContextBlock
         let transportState = self.transportStateBlock
+        let midiOutputBlock = self.midiOutputEventBlock
 
         return { _, timestamp, frameCount, _, outputData, events, pull in
             return TruceAUAudioUnit.render(
@@ -410,8 +478,11 @@ class TruceAUAudioUnit: AUAudioUnit {
                 inPtrs: inPtrs, outPtrs: outPtrs, midiBuf: midiBuf,
                 midi2Buf: midi2Buf,
                 transportBuf: transportBuf,
+                sysexOutScratch: sysexOutScratch,
+                sysexOutScratchCap: sysexOutScratchCap,
                 musicalContext: musicalContext,
-                transportState: transportState)
+                transportState: transportState,
+                midiOutputBlock: midiOutputBlock)
         }
     }
 
@@ -451,8 +522,9 @@ class TruceAUAudioUnit: AUAudioUnit {
         guard let d = g_descriptor?.pointee else { return nil }
         // aumi (MIDI Processor, zero audio I/O): advertise 0 inputs
         // and "any" (-1) outputs — the output bus is a dummy kept
-        // alive only so AUv3 can negotiate a sample rate. Same
-        // AUChannelInfo JUCE emits for IsMidiEffect (commit a66fd53).
+        // alive only so AUv3 can negotiate a sample rate. This
+        // `[0, -1]` shape is the AUChannelInfo Apple's framework
+        // requires for AU MIDI effects.
         if d.num_inputs == 0 && d.num_outputs == 0 {
             return [0, -1]
         }

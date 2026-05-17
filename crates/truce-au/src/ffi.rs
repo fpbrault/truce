@@ -122,6 +122,25 @@ pub struct AuCallbacks {
     pub output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     /// Fill `out` with the index-th encodable output event.
     pub output_event_at: unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut AuMidiEvent),
+    /// Count of `SysEx`-shaped events the plug-in pushed during the
+    /// most recent `process()` call. The AU v3 shim drains these
+    /// after the channel-voice events, fragments each into UMP
+    /// `SysEx`-8 packets, and emits via
+    /// `midiOutputEventListBlock`. The AU v2 shim uses the
+    /// `midiOutputCallback` framed-bytestream path.
+    pub output_sysex_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Fill `out_delta_frames`, `out_bytes`, `out_len` with the
+    /// index-th `SysEx` output event. Returns inner bytes (no
+    /// `0xF0` / `0xF7` framing); the shim re-adds framing for the
+    /// AU v2 legacy callback path, and fragments into UMP packets
+    /// for the AU v3 path.
+    pub output_sysex_at: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        index: u32,
+        out_delta_frames: *mut u32,
+        out_bytes: *mut *const u8,
+        out_len: *mut u32,
+    ),
 
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,

@@ -200,6 +200,27 @@ pub enum EventBody {
 
     // -- Transport --
     Transport(TransportInfo),
+
+    // -- System layer --
+    /// System Exclusive (`SysEx`) message — MIDI 1.0 and MIDI 2.0
+    /// alike. The payload bytes live in [`EventList::sysex_bytes`];
+    /// resolve a body to its slice with
+    /// `event_list.sysex_bytes(&body)` rather than indexing the
+    /// pool directly. The bytes are the inner `SysEx` data
+    /// **without** the leading `0xF0` start byte or trailing `0xF7`
+    /// end byte — format wrappers strip those at the boundary so
+    /// plugin code doesn't have to.
+    ///
+    /// Inlining the bytes in the variant would balloon every event's
+    /// footprint to the worst-case (~64 KiB) — channel-voice events
+    /// are <8 bytes today and we want to keep the per-event memory
+    /// pressure on the audio thread proportional to that. The
+    /// indices-into-a-pool layout pays the price (two-step access)
+    /// for the `SysEx`-handling path only.
+    SysEx {
+        pool_offset: u32,
+        len: u32,
+    },
 }
 
 /// Host-populated transport snapshot. Constructed by every format
@@ -252,10 +273,59 @@ impl TransportInfo {
 /// wrappers don't each pick their own magic number.
 pub const EVENT_LIST_PREALLOC: usize = 256;
 
+/// Default reserved capacity for the `SysEx` byte pool on
+/// per-instance `EventList`s. 128 KiB ≈ 2× the worst-case single
+/// payload (one 64 KiB firmware-update-shaped message) with
+/// headroom for an interleaved burst of small messages in the
+/// same block.
+///
+/// Sized at construction in [`EventList::with_capacity`]; never
+/// re-allocates on the audio thread. A plugin that pushes beyond
+/// this gets a [`PushError::PoolFull`] and the message is dropped —
+/// truncating or splitting a `SysEx` makes it invalid.
+///
+/// **Mirror:** `TRUCE_SYSEX_POOL_PREALLOC` in
+/// `crates/truce-shim-types/include/au_shim_types.h`. The AU v3
+/// Swift template (which can't import Rust consts) reads the C
+/// macro to size its per-render output scratch buffer. `truce-au`
+/// has a unit test (`sysex_pool_prealloc_matches_header`)
+/// asserting the two values agree.
+pub const SYSEX_POOL_PREALLOC: usize = 128 * 1024;
+
+/// Why a push into the [`EventList`] failed. Today only `SysEx`
+/// payloads can fail to land (the channel-voice [`EventList::push`]
+/// path grows the backing `Vec` instead, since the audio-thread
+/// contract there is "stay under [`EVENT_LIST_PREALLOC`]" rather
+/// than "fail closed").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PushError {
+    /// The `SysEx` byte pool is full. The message wasn't appended.
+    /// Callers either drop it, surface it via a meter, or bump the
+    /// pool size via [`EventList::with_capacity`] at construction.
+    PoolFull,
+}
+
+impl core::fmt::Display for PushError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::PoolFull => f.write_str("SysEx byte pool is full"),
+        }
+    }
+}
+
+impl std::error::Error for PushError {}
+
 /// Ordered list of events within a process block.
+///
+/// `events` is the per-block event ring; `sysex_pool` is the
+/// variable-byte arena that [`EventBody::SysEx`] entries index into.
+/// Both are pre-allocated by [`EventList::with_capacity`] and reset
+/// (length only — backing memory preserved) by [`Self::clear`], so
+/// steady-state operation is allocation-free.
 #[derive(Clone, Debug, Default)]
 pub struct EventList {
     events: Vec<Event>,
+    sysex_pool: Vec<u8>,
 }
 
 impl EventList {
@@ -267,10 +337,15 @@ impl EventList {
     /// the global allocator on the audio thread; pre-allocating with
     /// the max event count an audio block is likely to carry keeps
     /// the first block alloc-free.
+    ///
+    /// The `SysEx` byte pool is sized to [`SYSEX_POOL_PREALLOC`]
+    /// regardless of `capacity` — `capacity` controls the event ring
+    /// only.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             events: Vec::with_capacity(capacity),
+            sysex_pool: Vec::with_capacity(SYSEX_POOL_PREALLOC),
         }
     }
 
@@ -283,8 +358,63 @@ impl EventList {
         self.events.push(event);
     }
 
+    /// Append a `SysEx` event whose payload is copied into the pool.
+    /// `data` is the inner `SysEx` bytes **without** the leading
+    /// `0xF0` / trailing `0xF7` — wrappers strip those at the
+    /// boundary.
+    ///
+    /// Returns [`PushError::PoolFull`] when the pool can't hold
+    /// `data.len()` more bytes; the event is *not* appended and the
+    /// pool is left unchanged. `SysEx` messages are atomic by spec,
+    /// so the caller's choices are drop-and-flag (via a meter) or
+    /// fail the host call. Splitting / truncating produces a corrupt
+    /// message and is never the right answer.
+    ///
+    /// # Errors
+    /// [`PushError::PoolFull`] when the pool is at capacity.
+    pub fn push_sysex(&mut self, sample_offset: u32, data: &[u8]) -> Result<(), PushError> {
+        let pool_offset = self.sysex_pool.len();
+        if pool_offset + data.len() > self.sysex_pool.capacity() {
+            return Err(PushError::PoolFull);
+        }
+        self.sysex_pool.extend_from_slice(data);
+        // `as u32` casts are bounded: pool capacity is sized in the
+        // hundreds of KiB at most, and the bounds check above keeps
+        // `pool_offset + data.len()` under capacity, which itself
+        // fits in `u32` by construction (`SYSEX_POOL_PREALLOC` ==
+        // 128 KiB).
+        #[allow(clippy::cast_possible_truncation)]
+        self.events.push(Event {
+            sample_offset,
+            body: EventBody::SysEx {
+                pool_offset: pool_offset as u32,
+                len: data.len() as u32,
+            },
+        });
+        Ok(())
+    }
+
+    /// Resolve a [`EventBody::SysEx`] entry to its payload bytes.
+    /// Returns an empty slice for any other variant — the slice is
+    /// indexed against the internal byte pool, so a non-`SysEx`
+    /// body has nothing to point at.
+    #[must_use]
+    pub fn sysex_bytes(&self, body: &EventBody) -> &[u8] {
+        match body {
+            EventBody::SysEx { pool_offset, len } => {
+                let start = *pool_offset as usize;
+                let end = start + (*len as usize);
+                &self.sysex_pool[start..end]
+            }
+            _ => &[],
+        }
+    }
+
     pub fn clear(&mut self) {
         self.events.clear();
+        // `Vec::clear` preserves capacity; the pool stays
+        // pre-allocated for the next block.
+        self.sysex_pool.clear();
     }
 
     /// Stable sort by `sample_offset`. **Stability matters:** events
@@ -293,6 +423,9 @@ impl EventList {
     /// "MIDI on this sample then a CC on the same sample" stays in
     /// that order). Don't replace with `sort_unstable_by_key` — the
     /// stability guarantee is load-bearing.
+    ///
+    /// Sorting reorders [`Event`] entries only; `SysEx` pool
+    /// offsets stay valid because the pool's bytes aren't moved.
     pub fn sort(&mut self) {
         self.events.sort_by_key(|e| e.sample_offset);
     }
@@ -314,5 +447,111 @@ impl EventList {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    /// Current `SysEx` pool usage in bytes. Mainly useful in tests
+    /// and for plug-in code that wants to surface "headroom
+    /// remaining" in an editor.
+    #[must_use]
+    pub fn sysex_pool_used(&self) -> usize {
+        self.sysex_pool.len()
+    }
+
+    /// Total `SysEx` pool capacity in bytes. Stable for the life of
+    /// the `EventList` (no audio-thread reallocation).
+    #[must_use]
+    pub fn sysex_pool_capacity(&self) -> usize {
+        self.sysex_pool.capacity()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_sysex_round_trip() {
+        let mut list = EventList::with_capacity(8);
+        let payload = b"\x7E\x00\x06\x01"; // device-inquiry reply body
+        list.push_sysex(42, payload).expect("pool has room");
+
+        assert_eq!(list.len(), 1);
+        let event = list.iter().next().expect("one event");
+        assert_eq!(event.sample_offset, 42);
+        assert!(matches!(event.body, EventBody::SysEx { .. }));
+        assert_eq!(list.sysex_bytes(&event.body), payload);
+        assert_eq!(list.sysex_pool_used(), payload.len());
+    }
+
+    #[test]
+    fn push_sysex_two_messages_carve_pool_independently() {
+        let mut list = EventList::with_capacity(8);
+        let a = b"\x01\x02\x03";
+        let b = b"\x04\x05\x06\x07";
+        list.push_sysex(0, a).unwrap();
+        list.push_sysex(1, b).unwrap();
+
+        let collected: Vec<_> = list.iter().collect();
+        assert_eq!(list.sysex_bytes(&collected[0].body), a);
+        assert_eq!(list.sysex_bytes(&collected[1].body), b);
+        assert_eq!(list.sysex_pool_used(), a.len() + b.len());
+    }
+
+    #[test]
+    fn push_sysex_pool_full_is_recoverable() {
+        // Construct a tiny pool by going through `with_capacity` with a
+        // post-hoc shrink — we can't pass a custom pool size today, so
+        // exercise the failure path by overflowing the configured 128 KiB.
+        let mut list = EventList::with_capacity(8);
+        let big = vec![0u8; SYSEX_POOL_PREALLOC];
+        list.push_sysex(0, &big)
+            .expect("first fill is exactly the pool");
+        let err = list.push_sysex(1, b"\x00").unwrap_err();
+        assert_eq!(err, PushError::PoolFull);
+        // No partial state: the rejected event isn't queued, the pool
+        // length is unchanged.
+        assert_eq!(list.len(), 1);
+        assert_eq!(list.sysex_pool_used(), SYSEX_POOL_PREALLOC);
+    }
+
+    #[test]
+    fn clear_preserves_pool_capacity() {
+        let mut list = EventList::with_capacity(8);
+        let cap_before = list.sysex_pool_capacity();
+        list.push_sysex(0, b"\x00\x01\x02").unwrap();
+        list.clear();
+        assert!(list.is_empty());
+        assert_eq!(list.sysex_pool_used(), 0);
+        // The whole point of pre-allocation: clearing must not free.
+        assert_eq!(list.sysex_pool_capacity(), cap_before);
+    }
+
+    #[test]
+    fn sort_preserves_sysex_offsets() {
+        let mut list = EventList::with_capacity(8);
+        let early = b"\x10\x11";
+        let late = b"\x20\x21\x22";
+        list.push_sysex(100, late).unwrap();
+        list.push_sysex(0, early).unwrap();
+        list.sort();
+
+        let collected: Vec<_> = list.iter().collect();
+        // Sorted: sample_offset=0 comes first, then 100.
+        assert_eq!(collected[0].sample_offset, 0);
+        assert_eq!(list.sysex_bytes(&collected[0].body), early);
+        assert_eq!(collected[1].sample_offset, 100);
+        assert_eq!(list.sysex_bytes(&collected[1].body), late);
+    }
+
+    #[test]
+    fn sysex_bytes_returns_empty_for_non_sysex() {
+        let list = EventList::with_capacity(8);
+        let body = EventBody::NoteOn {
+            group: 0,
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        };
+        assert!(list.sysex_bytes(&body).is_empty());
     }
 }

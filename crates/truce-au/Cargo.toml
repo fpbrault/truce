@@ -30,5 +30,11 @@ crossbeam-queue = "0.3"
 cc = "1"
 truce-shim-types = { workspace = true }
 
+# Only used by the `sysex_pool_prealloc_matches_header` mirror test
+# in `lib.rs` — the runtime AU shim talks to the header through C,
+# not through this Rust string view.
+[dev-dependencies]
+truce-shim-types = { workspace = true }
+
 [lints]
 workspace = true

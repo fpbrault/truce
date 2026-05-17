@@ -18,6 +18,10 @@ typedef void  (*fn_process)(void*, const float**, float**, uint32_t, uint32_t, u
                             const TruceAaxTransportSnapshot*);
 typedef uint32_t (*fn_output_event_count)(void*);
 typedef void     (*fn_output_event_at)(void*, uint32_t, TruceAaxMidiEvent*);
+typedef void     (*fn_push_sysex_input)(void*, uint32_t, const uint8_t*, uint32_t);
+typedef uint32_t (*fn_output_sysex_count)(void*);
+typedef void     (*fn_output_sysex_at)(void*, uint32_t,
+                                        uint32_t*, const uint8_t**, uint32_t*);
 typedef double (*fn_get_param)(void*, uint32_t);
 typedef void   (*fn_set_param)(void*, uint32_t, double);
 typedef void   (*fn_format_param)(void*, uint32_t, double, char*, uint32_t);
@@ -42,6 +46,9 @@ struct TruceBridge {
     fn_process             process;
     fn_output_event_count  output_event_count;
     fn_output_event_at     output_event_at;
+    fn_push_sysex_input    push_sysex_input;
+    fn_output_sysex_count  output_sysex_count;
+    fn_output_sysex_at     output_sysex_at;
     fn_get_param           get_param;
     fn_set_param           set_param;
     fn_format_param        format_param;

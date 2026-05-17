@@ -6,6 +6,12 @@
 // Shared C types for the Rust ↔ ObjC/C boundary.
 // Used by both au_shim.m (AU v3) and au_v2_shim.c (AU v2).
 
+// SysEx byte-pool capacity, mirrored from `truce_core::SYSEX_POOL_PREALLOC`.
+// Defined here so the Swift template (which can't import Rust consts)
+// can size its per-render output scratch buffer without re-declaring
+// the magic number. Keep in sync with the Rust constant.
+#define TRUCE_SYSEX_POOL_PREALLOC (128 * 1024)
+
 typedef struct {
     uint8_t component_type[4];
     uint8_t component_subtype[4];
@@ -106,6 +112,22 @@ typedef struct {
      * slots. Mirrors the input direction's `AuMidiEvent` shape. */
     uint32_t (*output_event_count)(void *ctx);
     void (*output_event_at)(void *ctx, uint32_t index, AuMidiEvent *out);
+    /* SysEx output. The Rust side iterates over EventBody::SysEx
+     * variants in its output_events queue; the shim drains via
+     * `output_sysex_count` + `output_sysex_at`, fragments each
+     * payload into UMP SysEx-8 packets, and emits through the
+     * AU v3 host's `midiOutputEventListBlock` (or — on older AU v2
+     * hosts that don't expose that block — the legacy
+     * `midiOutputCallback` with framed 0xF0/0xF7 bytestream).
+     *
+     * `out_bytes` points into the plugin's EventList SysEx pool;
+     * valid until the next process() call clears the pool, which
+     * is after the shim has copied / emitted. */
+    uint32_t (*output_sysex_count)(void *ctx);
+    void (*output_sysex_at)(void *ctx, uint32_t index,
+                            uint32_t *out_delta_frames,
+                            const uint8_t **out_bytes,
+                            uint32_t *out_len);
     /* GUI */
     int32_t (*gui_has_editor)(void *ctx);
     void (*gui_get_size)(void *ctx, uint32_t *w, uint32_t *h);

@@ -423,6 +423,32 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
         (*out).body.unit = 0;
         (*out).body.pad = 0;
         for event in events.iter() {
+            // `SysEx` events have a variable-length payload that
+            // can't fit in the fixed-size `buf` below; handle them
+            // here, reading the bytes out of the `EventList`'s pool
+            // and writing the framed `0xF0 ... 0xF7` atom directly.
+            if let EventBody::SysEx { .. } = &event.body {
+                let inner = events.sysex_bytes(&event.body);
+                let body_len = inner.len() + 2; // +2 for the 0xF0/0xF7 framing
+                let total = core::mem::size_of::<AtomEventHeader>() + body_len;
+                let padded = (total + 7) & !7;
+                if offset + padded > capacity {
+                    break;
+                }
+                let ev_ptr = body_start.add(offset).cast::<AtomEventHeader>();
+                (*ev_ptr).time_frames = i64::from(event.sample_offset);
+                (*ev_ptr).body.size = len_u32(body_len);
+                (*ev_ptr).body.type_ = urid.midi_event;
+                let body_ptr = body_start.add(offset + core::mem::size_of::<AtomEventHeader>());
+                *body_ptr = 0xF0;
+                core::ptr::copy_nonoverlapping(inner.as_ptr(), body_ptr.add(1), inner.len());
+                *body_ptr.add(1 + inner.len()) = 0xF7;
+                for i in body_len..(padded - core::mem::size_of::<AtomEventHeader>()) {
+                    *body_ptr.add(i) = 0;
+                }
+                offset += padded;
+                continue;
+            }
             let mut buf = [0u8; 3];
             let (n, frame) = match &event.body {
                 EventBody::NoteOn {

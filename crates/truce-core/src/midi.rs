@@ -143,6 +143,12 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
     }
 }
 
+// `downconvert_to_midi1` is intentionally absent until plug-ins
+// can opt into MIDI 2.0 with an explicit downconvert policy; a
+// per-event downcast helper without that gate would route every
+// MIDI 2.0 plug-in's output through silent precision loss on
+// VST3 / VST2 / LV2 / AAX.
+
 #[cfg(test)]
 mod tests {
     use super::*;

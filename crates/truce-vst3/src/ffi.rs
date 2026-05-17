@@ -126,6 +126,32 @@ pub struct Vst3Callbacks {
     pub get_output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     pub get_output_event:
         unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst3MidiEvent),
+    // `SysEx` input. The shim calls this once per `kDataEvent` /
+    // `kMidiSysEx` event seen in the host's input event list,
+    // before invoking `process`. Bytes are the inner `SysEx`
+    // payload — VST3 hosts deliver `DataEvent::bytes` without the
+    // `0xF0` / `0xF7` framing per the SDK convention — and are
+    // valid only for the duration of this call. The Rust side
+    // copies into [`truce_core::EventList::sysex_pool`] so the
+    // plug-in's `process()` sees a stable view.
+    pub push_sysex_input:
+        unsafe extern "C" fn(ctx: *mut c_void, sample_offset: u32, bytes: *const u8, len: u32),
+    /// Count of `SysEx`-shaped events the plug-in pushed during
+    /// `process()`. The shim queries this once after the call to
+    /// drain into the host's output event list.
+    pub get_output_sysex_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Fill `out_sample_offset`, `out_bytes`, `out_len` with the
+    /// index-th `SysEx` output event. Bytes point into the
+    /// plug-in's `EventList` pool; valid until the next `process()`
+    /// call clears it. The shim copies (via the host's
+    /// `IEventList::addEvent`) before that happens.
+    pub get_output_sysex_event: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        index: u32,
+        out_sample_offset: *mut u32,
+        out_bytes: *mut *const u8,
+        out_len: *mut u32,
+    ),
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),

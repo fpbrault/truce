@@ -82,6 +82,30 @@ pub struct Vst2Callbacks {
     /// `Vst2MidiEventCompact` shape mirrors the input direction.
     pub output_event_at:
         unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst2MidiEvent),
+    /// `SysEx` input — shim calls once per `kVstSysExType` event in
+    /// `effProcessEvents`, **after** stripping the leading `0xF0`
+    /// / trailing `0xF7` framing the host includes (Steinberg
+    /// vendor-extension convention; real-world hosts like Cubase
+    /// and Reaper deliver framed bytes). Rust sees inner bytes
+    /// only; valid for the duration of this call.
+    pub push_sysex_input:
+        unsafe extern "C" fn(ctx: *mut c_void, delta_frames: u32, bytes: *const u8, len: u32),
+    /// Count of `SysEx`-shaped events the plug-in pushed during
+    /// `process()`.
+    pub output_sysex_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Fill `out_delta_frames`, `out_bytes`, `out_len` with the
+    /// index-th `SysEx` output event. Returns inner bytes (no
+    /// `0xF0` / `0xF7` framing) — the shim re-adds framing into
+    /// its per-block scratch before handing the bytes to the host.
+    /// Pointer is valid until the next `process()` call clears the
+    /// pool (which happens after the host has consumed the event).
+    pub output_sysex_at: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        index: u32,
+        out_delta_frames: *mut u32,
+        out_bytes: *mut *const u8,
+        out_len: *mut u32,
+    ),
     pub state_save:
         unsafe extern "C" fn(ctx: *mut c_void, out_data: *mut *mut u8, out_len: *mut u32),
     pub state_load: unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: u32),

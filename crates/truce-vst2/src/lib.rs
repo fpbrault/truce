@@ -505,6 +505,60 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
     }
 }
 
+// `SysEx` input — shim hands us the byte pointer + length; we copy
+// into the plug-in's `EventList` pool. Pool-full failures drop the
+// message (atomic-by-spec; truncating corrupts).
+unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    delta_frames: u32,
+    bytes: *const u8,
+    len: u32,
+) {
+    unsafe {
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
+        if bytes.is_null() || len == 0 {
+            return;
+        }
+        let slice = std::slice::from_raw_parts(bytes, len as usize);
+        let _ = inst.event_list.push_sysex(delta_frames, slice);
+    }
+}
+
+unsafe extern "C" fn cb_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        len_u32(
+            inst.output_events
+                .iter()
+                .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+                .count(),
+        )
+    }
+}
+
+unsafe extern "C" fn cb_output_sysex_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out_delta_frames: *mut u32,
+    out_bytes: *mut *const u8,
+    out_len: *mut u32,
+) {
+    unsafe {
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
+        if let Some(event) = inst
+            .output_events
+            .iter()
+            .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+            .nth(index as usize)
+        {
+            let bytes = inst.output_events.sysex_bytes(&event.body);
+            *out_delta_frames = event.sample_offset;
+            *out_bytes = bytes.as_ptr();
+            *out_len = len_u32(bytes.len());
+        }
+    }
+}
+
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
@@ -946,6 +1000,9 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         param_format_current: cb_param_format_current::<P>,
         output_event_count: cb_output_event_count::<P>,
         output_event_at: cb_output_event_at::<P>,
+        push_sysex_input: cb_push_sysex_input::<P>,
+        output_sysex_count: cb_output_sysex_count::<P>,
+        output_sysex_at: cb_output_sysex_at::<P>,
         state_save: cb_state_save::<P>,
         state_load: cb_state_load::<P>,
         state_free: cb_state_free,

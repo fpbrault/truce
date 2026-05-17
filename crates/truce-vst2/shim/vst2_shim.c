@@ -52,6 +52,17 @@ typedef struct {
     uint32_t midi_count;
     int state_loaded;           /* set after effSetChunk or effMainsChanged */
     void* deferred_parent;      /* stashed parent view if editor opened before state loaded */
+    /* Scratch for SysEx output: every `EventBody::SysEx` the plugin
+     * emits gets framed (0xF0 + inner + 0xF7) into this buffer
+     * before the `VstMidiSysExEvent::sysexDump` pointer is handed
+     * to the host. Real-world VST2 hosts (Cubase, Reaper) expect
+     * framed bytes per the Steinberg vendor extension's `sysexDump`
+     * convention; truce's internal `EventBody::SysEx` stores inner
+     * bytes only, so this is the wire-adaptation site. Sized to
+     * match truce_core::SYSEX_POOL_PREALLOC (128 KiB) + 2 framing
+     * bytes per event × up to 256 events. */
+    uint8_t sysex_out_scratch[128 * 1024 + 512];
+    uint32_t sysex_out_used;
 } TruceVst2;
 
 /* ---------------------------------------------------------------------------
@@ -136,16 +147,42 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
         case effProcessEvents: {
             if (!ptr) return 0;
             VstEvents* events = (VstEvents*)ptr;
-            for (int32_t i = 0; i < events->numEvents && inst->midi_count < 256; i++) {
+            for (int32_t i = 0; i < events->numEvents; i++) {
                 VstEvent* ev = events->events[i];
-                if (ev->type != kVstMidiType) continue;
-                VstMidiEvent* midi = (VstMidiEvent*)ev;
-                Vst2MidiEventCompact* out = &inst->midi_buf[inst->midi_count++];
-                out->delta_frames = (uint32_t)midi->deltaFrames;
-                out->status = (uint8_t)midi->midiData[0];
-                out->data1 = (uint8_t)midi->midiData[1];
-                out->data2 = (uint8_t)midi->midiData[2];
-                out->_pad = 0;
+                if (ev->type == kVstMidiType) {
+                    if (inst->midi_count >= 256) continue;
+                    VstMidiEvent* midi = (VstMidiEvent*)ev;
+                    Vst2MidiEventCompact* out = &inst->midi_buf[inst->midi_count++];
+                    out->delta_frames = (uint32_t)midi->deltaFrames;
+                    out->status = (uint8_t)midi->midiData[0];
+                    out->data1 = (uint8_t)midi->midiData[1];
+                    out->data2 = (uint8_t)midi->midiData[2];
+                    out->_pad = 0;
+                } else if (ev->type == kVstSysExType) {
+                    /* Forward to Rust. The byte buffer the host
+                     * hands us is only valid for the duration of
+                     * this call; the Rust callback copies into
+                     * `EventList`'s SysEx pool synchronously.
+                     *
+                     * Real-world VST2 hosts (Cubase, Reaper) deliver
+                     * framed SysEx — leading 0xF0, trailing 0xF7 —
+                     * per the Steinberg vendor extension's
+                     * `sysexDump` convention. Truce's internal
+                     * `EventBody::SysEx` stores inner bytes only,
+                     * so strip the framing here. Defensive: also
+                     * accept un-framed payloads from non-conforming
+                     * hosts. */
+                    VstMidiSysExEvent* sx = (VstMidiSysExEvent*)ev;
+                    if (g_vst2_callbacks && g_vst2_callbacks->push_sysex_input
+                            && sx->sysexDump && sx->dumpBytes > 0) {
+                        const uint8_t* p = (const uint8_t*)sx->sysexDump;
+                        uint32_t n = (uint32_t)sx->dumpBytes;
+                        if (p[0] == 0xF0) { p++; n--; }
+                        if (n > 0 && p[n - 1] == 0xF7) { n--; }
+                        g_vst2_callbacks->push_sysex_input(inst->rust_ctx,
+                            (uint32_t)sx->deltaFrames, p, n);
+                    }
+                }
             }
             return 1;
         }
@@ -201,6 +238,8 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             if (strcmp(s, "receiveVstEvents") == 0) return 1;
             if (strcmp(s, "sendVstMidiEvent") == 0) return 1;
             if (strcmp(s, "sendVstEvents") == 0) return 1;
+            if (strcmp(s, "receiveVstMidiSysExEvent") == 0) return 1;
+            if (strcmp(s, "sendVstMidiSysExEvent") == 0) return 1;
             if (strcmp(s, "bypass") == 0) {
                 /* Advertise bypass support only if the plugin actually
                  * has an IS_BYPASS-flagged param wired into the
@@ -400,23 +439,30 @@ static void processReplacing(AEffect* e, float** inputs, float** outputs,
      * we can't get a runaway event count past the host's expected
      * per-block budget. */
     if (inst->master) {
-        uint32_t out_count = g_vst2_callbacks->output_event_count(inst->rust_ctx);
-        if (out_count > 0) {
-            if (out_count > 256) out_count = 256;
+        uint32_t midi_count = g_vst2_callbacks->output_event_count(inst->rust_ctx);
+        uint32_t sx_count = g_vst2_callbacks->output_sysex_count
+            ? g_vst2_callbacks->output_sysex_count(inst->rust_ctx)
+            : 0;
+        if (midi_count > 256) midi_count = 256;
+        if (sx_count > 256) sx_count = 256;
+        uint32_t total = midi_count + sx_count;
+        if (total > 0) {
             VstMidiEvent midis[256];
+            VstMidiSysExEvent sxs[256];
             /* `VstEvents` declares `events[2]` for alignment; for N
              * events, lay out `numEvents`, `reserved`, then a
              * trailing `VstEvent*[N]`. The storage buffer is sized
-             * for the cap so pointer arithmetic stays in-bounds. */
+             * for `midi_count + sx_count` so pointer arithmetic
+             * stays in-bounds. */
             char vstEvents_storage[sizeof(int32_t) + sizeof(VstIntPtr)
-                                   + 256 * sizeof(VstEvent*)];
+                                   + 512 * sizeof(VstEvent*)];
             VstEvents* vstEvents = (VstEvents*)vstEvents_storage;
-            vstEvents->numEvents = (int32_t)out_count;
+            vstEvents->numEvents = (int32_t)total;
             vstEvents->reserved = 0;
             VstEvent** events_array = (VstEvent**)((char*)vstEvents
                                                    + sizeof(int32_t)
                                                    + sizeof(VstIntPtr));
-            for (uint32_t i = 0; i < out_count; i++) {
+            for (uint32_t i = 0; i < midi_count; i++) {
                 Vst2MidiEventCompact pkt = {0};
                 g_vst2_callbacks->output_event_at(inst->rust_ctx, i, &pkt);
                 VstMidiEvent* m = &midis[i];
@@ -429,6 +475,42 @@ static void processReplacing(AEffect* e, float** inputs, float** outputs,
                 m->midiData[2] = (char)pkt.data2;
                 m->midiData[3] = 0;
                 events_array[i] = (VstEvent*)m;
+            }
+            inst->sysex_out_used = 0;
+            for (uint32_t i = 0; i < sx_count; i++) {
+                uint32_t delta = 0;
+                const uint8_t* bytes = NULL;
+                uint32_t len = 0;
+                g_vst2_callbacks->output_sysex_at(inst->rust_ctx, i,
+                                                  &delta, &bytes, &len);
+                /* Frame the inner bytes (0xF0 + inner + 0xF7) into
+                 * the per-block scratch. Real-world VST2 hosts
+                 * expect framed SysEx per the Steinberg vendor
+                 * extension; truce's pool stores inner bytes only.
+                 * Skip the event if the scratch is exhausted —
+                 * truncating SysEx is never the right answer. */
+                uint32_t framed_len = len + 2;
+                if (inst->sysex_out_used + framed_len > sizeof(inst->sysex_out_scratch)) {
+                    continue;
+                }
+                uint8_t* dst = inst->sysex_out_scratch + inst->sysex_out_used;
+                dst[0] = 0xF0;
+                if (bytes && len > 0) memcpy(dst + 1, bytes, len);
+                dst[1 + len] = 0xF7;
+                inst->sysex_out_used += framed_len;
+
+                VstMidiSysExEvent* sx = &sxs[i];
+                memset(sx, 0, sizeof(*sx));
+                sx->type = kVstSysExType;
+                sx->byteSize = (int32_t)sizeof(VstMidiSysExEvent);
+                sx->deltaFrames = (int32_t)delta;
+                sx->dumpBytes = (int32_t)framed_len;
+                /* Cast through `uintptr_t` strips `const`; the SDK
+                 * declares the field non-const because legacy hosts
+                 * could edit in place, but our scratch is logically
+                 * read-only from the host's perspective. */
+                sx->sysexDump = (char*)(uintptr_t)dst;
+                events_array[midi_count + i] = (VstEvent*)sx;
             }
             inst->master(e, audioMasterProcessEvents, 0, 0, vstEvents, 0.0f);
         }

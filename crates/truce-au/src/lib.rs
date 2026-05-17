@@ -10,12 +10,16 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 // `Float::from_f64` is only invoked from the macOS-only `set_param`
 // closure in `cb_gui_open` (the AU v2 host notifier path). Gate the
 // import so iOS builds, which take a `_id`-no-op branch instead,
 // don't flag it as unused.
 #[cfg(target_os = "macos")]
 use truce_core::Float;
+use truce_core::SYSEX_POOL_PREALLOC;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::editor::Editor;
 // `ClosureBridge`, `PluginContext`, `SendPtr`, `RawWindowHandle` are
@@ -31,6 +35,7 @@ use truce_core::info::PluginCategory;
 use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
+use truce_core::ump::{SysExAssembler, SysExFeed, decode_ump_channel_voice_2};
 use truce_core::wrapper::{
     default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
     run_register,
@@ -41,8 +46,6 @@ use ffi::{
     AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor,
     AuTransportSnapshot,
 };
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper — one per plugin instance, stored as the opaque ctx
@@ -68,6 +71,17 @@ struct AuInstance<P: PluginExport> {
     tail_cache: AtomicU32,
     event_list: EventList,
     output_events: EventList,
+    /// Per-instance UMP `SysEx` reassembler. AU v3 hosts deliver
+    /// long `SysEx` payloads as a chain of `SysEx`-7 (6-byte) or
+    /// `SysEx`-8 (13-byte) UMPs; the assembler concatenates them
+    /// into one logical [`EventBody::SysEx`] before pushing to the
+    /// plugin's `event_list`. Holds
+    /// [`truce_core::ump::SYSEX_ASSEMBLER_SLOTS`] ×
+    /// [`SYSEX_POOL_PREALLOC`] (4 × 128 KiB = 512 KiB) of buffer
+    /// space so concurrent streams across UMP groups don't bleed
+    /// into each other. Cleared at the top of `cb_process` so a
+    /// partial message can't bleed across blocks.
+    sysex_assembler: SysExAssembler,
     plugin_id_hash: u64,
     sample_rate: f64,
     /// Max block size declared by the host via
@@ -146,6 +160,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sysex_assembler: SysExAssembler::with_capacity(SYSEX_POOL_PREALLOC),
         plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         max_block_size: 8192,
@@ -190,6 +205,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     }
 }
 
+#[allow(clippy::too_many_lines)] // step-by-step block processing reads top-to-bottom
 unsafe extern "C" fn cb_process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     inputs: *const *const f32,
@@ -285,16 +301,47 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // deliver per-note expression + 32-bit-resolution channel
         // voice messages through `AURenderEvent.MIDIEventList`; the
         // Swift shim hands them here as 64-bit UMPs (MIDI 2.0 CV
-        // message type 0x4). Other UMP types (utility, system,
-        // SysEx, data) are not yet mapped — skipped here.
+        // message type 0x4) plus the SysEx-7 (mt 0x3) / SysEx-8
+        // (mt 0x5) variable-length streams that the assembler
+        // reconstitutes into one `EventBody::SysEx` per logical
+        // message. Utility / system / data UMPs are still skipped.
+        inst.sysex_assembler.reset();
         if !events2.is_null() && num_events2 > 0 {
             let slice2 = slice::from_raw_parts(events2, num_events2 as usize);
             for ev in slice2 {
-                if let Some(body) = decode_ump_channel_voice_2(ev.words) {
-                    inst.event_list.push(Event {
-                        sample_offset: ev.sample_offset,
-                        body,
-                    });
+                let mt = ((ev.words[0] >> 28) & 0xF) as u8;
+                match mt {
+                    0x4 => {
+                        if let Some(body) = decode_ump_channel_voice_2(ev.words) {
+                            inst.event_list.push(Event {
+                                sample_offset: ev.sample_offset,
+                                body,
+                            });
+                        }
+                    }
+                    0x3 => {
+                        let feed = inst
+                            .sysex_assembler
+                            .push_sysex7_packet([ev.words[0], ev.words[1]]);
+                        if let SysExFeed::Complete(p) = feed {
+                            // `push_sysex` failure here would mean the
+                            // pool is full mid-block; drop the
+                            // message rather than corrupt-splitting it.
+                            let _ = inst.event_list.push_sysex(ev.sample_offset, p.bytes);
+                        }
+                    }
+                    0x5 => {
+                        let feed = inst.sysex_assembler.push_sysex8_packet(ev.words);
+                        if let SysExFeed::Complete(p) = feed {
+                            let _ = inst.event_list.push_sysex(ev.sample_offset, p.bytes);
+                        }
+                    }
+                    _ => {
+                        // mt 0x0 (utility), 0x1 (system real-time),
+                        // 0x2 (MIDI 1 CV — already arrived via the
+                        // legacy `events` slice above), 0xD / 0xF
+                        // (flex / stream) — out of scope today.
+                    }
                 }
             }
         }
@@ -514,128 +561,9 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
 // Output event callbacks (plugin → host MIDI)
 // ---------------------------------------------------------------------------
 
-/// Decode a Universal MIDI Packet's first two words into a MIDI 2.0
-/// channel-voice [`EventBody`]. Returns `None` for non-channel-voice
-/// UMPs (utility, system, `SysEx`, data) — those are not surfaced to
-/// plugins yet. Spec reference: MIDI 2.0 M2-104-UM, §4.1 (MIDI 2.0
-/// Channel Voice Messages).
-#[allow(clippy::cast_possible_truncation)] // UMP fields are bit-packed; truncation is intentional
-fn decode_ump_channel_voice_2(words: [u32; 4]) -> Option<EventBody> {
-    // Bit layout (word 0):
-    //   31..28 mt (message type, 0x4 = MIDI 2.0 CV)
-    //   27..24 group (0..=15)
-    //   23..20 status nibble (0x8 = NoteOff, 0x9 = NoteOn, ...)
-    //   19..16 channel (0..=15)
-    //   15..0  status-specific (note + attribute-type, cc number, ...)
-    let w0 = words[0];
-    let w1 = words[1];
-    let mt = ((w0 >> 28) & 0xF) as u8;
-    if mt != 0x4 {
-        return None;
-    }
-    let group = ((w0 >> 24) & 0xF) as u8;
-    let status = ((w0 >> 20) & 0xF) as u8;
-    let channel = ((w0 >> 16) & 0xF) as u8;
-    let byte_a = ((w0 >> 8) & 0xFF) as u8; // note / cc number / etc.
-    let byte_b = (w0 & 0xFF) as u8; // attribute-type / index / etc.
-    let body = match status {
-        0x8 => EventBody::NoteOff2 {
-            group,
-            channel,
-            note: byte_a & 0x7F,
-            velocity: (w1 >> 16) as u16,
-            attribute_type: byte_b,
-            attribute: (w1 & 0xFFFF) as u16,
-        },
-        0x9 => EventBody::NoteOn2 {
-            group,
-            channel,
-            note: byte_a & 0x7F,
-            velocity: (w1 >> 16) as u16,
-            attribute_type: byte_b,
-            attribute: (w1 & 0xFFFF) as u16,
-        },
-        0xA => EventBody::PolyPressure2 {
-            group,
-            channel,
-            note: byte_a & 0x7F,
-            pressure: w1,
-        },
-        // 0x0 = Registered Per-Note (RPN-like), 0x1 = Assignable
-        // Per-Note. MIDI 2.0 §4.1.4. The lower 8 bits of word 0
-        // carry the per-note controller index; word 1 is the value.
-        0x0 | 0x1 => EventBody::PerNoteCC {
-            group,
-            channel,
-            note: byte_a & 0x7F,
-            cc: byte_b,
-            value: w1,
-            registered: status == 0x0,
-        },
-        // 0x6 = Per-Note Pitch Bend.
-        0x6 => EventBody::PerNotePitchBend {
-            group,
-            channel,
-            note: byte_a & 0x7F,
-            value: w1,
-        },
-        // 0xF = Per-Note Management. The flags live in byte_b (per
-        // §4.1.6); only the low two bits are defined today.
-        0xF => EventBody::PerNoteManagement {
-            group,
-            channel,
-            note: byte_a & 0x7F,
-            flags: byte_b,
-        },
-        0xB => EventBody::ControlChange2 {
-            group,
-            channel,
-            cc: byte_a & 0x7F,
-            value: w1,
-        },
-        0xD => EventBody::ChannelPressure2 {
-            group,
-            channel,
-            pressure: w1,
-        },
-        0xE => EventBody::PitchBend2 {
-            group,
-            channel,
-            value: w1,
-        },
-        // 0x2 = Registered Controller (RPN), 0x3 = Assignable
-        // Controller (NRPN). Bank lives in `byte_a` (lower 7 bits),
-        // index in `byte_b` (lower 7 bits).
-        0x2 => EventBody::RegisteredController {
-            group,
-            channel,
-            bank: byte_a & 0x7F,
-            index: byte_b & 0x7F,
-            value: w1,
-        },
-        0x3 => EventBody::AssignableController {
-            group,
-            channel,
-            bank: byte_a & 0x7F,
-            index: byte_b & 0x7F,
-            value: w1,
-        },
-        0xC => EventBody::ProgramChange2 {
-            group,
-            channel,
-            program: (w1 >> 24) as u8 & 0x7F,
-            // Word 0 bit 0 carries the "B" (bank-valid) flag; the
-            // bank bytes live in word 1's bottom half (MSB then LSB).
-            bank: if w0 & 0x01 == 1 {
-                Some(((w1 >> 8) as u8 & 0x7F, w1 as u8 & 0x7F))
-            } else {
-                None
-            },
-        },
-        _ => return None,
-    };
-    Some(body)
-}
+// UMP MIDI 2.0 CV decoder lives in `truce-core::ump` so the same
+// codec backs CLAP's `CLAP_EVENT_MIDI2` path and AU's MIDIEventList
+// path.
 
 /// Map a truce `Event` body to a 3-byte AU MIDI packet. Returns
 /// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
@@ -710,6 +638,41 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
             .nth(index as usize)
         {
             *out = packet;
+        }
+    }
+}
+
+unsafe extern "C" fn cb_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        len_u32(
+            inst.output_events
+                .iter()
+                .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+                .count(),
+        )
+    }
+}
+
+unsafe extern "C" fn cb_output_sysex_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out_delta_frames: *mut u32,
+    out_bytes: *mut *const u8,
+    out_len: *mut u32,
+) {
+    unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        if let Some(event) = inst
+            .output_events
+            .iter()
+            .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+            .nth(index as usize)
+        {
+            let bytes = inst.output_events.sysex_bytes(&event.body);
+            *out_delta_frames = event.sample_offset;
+            *out_bytes = bytes.as_ptr();
+            *out_len = len_u32(bytes.len());
         }
     }
 }
@@ -1027,6 +990,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         state_free: cb_state_free,
         output_event_count: cb_output_event_count::<P>,
         output_event_at: cb_output_event_at::<P>,
+        output_sysex_count: cb_output_sysex_count::<P>,
+        output_sysex_at: cb_output_sysex_at::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,
@@ -1102,4 +1067,35 @@ macro_rules! export_au {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use truce_core::SYSEX_POOL_PREALLOC;
+    use truce_shim_types::AU_SHIM_TYPES_H;
+
+    #[test]
+    fn sysex_pool_prealloc_matches_header() {
+        // The Swift AU v3 template (`AudioUnitFactory.swift`)
+        // reads `TRUCE_SYSEX_POOL_PREALLOC` from `au_shim_types.h`
+        // to size its per-render `sysexOutScratch`. Confirm the C
+        // macro still expands to the same value as the Rust const
+        // — otherwise the scratch is either undersized (event
+        // drops) or wasteful (memory bloat per AU instance).
+        let needle = format!("#define TRUCE_SYSEX_POOL_PREALLOC ({SYSEX_POOL_PREALLOC})");
+        let needle_paren = format!(
+            "#define TRUCE_SYSEX_POOL_PREALLOC ({} * 1024)",
+            SYSEX_POOL_PREALLOC / 1024,
+        );
+        assert!(
+            AU_SHIM_TYPES_H.contains(&needle) || AU_SHIM_TYPES_H.contains(&needle_paren),
+            "au_shim_types.h::TRUCE_SYSEX_POOL_PREALLOC must equal \
+             truce_core::SYSEX_POOL_PREALLOC ({} bytes / {} KiB). \
+             Looked for `{}` or `{}` in the header.",
+            SYSEX_POOL_PREALLOC,
+            SYSEX_POOL_PREALLOC / 1024,
+            needle,
+            needle_paren,
+        );
+    }
 }

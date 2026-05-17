@@ -683,8 +683,8 @@ unsafe fn dispatch_touch<P: Params + 'static>(
 
         // Pick one touch — egui is single-pointer. Real multi-touch
         // would need an `egui::Event` per finger which egui doesn't
-        // model natively; "first finger wins" matches what JUCE and
-        // the truce built-in editor do.
+        // model natively; "first finger wins" is the standard
+        // single-pointer reduction.
         let touch: *mut AnyObject = msg_send![touches, anyObject];
         if touch.is_null() {
             return;

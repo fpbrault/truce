@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use truce_core::Float;
 use truce_core::TransportSlot;
-use truce_core::cast::len_u32;
+use truce_core::cast::{len_u32, size_of_u32};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
@@ -398,7 +398,7 @@ pub unsafe fn port_event<P: PluginExport>(
 
         // Control-port float update.
         if format == 0 {
-            if buffer_size < truce_core::cast::size_of_u32::<f32>() {
+            if buffer_size < size_of_u32::<f32>() {
                 return;
             }
             let value = *buffer.cast::<f32>();
@@ -873,7 +873,7 @@ fn build_editor_context<P: PluginExport>(
                     write_set(
                         controller_ptr.as_ptr().cast_mut(),
                         *port_index,
-                        truce_core::cast::size_of_u32::<f32>(),
+                        size_of_u32::<f32>(),
                         0, // LV2_UI_FLOAT_PROTOCOL = 0 (control ports)
                         (&raw const value).cast::<c_void>(),
                     );

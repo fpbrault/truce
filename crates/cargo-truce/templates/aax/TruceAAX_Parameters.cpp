@@ -187,14 +187,88 @@ void TruceAAX_Parameters::RenderAudio(
     TruceAaxMidiEvent midiEvents[kMidiBufferCap];
     uint32_t midiCount = 0;
 
+    // Per-block SysEx reassembly scratch. AAX's `AAX_CMidiPacket`
+    // holds up to 4 bytes; long `SysEx` messages span consecutive
+    // packets framed by `0xF0` start / `0xF7` end (per `AAX.h:605`).
+    // 64 KiB is enough for firmware-update-shaped payloads; longer
+    // messages get truncated at the limit and dropped to keep the
+    // audio thread allocation-free.
+    constexpr uint32_t kSysExScratchCap = 64 * 1024;
+    uint8_t sysexScratch[kSysExScratchCap];
+    uint32_t sysexLen = 0;
+    bool sysexInProgress = false;
+    uint32_t sysexDeltaFrames = 0;
+    bool sysexOverflowed = false;
+
     if (g_descriptor.wants_input_midi && ioRenderInfo->mInputNode) {
         AAX_IMIDINode* midiNode = ioRenderInfo->mInputNode;
         if (midiNode) {
             AAX_CMidiStream* stream = midiNode->GetNodeBuffer();
             if (stream && stream->mBufferSize > 0) {
-                for (uint32_t i = 0; i < stream->mBufferSize && midiCount < kMidiBufferCap; i++) {
+                // Walk `pkt.mData[start..mLength]` as `SysEx` data
+                // bytes. On `0xF7`: emit (if no overflow) and reset
+                // state. On any other status byte: drop the
+                // in-progress message and reset (mid-`SysEx` status
+                // is a host spec violation; rest of the packet is
+                // discarded). Otherwise accumulate into
+                // `sysexScratch` until the cap is reached
+                // (overflow flag latches so the eventual `0xF7` is
+                // a drop, not a partial push).
+                auto ingestSysexBytes = [&](const AAX_CMidiPacket& pkt, uint32_t start) {
+                    for (uint32_t j = start; j < pkt.mLength; j++) {
+                        uint8_t b = pkt.mData[j];
+                        if (b == 0xF7) {
+                            if (!sysexOverflowed && g_bridge.push_sysex_input) {
+                                g_bridge.push_sysex_input(mRustCtx,
+                                    sysexDeltaFrames, sysexScratch, sysexLen);
+                            }
+                            sysexInProgress = false;
+                            sysexLen = 0;
+                            sysexOverflowed = false;
+                            return;
+                        }
+                        if (b & 0x80) {
+                            sysexInProgress = false;
+                            sysexLen = 0;
+                            sysexOverflowed = false;
+                            return;
+                        }
+                        if (sysexLen < kSysExScratchCap) {
+                            sysexScratch[sysexLen++] = b;
+                        } else {
+                            sysexOverflowed = true;
+                        }
+                    }
+                };
+
+                for (uint32_t i = 0; i < stream->mBufferSize; i++) {
                     const AAX_CMidiPacket& pkt = stream->mBuffer[i];
-                    if (pkt.mLength >= 1) {
+                    if (pkt.mLength < 1) continue;
+                    const uint8_t status = pkt.mData[0];
+                    // SysEx start: status `0xF0` in the first byte of
+                    // a packet. Subsequent packets carry only data
+                    // bytes until a `0xF7` terminator. Per the AAX
+                    // SDK each `AAX_CMidiPacket` is one message — so
+                    // once we enter either `SysEx` branch the whole
+                    // packet belongs to it (channel-voice is the
+                    // explicit `else`).
+                    if (sysexInProgress) {
+                        ingestSysexBytes(pkt, 0);
+                        continue;
+                    }
+                    if (status == 0xF0) {
+                        sysexInProgress = true;
+                        sysexLen = 0;
+                        sysexOverflowed = false;
+                        sysexDeltaFrames = pkt.mTimestamp;
+                        // Single-packet `SysEx` (ends with `0xF7` in
+                        // the same packet) is handled by
+                        // `ingestSysexBytes` discovering `0xF7` in
+                        // its walk.
+                        ingestSysexBytes(pkt, 1);
+                        continue;
+                    }
+                    if (midiCount < kMidiBufferCap) {
                         midiEvents[midiCount].delta_frames = pkt.mTimestamp;
                         midiEvents[midiCount].status = pkt.mData[0];
                         midiEvents[midiCount].data1 = pkt.mLength > 1 ? pkt.mData[1] : 0;
@@ -298,6 +372,45 @@ void TruceAAX_Parameters::RenderAudio(
             const uint8_t st = ev.status & 0xF0;
             if (st == 0xC0 || st == 0xD0) pkt.mLength = 2;
             outputNode->PostMIDIPacket(&pkt);
+        }
+
+        // Output SysEx: per AAX_Enums.h:1160, "There are no buffer
+        // size limitations for output of SysEx messages." We frame
+        // each event (`0xF0` + inner bytes + `0xF7`) and fragment
+        // into a sequence of ≤4-byte packets sharing one timestamp.
+        if (g_bridge.output_sysex_count) {
+            uint32_t sxCount = g_bridge.output_sysex_count(mRustCtx);
+            for (uint32_t i = 0; i < sxCount; i++) {
+                uint32_t delta = 0;
+                const uint8_t* bytes = nullptr;
+                uint32_t len = 0;
+                g_bridge.output_sysex_at(mRustCtx, i, &delta, &bytes, &len);
+                if (!bytes && len > 0) continue;
+
+                // Build framed stream on the fly without buffering
+                // the whole message — chunk loop reads the next byte
+                // from one of three sources (start marker, payload,
+                // end marker) based on position.
+                uint32_t totalLen = len + 2;     // +2 for 0xF0 / 0xF7
+                uint32_t pos = 0;
+                auto byteAt = [&](uint32_t p) -> uint8_t {
+                    if (p == 0)              return 0xF0;
+                    if (p == totalLen - 1)   return 0xF7;
+                    return bytes[p - 1];
+                };
+                while (pos < totalLen) {
+                    AAX_CMidiPacket pkt = {};
+                    pkt.mTimestamp = delta;
+                    uint32_t chunk = totalLen - pos;
+                    if (chunk > 4) chunk = 4;
+                    pkt.mLength = chunk;
+                    for (uint32_t j = 0; j < chunk; j++) {
+                        pkt.mData[j] = byteAt(pos + j);
+                    }
+                    outputNode->PostMIDIPacket(&pkt);
+                    pos += chunk;
+                }
+            }
         }
     }
 }

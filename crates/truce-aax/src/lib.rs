@@ -514,6 +514,37 @@ macro_rules! export_aax {
                 ::truce_aax::_output_event_at::<$plugin_type>(ctx, index, out);
             }
             #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_push_sysex_input(
+                ctx: *mut ::std::ffi::c_void,
+                delta_frames: u32,
+                bytes: *const u8,
+                len: u32,
+            ) {
+                ::truce_aax::_push_sysex_input::<$plugin_type>(ctx, delta_frames, bytes, len);
+            }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_output_sysex_count(
+                ctx: *mut ::std::ffi::c_void,
+            ) -> u32 {
+                ::truce_aax::_output_sysex_count::<$plugin_type>(ctx)
+            }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_output_sysex_at(
+                ctx: *mut ::std::ffi::c_void,
+                index: u32,
+                out_delta_frames: *mut u32,
+                out_bytes: *mut *const u8,
+                out_len: *mut u32,
+            ) {
+                ::truce_aax::_output_sysex_at::<$plugin_type>(
+                    ctx,
+                    index,
+                    out_delta_frames,
+                    out_bytes,
+                    out_len,
+                );
+            }
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_get_param(
                 ctx: *mut ::std::ffi::c_void,
                 id: u32,
@@ -885,12 +916,20 @@ pub unsafe fn _process<P: PluginExport>(
 }
 
 /// Map a truce `Event` body to a 3-byte AAX-shaped MIDI packet. Returns
-/// `None` for event types Pro Tools doesn't accept from plug-ins
-/// (MIDI 2.0, `ParamChange`, Transport, etc.). The AAX SDK's
+/// `None` for event types Pro Tools doesn't accept through the
+/// fixed-width MIDI channel-voice path (MIDI 2.0, `ParamChange`,
+/// Transport, `SysEx`, etc.). The AAX SDK's
 /// `AAX_IMIDINode::PostMIDIPacket` doc enumerates the supported set:
 /// `NoteOn` / `NoteOff`, Pitch bend, Polyphonic key pressure, Program
 /// change, Channel pressure, Bank-select-CC#0. Mirrors
 /// `truce_vst2::try_encode_vst2_midi` so the two formats stay in sync.
+///
+/// `SysEx` is **not** dropped here — it goes through a separate
+/// multi-packet path the C++ template assembles / fragments
+/// around `0xF0` ... `0xF7` framing
+/// (see `_push_sysex_input`, `_output_sysex_count`,
+/// `_output_sysex_at`). `try_encode_aax_midi` returning `None` for
+/// `SysEx` is correct: the channel-voice slot can't carry it.
 fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
     let (status, data1, data2) = match &event.body {
         EventBody::NoteOn {
@@ -966,6 +1005,59 @@ pub unsafe fn _output_event_at<P: PluginExport>(
         .nth(index as usize)
     {
         unsafe { *out = packet };
+    }
+}
+
+/// `SysEx` input — the AAX C++ template reassembles long messages
+/// across consecutive `AAX_CMidiPacket` slots (per the SDK's
+/// `0xF0` start / `0xF7` end framing) and calls this once per
+/// complete logical message with the inner bytes. We copy into
+/// the plug-in's `EventList` `SysEx` pool synchronously; pool-full
+/// failures drop the message rather than corrupt-split it.
+pub unsafe fn _push_sysex_input<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    delta_frames: u32,
+    bytes: *const u8,
+    len: u32,
+) {
+    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
+    if bytes.is_null() || len == 0 {
+        return;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(bytes, len as usize) };
+    let _ = inst.event_list.push_sysex(delta_frames, slice);
+}
+
+pub unsafe fn _output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    len_u32(
+        inst.output_events
+            .iter()
+            .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+            .count(),
+    )
+}
+
+pub unsafe fn _output_sysex_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out_delta_frames: *mut u32,
+    out_bytes: *mut *const u8,
+    out_len: *mut u32,
+) {
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
+    if let Some(event) = inst
+        .output_events
+        .iter()
+        .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+        .nth(index as usize)
+    {
+        let bytes = inst.output_events.sysex_bytes(&event.body);
+        unsafe {
+            *out_delta_frames = event.sample_offset;
+            *out_bytes = bytes.as_ptr();
+            *out_len = len_u32(bytes.len());
+        }
     }
 }
 

@@ -54,6 +54,22 @@ typedef struct {
     AUMIDIOutputCallback midiOutputCallback;
     void *midiOutputUserData;
 
+    // Heap-allocated scratch for SysEx output packet lists. Sized
+    // to hold one MIDIPacketList of up to 256 SysEx events whose
+    // total framed payload tops out at truce_core::SYSEX_POOL_PREALLOC
+    // (128 KiB) + 2 framing bytes per event. Per-packet overhead is
+    // ~14 B (timestamp + length + headers) — we allocate enough
+    // headroom that the entire pool of SysEx events fits in one
+    // call to midiOutputCallback.
+    Byte *sysexPacketBuf;
+    uint32_t sysexPacketBufSize;
+    // One-event framing scratch: `0xF0` + inner bytes + `0xF7`.
+    // `MIDIPacketListAdd` copies the byte buffer synchronously, so
+    // we only need enough space for the single largest event we'll
+    // ever pass in. Sized to truce_core::SYSEX_POOL_PREALLOC + 2.
+    Byte *sysexFrameScratch;
+    uint32_t sysexFrameScratchSize;
+
     // Host callbacks (set via kAudioUnitProperty_HostCallbacks). Used to
     // query tempo / play state / bar position from the host each render.
     HostCallbackInfo hostCallbacks;
@@ -193,6 +209,38 @@ static int is_instrument(void) {
             g_descriptor->component_type[3] == 'u');
 }
 
+/* Append one packet to the in-progress `MIDIPacketList`, flushing
+ * to the host and retrying on overflow.
+ *
+ * Returns the next free `MIDIPacket *` for further appends, or NULL
+ * when even an empty list can't hold this packet (the event is
+ * dropped — truncating MIDI / `SysEx` is corrupt). On flush the
+ * callsite's `*pkt` is replaced with a fresh init pointer.
+ *
+ * Centralised here so the channel-voice and `SysEx` drains share
+ * one overflow policy. The audio thread does the work, so all
+ * inputs are stack / pool memory the helper never owns. */
+static MIDIPacket *append_or_flush_retry(MIDIPacketList *pktList,
+                                         MIDIPacket *pkt,
+                                         TruceAUv2 *inst,
+                                         const AudioTimeStamp *inTimeStamp,
+                                         MIDITimeStamp ts,
+                                         ByteCount len,
+                                         const Byte *data) {
+    if (!pkt) return NULL;
+    MIDIPacket *next = MIDIPacketListAdd(
+        pktList, inst->sysexPacketBufSize, pkt, ts, len, data);
+    if (!next) {
+        inst->midiOutputCallback(inst->midiOutputUserData,
+                                 inTimeStamp, 0 /* outputIndex */,
+                                 pktList);
+        pkt = MIDIPacketListInit(pktList);
+        next = MIDIPacketListAdd(
+            pktList, inst->sysexPacketBufSize, pkt, ts, len, data);
+    }
+    return next;
+}
+
 // ---------------------------------------------------------------------------
 // Open / Close
 // ---------------------------------------------------------------------------
@@ -228,6 +276,10 @@ static OSStatus au_v2_close(void *self_) {
         free(inst->outputBuffers[c]);
         inst->outputBuffers[c] = NULL;
     }
+    free(inst->sysexPacketBuf);
+    inst->sysexPacketBuf = NULL;
+    free(inst->sysexFrameScratch);
+    inst->sysexFrameScratch = NULL;
     free(inst);
     return noErr;
 }
@@ -989,24 +1041,31 @@ static OSStatus au_v2_render(void *self_,
                          &transport);
     inst->midiCount = 0;
 
-    /* Drain plugin → host MIDI. The Rust side has already filtered
-     * the queue down to events that fit in 3-byte MIDI 1.0 packets.
-     * Build one MIDIPacket per event (variable-length packet list)
-     * and call the host's registered output callback. Events with
-     * `sample_offset >= inFrameCount` (out-of-block) are clamped
-     * rather than dropped; AU hosts schedule these for the boundary
-     * sample. */
+    /* Drain plugin → host MIDI. Channel-voice events go through
+     * `output_event_at` (filtered to fit in 3-byte MIDI 1.0
+     * packets); SysEx events go through `output_sysex_at` with
+     * inner bytes the shim wraps in `0xF0` / `0xF7` framing before
+     * the MIDIPacketListAdd call. Both end up in the same
+     * MIDIPacketList so the host callback fires once per render
+     * block. Events with `sample_offset >= inFrameCount`
+     * (out-of-block) are clamped rather than dropped; AU hosts
+     * schedule these for the boundary sample. */
     if (inst->midiOutputCallback) {
-        uint32_t out_count = g_callbacks->output_event_count(inst->rustCtx);
-        if (out_count > 0) {
-            /* Cap matches the input direction; deeper queues are
-             * truncated rather than allocated through. 256 packets
-             * × ~16 bytes each fits in stack comfortably. */
-            if (out_count > 256) out_count = 256;
-            Byte packet_buf[256 * 32]; /* generous; per-packet ≤ 16B */
-            MIDIPacketList *pktList = (MIDIPacketList *)packet_buf;
+        uint32_t cv_count = g_callbacks->output_event_count(inst->rustCtx);
+        uint32_t sx_count = g_callbacks->output_sysex_count(inst->rustCtx);
+        if (cv_count > 256) cv_count = 256;
+        if (sx_count > 256) sx_count = 256;
+        if (cv_count > 0 || sx_count > 0) {
+            MIDIPacketList *pktList =
+                (MIDIPacketList *)inst->sysexPacketBuf;
             MIDIPacket *pkt = MIDIPacketListInit(pktList);
-            for (uint32_t i = 0; i < out_count; i++) {
+
+            /* Channel-voice drain. `append_or_flush_retry` handles
+             * the overflow path: on `MIDIPacketListAdd` failure it
+             * sends the partial list to the host, reinits, and
+             * retries the current event. Both drains share the
+             * helper so the overflow policy stays in one place. */
+            for (uint32_t i = 0; pkt && i < cv_count; i++) {
                 AuMidiEvent ev = {0};
                 g_callbacks->output_event_at(inst->rustCtx, i, &ev);
                 Byte data[3] = { ev.status, ev.data1, ev.data2 };
@@ -1020,13 +1079,52 @@ static OSStatus au_v2_render(void *self_,
                 if (ev.sample_offset >= inFrameCount) {
                     ts = inFrameCount > 0 ? (inFrameCount - 1) : 0;
                 }
-                pkt = MIDIPacketListAdd(pktList, sizeof(packet_buf), pkt,
-                                       ts, byteCount, data);
-                if (!pkt) break; /* list full */
+                pkt = append_or_flush_retry(
+                    pktList, pkt, inst, inTimeStamp, ts, byteCount, data);
             }
-            inst->midiOutputCallback(inst->midiOutputUserData,
-                                     inTimeStamp, 0 /* outputIndex */,
-                                     pktList);
+            /* SysEx drain. MIDIPacketListAdd accepts the framed
+             * (`0xF0` + inner + `0xF7`) byte stream as a single
+             * packet of length `2 + len`; CoreMIDI carries SysEx
+             * payloads of arbitrary size through one packet (no
+             * 4-byte cap like AAX's `AAX_CMidiPacket`). We build
+             * the framed bytes in `sysexFrameScratch` per event;
+             * `MIDIPacketListAdd` copies them into the list
+             * synchronously so reusing the scratch for the next
+             * event is sound. If a single event exceeds the
+             * packet-list size even on a freshly-flushed buffer,
+             * skip it — truncating SysEx is corrupt. */
+            for (uint32_t i = 0; pkt && i < sx_count; i++) {
+                uint32_t delta = 0;
+                const uint8_t *bytes = NULL;
+                uint32_t len = 0;
+                g_callbacks->output_sysex_at(inst->rustCtx, i,
+                                              &delta, &bytes, &len);
+                if (!bytes && len > 0) continue;
+                uint32_t framedLen = len + 2;
+                if (framedLen > inst->sysexFrameScratchSize) continue;
+                inst->sysexFrameScratch[0] = 0xF0;
+                if (len > 0) {
+                    memcpy(inst->sysexFrameScratch + 1, bytes, len);
+                }
+                inst->sysexFrameScratch[1 + len] = 0xF7;
+                MIDITimeStamp ts = delta;
+                if (delta >= inFrameCount) {
+                    ts = inFrameCount > 0 ? (inFrameCount - 1) : 0;
+                }
+                pkt = append_or_flush_retry(
+                    pktList, pkt, inst, inTimeStamp, ts, framedLen,
+                    inst->sysexFrameScratch);
+            }
+
+            /* Flush whatever's left in the list. The loop above
+             * already flushed once per `add` failure, so the final
+             * `pktList` may be empty — `numPackets == 0` is the
+             * documented signal not to call the host callback. */
+            if (pktList->numPackets > 0) {
+                inst->midiOutputCallback(inst->midiOutputUserData,
+                                         inTimeStamp, 0 /* outputIndex */,
+                                         pktList);
+            }
         }
     }
 
@@ -1172,6 +1270,21 @@ static void *truce_au_v2_factory(const AudioComponentDescription *desc) {
     inst->interface.Close = au_v2_close;
     inst->interface.Lookup = au_v2_lookup;
     inst->interface.reserved = NULL;
+
+    /* 132 KiB: matches truce_core::SYSEX_POOL_PREALLOC (128 KiB)
+     * plus headroom for per-packet headers (≈14 B × ≤256 events).
+     * Heap-allocated to keep the TruceAUv2 struct itself small;
+     * never reallocated after this point. */
+    inst->sysexPacketBufSize = 132 * 1024;
+    inst->sysexPacketBuf = (Byte *)malloc(inst->sysexPacketBufSize);
+    inst->sysexFrameScratchSize = 128 * 1024 + 2; /* SYSEX_POOL_PREALLOC + framing */
+    inst->sysexFrameScratch = (Byte *)malloc(inst->sysexFrameScratchSize);
+    if (!inst->sysexPacketBuf || !inst->sysexFrameScratch) {
+        free(inst->sysexPacketBuf);
+        free(inst->sysexFrameScratch);
+        free(inst);
+        return NULL;
+    }
 
     return &inst->interface;
 }

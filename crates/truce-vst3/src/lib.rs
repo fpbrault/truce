@@ -726,6 +726,70 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
 }
 
 // ---------------------------------------------------------------------------
+// SysEx callbacks (host → plug-in input, plug-in → host output)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    sample_offset: u32,
+    bytes: *const u8,
+    len: u32,
+) {
+    unsafe {
+        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        if bytes.is_null() || len == 0 {
+            return;
+        }
+        let slice = std::slice::from_raw_parts(bytes, len as usize);
+        // Pool-full failure: drop the message. SysEx is atomic by
+        // spec; truncating would corrupt it. The plug-in surfaces
+        // the loss via the `EventList`'s pool usage metrics if it
+        // cares.
+        let _ = inst.event_list.push_sysex(sample_offset, slice);
+    }
+}
+
+unsafe extern "C" fn cb_get_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        len_u32(
+            inst.output_events
+                .iter()
+                .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+                .count(),
+        )
+    }
+}
+
+unsafe extern "C" fn cb_get_output_sysex_event<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out_sample_offset: *mut u32,
+    out_bytes: *mut *const u8,
+    out_len: *mut u32,
+) {
+    unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        // Walk the filtered iterator, same shape as
+        // `cb_get_output_event`. Bytes point into the plug-in's
+        // SysEx pool — valid until the shim's next `process()`
+        // clears the `EventList`, which is after the host's
+        // `addEvent` has copied them.
+        if let Some(event) = inst
+            .output_events
+            .iter()
+            .filter(|e| matches!(e.body, EventBody::SysEx { .. }))
+            .nth(index as usize)
+        {
+            let bytes = inst.output_events.sysex_bytes(&event.body);
+            *out_sample_offset = event.sample_offset;
+            *out_bytes = bytes.as_ptr();
+            *out_len = len_u32(bytes.len());
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GUI callbacks
 // ---------------------------------------------------------------------------
 
@@ -1027,6 +1091,9 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         get_tail: cb_get_tail::<P>,
         get_output_event_count: cb_get_output_event_count::<P>,
         get_output_event: cb_get_output_event::<P>,
+        push_sysex_input: cb_push_sysex_input::<P>,
+        get_output_sysex_count: cb_get_output_sysex_count::<P>,
+        get_output_sysex_event: cb_get_output_sysex_event::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,

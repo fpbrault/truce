@@ -29,14 +29,14 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use clap_sys::events::{
-    CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF,
-    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END,
-    CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT,
-    CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
+    CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_MIDI_SYSEX,
+    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN,
+    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
+    CLAP_EVENT_TRANSPORT, CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
     CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE,
     CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi,
-    clap_event_note, clap_event_param_gesture, clap_event_param_value, clap_event_transport,
-    clap_input_events, clap_output_events,
+    clap_event_midi_sysex, clap_event_note, clap_event_param_gesture, clap_event_param_value,
+    clap_event_transport, clap_input_events, clap_output_events,
 };
 use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
@@ -73,6 +73,7 @@ use clap_sys::version::CLAP_VERSION;
 use truce_core::Float;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
+use truce_core::cast::{len_u32, size_of_u32};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -722,11 +723,31 @@ unsafe fn convert_input_events<P: PluginExport>(
                         });
                     }
                 }
+                CLAP_EVENT_MIDI_SYSEX => {
+                    // CLAP delivers `SysEx` payloads as a pointer +
+                    // length owned by the host for the duration of
+                    // this `process()` call. Copy into our pool
+                    // immediately — the bytes can't be assumed valid
+                    // after we return. `push_sysex` is fail-closed
+                    // when the pool is exhausted; we drop the
+                    // message and keep going (a corrupt-by-split
+                    // alternative is never the right answer for
+                    // `SysEx`).
+                    let sysex = &*header.cast::<clap_event_midi_sysex>();
+                    let bytes = if sysex.buffer.is_null() || sysex.size == 0 {
+                        &[][..]
+                    } else {
+                        std::slice::from_raw_parts(sysex.buffer, sysex.size as usize)
+                    };
+                    let _ = data.event_list.push_sysex(sample_offset, bytes);
+                }
                 _ => {
-                    // Unsupported event type (system real-time, sysex,
-                    // MIDI 2.0) — skip silently. MIDI 2.0 demux is a
-                    // future extension if we add `EventBody::*2` input
-                    // support.
+                    // Unsupported event type (system real-time,
+                    // MIDI 2.0) — skip silently. MIDI 2.0 demux is
+                    // gated behind a per-plug-in version opt-in
+                    // that's not wired yet; until then the channel
+                    // voice 1.0 + `SysEx` paths above are the only
+                    // ones surfaced.
                 }
             }
         }
@@ -758,7 +779,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 GuiParamChange::GestureBegin(id) => {
                     let event = clap_event_param_gesture {
                         header: clap_event_header {
-                            size: truce_core::cast::size_of_u32::<clap_event_param_gesture>(),
+                            size: size_of_u32::<clap_event_param_gesture>(),
                             time: 0,
                             space_id: CLAP_CORE_EVENT_SPACE_ID,
                             type_: CLAP_EVENT_PARAM_GESTURE_BEGIN,
@@ -771,7 +792,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 GuiParamChange::Value(id, plain) => {
                     let event = clap_event_param_value {
                         header: clap_event_header {
-                            size: truce_core::cast::size_of_u32::<clap_event_param_value>(),
+                            size: size_of_u32::<clap_event_param_value>(),
                             time: 0,
                             space_id: CLAP_CORE_EVENT_SPACE_ID,
                             type_: CLAP_EVENT_PARAM_VALUE,
@@ -790,7 +811,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 GuiParamChange::GestureEnd(id) => {
                     let event = clap_event_param_gesture {
                         header: clap_event_header {
-                            size: truce_core::cast::size_of_u32::<clap_event_param_gesture>(),
+                            size: size_of_u32::<clap_event_param_gesture>(),
                             time: 0,
                             space_id: CLAP_CORE_EVENT_SPACE_ID,
                             type_: CLAP_EVENT_PARAM_GESTURE_END,
@@ -1057,7 +1078,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_note {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_note>(),
+                                size: size_of_u32::<clap_event_note>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_NOTE_ON,
@@ -1079,7 +1100,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_note {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_note>(),
+                                size: size_of_u32::<clap_event_note>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_NOTE_OFF,
@@ -1103,7 +1124,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
+                                size: size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -1122,7 +1143,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
+                                size: size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -1138,7 +1159,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
+                                size: size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -1153,7 +1174,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         let (lsb, msb) = pitch_bend_to_bytes(*value);
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
+                                size: size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -1169,7 +1190,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
+                                size: size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -1189,7 +1210,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         // `flush_gui_changes` path uses the same shape.
                         let ev = clap_event_param_value {
                             header: clap_event_header {
-                                size: truce_core::cast::size_of_u32::<clap_event_param_value>(),
+                                size: size_of_u32::<clap_event_param_value>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_PARAM_VALUE,
@@ -1205,11 +1226,40 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
+                    EventBody::SysEx { .. } => {
+                        // CLAP's contract for the output direction
+                        // is narrower than the input's: the
+                        // `buffer` pointer needs to stay valid for
+                        // the duration of the `try_push` call only
+                        // (the host is expected to copy before
+                        // returning). Our pool is cleared at the
+                        // *start* of the next block, so pointing
+                        // the host at `pool_offset` satisfies that
+                        // strictly — and any future host that
+                        // defers the copy until later in
+                        // `process()` is still fine because the
+                        // pool stays valid through the whole block.
+                        let bytes = data.output_events.sysex_bytes(&event.body);
+                        let ev = clap_event_midi_sysex {
+                            header: clap_event_header {
+                                size: size_of_u32::<clap_event_midi_sysex>(),
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_MIDI_SYSEX,
+                                flags: 0,
+                            },
+                            port_index: 0,
+                            buffer: bytes.as_ptr(),
+                            size: len_u32(bytes.len()),
+                        };
+                        try_push(proc.out_events, &raw const ev.header);
+                    }
                     // MIDI 2.0, ParamMod, Transport, and per-note
                     // events: the plugin-output direction isn't
                     // routinely emitted by truce plugins; leave them
                     // as silent skips rather than building partial
-                    // encoders.
+                    // encoders. MIDI 2.0 emission stays parked
+                    // until a per-plug-in version opt-in lands.
                     _ => {}
                 }
             }
@@ -1241,7 +1291,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
 unsafe extern "C" fn params_count<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        truce_core::cast::len_u32(data.param_infos.len())
+        len_u32(data.param_infos.len())
     }
 }
 
@@ -1528,9 +1578,9 @@ unsafe extern "C" fn audio_ports_count<P: PluginExport>(
         return 0;
     };
     if is_input {
-        truce_core::cast::len_u32(layout.inputs.len())
+        len_u32(layout.inputs.len())
     } else {
-        truce_core::cast::len_u32(layout.outputs.len())
+        len_u32(layout.outputs.len())
     }
 }
 

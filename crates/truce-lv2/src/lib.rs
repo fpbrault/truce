@@ -30,6 +30,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use truce_core::buffer::RawBufferScratch;
+use truce_core::cast::len_u32;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
@@ -193,8 +194,8 @@ pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
         .first()
         .expect("Plugin must declare at least one bus layout");
     let params = plugin.params();
-    let param_count = truce_core::cast::len_u32(params.param_infos().len());
-    let meter_count = truce_core::cast::len_u32(params.meter_ids().len());
+    let param_count = len_u32(params.param_infos().len());
+    let meter_count = len_u32(params.meter_ids().len());
     let category = P::info().category;
     let accepts_midi_in = matches!(
         category,
@@ -406,6 +407,24 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             let reader = AtomSequenceReader::new(inst.atom_in_port, &inst.urid_map);
             if inst.layout.accepts_midi_in {
                 reader.for_each_midi(|sample_offset, bytes| {
+                    // SysEx is delivered as a single MIDI atom whose
+                    // payload starts with `0xF0` and ends with `0xF7`.
+                    // The framework's `EventBody::SysEx` carries only
+                    // the inner bytes — strip the framing here so
+                    // plug-in code never sees the start/end markers.
+                    // A pool-full push gets dropped silently; truncating
+                    // a `SysEx` makes it corrupt by definition, so the
+                    // event simply doesn't reach the plug-in.
+                    if let Some(0xF0) = bytes.first().copied() {
+                        let end = if bytes.last().copied() == Some(0xF7) {
+                            bytes.len() - 1
+                        } else {
+                            bytes.len()
+                        };
+                        let inner = &bytes[1..end];
+                        let _ = inst.event_list.push_sysex(sample_offset, inner);
+                        return;
+                    }
                     if let Some(event) = atom::midi_bytes_to_event(sample_offset, bytes) {
                         inst.event_list.push(event);
                     }

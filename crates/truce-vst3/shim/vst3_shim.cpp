@@ -189,6 +189,23 @@ struct Vst3Callbacks {
     // Output events
     uint32_t (*get_output_event_count)(void*);
     void (*get_output_event)(void*, uint32_t, Vst3MidiEvent*);
+    // SysEx input — shim calls this once per `kDataEvent` /
+    // `MIDI_SYSEX` event seen in the input event list, before
+    // calling `process`. Bytes are the inner SysEx payload (no
+    // 0xF0 / 0xF7 framing; VST3 hosts deliver the inner data per
+    // the SDK convention). Pointer is valid for the duration of
+    // this call only.
+    void (*push_sysex_input)(void*, uint32_t /*sample_offset*/,
+                             const uint8_t* /*bytes*/, uint32_t /*len*/);
+    // SysEx output — shim queries after `process` to drain
+    // SysEx-shaped events the plug-in pushed. Bytes are the inner
+    // payload; the shim wraps them in `kDataEvent` + `MIDI_SYSEX`
+    // when forwarding to the host's output `IEventList`.
+    uint32_t (*get_output_sysex_count)(void*);
+    void (*get_output_sysex_event)(void*, uint32_t /*index*/,
+                                   uint32_t* /*sample_offset*/,
+                                   const uint8_t** /*bytes*/,
+                                   uint32_t* /*len*/);
     // GUI
     int32_t (*gui_has_editor)(void*);
     void (*gui_get_size)(void*, uint32_t*, uint32_t*);
@@ -704,6 +721,12 @@ public:
                     struct { int16_t channel; int16_t pitch; float velocity; int32 noteId; float tuning; } noteOff;
                     struct { int16_t channel; int16_t pitch; float pressure; int32 noteId; } polyPressure;
                     struct { int32 typeId; int32 noteId; double value; } noteExpressionValue; // forces 8-byte alignment
+                    // kDataEvent — VST3 SDK `Event::DataEvent`. The
+                    // `type` discriminant (0 = MIDI_SYSEX) tells us
+                    // the byte stream's semantics; `bytes` is owned
+                    // by the host for the duration of the
+                    // `getEvent` call.
+                    struct { uint32_t size; uint32_t dataType; const uint8_t* bytes; } data;
                 };
             };
 
@@ -748,6 +771,22 @@ public:
                         midiEvents[numMidi].data2 = (uint8_t)(ev.noteExpressionValue.value * 127.0);
                         midiEvents[numMidi].note_id = (uint8_t)(ev.noteExpressionValue.noteId & 0xFF);
                         numMidi++;
+                        break;
+                    case 2: // kDataEvent — SysEx and other variable-length blobs
+                        // SDK: `ivstevents.h` enumerates Event types as
+                        // kNoteOnEvent=0, kNoteOffEvent=1, kDataEvent=2,
+                        // kPolyPressureEvent=3, kNoteExpression*=4..5,
+                        // kChordEvent=6, kScaleEvent=7, kLegacyMIDICCOut=8.
+                        // The `kMidiSysEx` discriminant inside the union is
+                        // separately 0 (per the SDK's `DataEvent::DataTypes`
+                        // enum). Anything other than `kMidiSysEx` is
+                        // undefined territory (future SDK extension); skip
+                        // silently.
+                        if (ev.data.dataType == 0 && ev.data.bytes && ev.data.size > 0
+                                && g_cb && g_cb->push_sysex_input) {
+                            g_cb->push_sysex_input(ctx, ev.sampleOffset,
+                                                   ev.data.bytes, ev.data.size);
+                        }
                         break;
                 }
             }
@@ -812,6 +851,53 @@ public:
                         continue; // skip non-note events for now
                     }
                     vtbl->addEvent(data->outputEvents, &ev);
+                }
+            }
+
+            // SysEx output — separate slot from channel-voice
+            // because the payload is variable-length. We build a
+            // VST3 `kDataEvent` (type 2) with `dataType = 0`
+            // (`kMidiSysEx`) pointing at the bytes Rust hands us.
+            // The host's `addEvent` is the SDK's
+            // `IEventList::addEvent`, which copies the event +
+            // its inline bytes into the host's own buffer before
+            // returning — so the pointer staying valid only for
+            // the duration of the call is the right contract.
+            if (g_cb->get_output_sysex_count && g_cb->get_output_sysex_event) {
+                struct OEVtbl {
+                    tresult (*qi)(void*, const TUID, void**);
+                    uint32 (*addRef)(void*);
+                    uint32 (*release)(void*);
+                    int32 (*getEventCount)(void*);
+                    tresult (*getEvent)(void*, int32, void*);
+                    tresult (*addEvent)(void*, void*);
+                };
+                struct { OEVtbl* vtbl; } *eventList =
+                    (decltype(eventList))data->outputEvents;
+                uint32_t sysexCount = g_cb->get_output_sysex_count(ctx);
+                for (uint32_t i = 0; i < sysexCount; i++) {
+                    uint32_t sampleOffset = 0;
+                    const uint8_t* bytes = nullptr;
+                    uint32_t len = 0;
+                    g_cb->get_output_sysex_event(ctx, i, &sampleOffset, &bytes, &len);
+                    if (!bytes || len == 0) continue;
+                    struct alignas(8) Vst3OutDataEvent {
+                        int32 busIndex;
+                        int32 sampleOffset;
+                        double ppqPosition;
+                        uint16_t flags;
+                        uint16_t type;
+                        char pad[4];
+                        // SDK union member that matches `DataEvent`.
+                        struct { uint32_t size; uint32_t dataType; const uint8_t* bytes; } data;
+                    };
+                    Vst3OutDataEvent ev = {};
+                    ev.sampleOffset = sampleOffset;
+                    ev.type = 2; // kDataEvent (SDK ivstevents.h)
+                    ev.data.size = len;
+                    ev.data.dataType = 0; // kMidiSysEx
+                    ev.data.bytes = bytes;
+                    eventList->vtbl->addEvent(data->outputEvents, &ev);
                 }
             }
         }

@@ -18,8 +18,13 @@ extern "C" {
  * compares this against the cdylib's `truce_aax_abi_version()` and
  * refuses to load a mismatched pair — protects against a manual
  * cdylib swap against a stale C++ template (which would otherwise
- * read fields at the wrong offset). */
-#define TRUCE_AAX_ABI_VERSION 2u
+ * read fields at the wrong offset).
+ *
+ * Version history:
+ *   1 → 2: initial range_type field on TruceAaxParamInfo (log/discrete).
+ *   2 → 3: SysEx I/O — push_sysex_input + output_sysex_count +
+ *           output_sysex_at exports. */
+#define TRUCE_AAX_ABI_VERSION 3u
 
 /* Wire values for TruceAaxParamInfo::range_type. The shim picks the
  * matching AAX_ITaperDelegate per param so AAX's normalize/denormalize
@@ -146,6 +151,32 @@ void truce_aax_process(void* ctx,
 uint32_t truce_aax_output_event_count(void* ctx);
 void     truce_aax_output_event_at(void* ctx, uint32_t index,
                                     TruceAaxMidiEvent* out);
+
+/* SysEx input — the C++ template walks the host's AAX_CMidiStream
+ * looking for `0xF0` start bytes and accumulates across consecutive
+ * AAX_CMidiPackets until it hits `0xF7`. Once a complete message
+ * is reassembled, it calls this once with the inner bytes (no
+ * `0xF0`/`0xF7` framing). Pointer is valid for the duration of
+ * the call; Rust copies into its `EventList` SysEx pool.
+ *
+ * Per the AAX SDK (`AAX.h:605-608`):
+ *   "SysEx messages greater than 4 bytes in length can be
+ *    transmitted via a series of concurrent AAX_CMidiPacket
+ *    objects in mBuffer." */
+void     truce_aax_push_sysex_input(void* ctx, uint32_t delta_frames,
+                                     const uint8_t* bytes, uint32_t len);
+
+/* SysEx output — Rust reports the number of SysEx-shaped events the
+ * plug-in queued during process(), and provides each event's inner
+ * bytes. The C++ template fragments each event into a sequence of
+ * ≤4-byte AAX_CMidiPackets framed with `0xF0` ... `0xF7` and posts
+ * them via `PostMIDIPacket` on the LocalOutput node. Pointer is
+ * valid until the next process() clears the pool. */
+uint32_t truce_aax_output_sysex_count(void* ctx);
+void     truce_aax_output_sysex_at(void* ctx, uint32_t index,
+                                    uint32_t* out_delta_frames,
+                                    const uint8_t** out_bytes,
+                                    uint32_t* out_len);
 
 /* Parameters (plain values, not normalized). */
 double truce_aax_get_param(void* ctx, uint32_t id);
