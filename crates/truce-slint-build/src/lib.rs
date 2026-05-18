@@ -14,13 +14,12 @@
 //! ```
 //!
 //! Bundling: the widget `.slint` files and the `JetBrains Mono` ttf
-//! ride along inside this crate (see the `include = […]` list in
+//! ride along inside this crate (see the `include = [...]` list in
 //! `Cargo.toml`). At the consuming crate's build time we
 //! materialize them into `OUT_DIR` and hand those paths to
-//! `slint-build`. That removes the historical "needs a local truce
-//! checkout" requirement - a plugin published to crates.io that
-//! depends on `truce-slint-build` from the registry builds without
-//! any out-of-band file paths.
+//! `slint-build`. A plugin published to crates.io that depends on
+//! `truce-slint-build` from the registry then builds without any
+//! out-of-band file paths or a local truce checkout.
 //!
 //! Re-running on font edits is wired up via
 //! `cargo:rerun-if-changed`, so updating the bundled ttf in this

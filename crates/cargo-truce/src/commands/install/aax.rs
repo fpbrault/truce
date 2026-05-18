@@ -84,10 +84,9 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     // Write embedded template files to a temp directory.
     //
     // Use `write_if_changed` so unchanged files keep their old
-    // mtime - cmake then correctly skips recompilation when the
+    // mtime; cmake then correctly skips recompilation when the
     // embedded template bytes haven't shifted since last run.
-    // Previously we wiped `src/` on every invocation, which forced
-    // cmake to rebuild every TU on every plugin.
+    // Wiping the dir would force cmake to rebuild every TU.
     let template_dir = tmp_aax_template();
     let src_dir = template_dir.join("src");
     let cmake_lists = template_dir.join("CMakeLists.txt");

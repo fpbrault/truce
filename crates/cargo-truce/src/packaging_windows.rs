@@ -305,8 +305,7 @@ fn archs_label(archs: &[TargetArch]) -> String {
 // Argument parsing
 // ---------------------------------------------------------------------------
 
-// Sparse independent CLI flags - bitflags would just add ceremony
-// (mirrors `commands::package::macos::Opts`).
+// Sparse independent CLI flags; bitflags would just add ceremony.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 struct Opts {
@@ -451,10 +450,10 @@ fn resolve_plugins<'a>(
 // Build
 // ---------------------------------------------------------------------------
 
-/// Run the cargo builds for each selected format × arch. Mirrors `cmd_package`
-/// on macOS: one `cargo build` per format with distinct `--features` so the
-/// format-specific code paths can't cross-contaminate, plus an outer loop
-/// over architectures.
+/// Run the cargo builds for each selected format x arch. One
+/// `cargo build` per format with distinct `--features` so the
+/// format-specific code paths can't cross-contaminate, plus an outer
+/// loop over architectures.
 ///
 /// Within a single arch the dylib at `target/{triple}/release/{stem}.dll` is
 /// overwritten by successive format builds, so we save per-format copies
@@ -1543,10 +1542,10 @@ fn package_one_suite(
     Ok(())
 }
 
-/// Render an `.iss` for a multi-plugin suite installer. Layout mirrors
-/// the per-plugin `render_iss` but the `[Components]` tree is hierarchical
-/// (`Name: "<plugin>"; ...` parent + `Name: "<plugin>\<fmt>"; ...`
-/// children) and `[Files]` / `[UninstallDelete]` aggregate every member.
+/// Render an `.iss` for a multi-plugin suite installer. The
+/// `[Components]` tree is hierarchical (`Name: "<plugin>"; ...`
+/// parent + `Name: "<plugin>\<fmt>"; ...` children) and `[Files]` /
+/// `[UninstallDelete]` aggregate every member.
 #[allow(clippy::too_many_arguments)]
 fn render_suite_iss(
     config: &Config,
@@ -1898,8 +1897,9 @@ fn component_install_size(
 /// `ExtraDiskSpaceRequired:`. When this returns `false` the auto-sum is
 /// already correct and we must not emit a hint, or it will double-count.
 ///
-/// Mirror of the `iss_files_block` / `iss_admin_only` logic - keep these in
-/// sync if the gating policy changes.
+/// The gating predicate is what `iss_files_block` and `iss_admin_only`
+/// also encode; if any of the three drifts apart, the others must
+/// follow or the installer's size hint goes wrong.
 // CLAP / VST3 share `=> universal` but the arms are kept split so each
 // format's gating rationale stays adjacent to its variant.
 #[allow(clippy::match_same_arms)]
@@ -2193,9 +2193,9 @@ fn scoped_pf(scope: PkgScope) -> &'static str {
 }
 
 /// Inno Setup Start-Menu Programs constant for the requested scope.
-/// Mirrors `scoped_pf` - under `--user` the shortcut belongs in the
-/// installing user's Start Menu, even when the installer is elevated
-/// to drop AAX/VST2 into system paths.
+/// Under `--user` the shortcut belongs in the installing user's
+/// Start Menu, even when the installer is elevated to drop AAX/VST2
+/// into system paths.
 fn scoped_programs(scope: PkgScope) -> &'static str {
     match scope {
         PkgScope::System => "{commonprograms}",

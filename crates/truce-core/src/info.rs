@@ -24,13 +24,12 @@ pub struct PluginInfo {
     /// Maps to `AAX_ePlugInCategory` constants.
     pub aax_category: Option<&'static str>,
 
-    /// Per-format display-name overrides - populated by
+    /// Per-format display-name overrides, populated by
     /// `truce::plugin_info!()` from the matching `truce.toml` keys.
     /// Format wrappers fall back to `name` when the override is `None`.
-    /// Baked at compile time so cargo-truce no longer needs to pass
-    /// `TRUCE_<FORMAT>_NAME_OVERRIDE` env vars (which used to
-    /// invalidate the format wrapper's fingerprint between back-to-back
-    /// plugin builds with different overrides).
+    /// Baked at compile time so back-to-back plugin builds with
+    /// different overrides don't invalidate the format wrapper's
+    /// build fingerprint.
     ///
     /// `au3_name` is exposed for parity with the other formats and
     /// for user introspection, but `truce-au`'s `resolved_plugin_name`

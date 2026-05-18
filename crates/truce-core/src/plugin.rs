@@ -12,9 +12,9 @@ use truce_params::sample::Sample;
 /// `Plugin` is the surface every format wrapper (CLAP, VST3, VST2,
 /// LV2, AU, AAX) consumes. The `truce::plugin!` macro generates an
 /// `impl Plugin for __HotShellWrapper` from the user's
-/// `truce_gui::PluginLogic` impl, bridging the GUI-aware user trait
-/// into this GUI-free format-wrapper surface so `truce-core` doesn't
-/// pull in `truce-gui` types.
+/// `truce_plugin::PluginLogic` impl, bridging the GUI-aware user
+/// trait into this GUI-free format-wrapper surface so `truce-core`
+/// doesn't pull in `truce-gui` types.
 ///
 /// What plugin authors implement instead:
 ///
@@ -107,16 +107,16 @@ pub trait Plugin: Send + 'static {
     ) -> ProcessStatus;
 
     /// Save extra state beyond parameter values. Empty `Vec` means
-    /// "no extra state" - matches the user-facing
-    /// `truce_gui::PluginLogic::save_state` shape so the wrapper bridge
-    /// is a passthrough rather than an `Option<Vec<u8>>` ↔ `Vec<u8>`
-    /// translation.
+    /// "no extra state": matches the user-facing
+    /// `truce_plugin::PluginLogic::save_state` shape so the wrapper
+    /// bridge is a passthrough rather than an `Option<Vec<u8>>` to
+    /// `Vec<u8>` translation.
     fn save_state(&self) -> Vec<u8> {
         Vec::new()
     }
 
-    /// Restore extra state. Mirrors the user-facing
-    /// `truce_gui::PluginLogic::load_state` `Result` shape so the
+    /// Restore extra state. Matches the user-facing
+    /// `truce_plugin::PluginLogic::load_state` `Result` shape so the
     /// wrapper bridge is a passthrough.
     ///
     /// # Errors

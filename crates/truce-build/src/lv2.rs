@@ -4,24 +4,20 @@
 //! `manifest.ttl` + `plugin.ttl` next to the cargo target tree, before
 //! `cargo truce package` even runs. cargo-truce then just copies those
 //! files into the produced `.lv2` bundle alongside the cross-built
-//! `.so`. No dlopen is involved at any point - that's what makes
+//! `.so`. No dlopen is involved at any point, which is what makes
 //! cross-arch LV2 tarballs viable.
 //!
-//! The TTL string-building here mirrors the runtime path in
-//! `truce-lv2/src/ttl.rs`. Inputs are plain `String`s / enums /
-//! `Vec<Lv2Param>`s rather than the `truce-core` / `truce-params`
-//! types so this module stays in `truce-build` (a tiny dep that
-//! `truce-derive` already pulls in).
+//! Inputs are plain `String`s / enums / `Vec<Lv2Param>`s rather than
+//! the `truce-core` / `truce-params` types so this module stays in
+//! `truce-build` (a tiny dep that `truce-derive` already pulls in).
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-/// The plugin's LV2 URI - the identity LV2 hosts persist in saved
-/// sessions. Single source of truth shared by the manifest writer
-/// (`truce-derive::lv2_emit`) and the runtime descriptor
-/// (`truce-lv2::plugin_uri`). If the two paths produced different
-/// strings the host would discover the plugin under one URI then
-/// fail to look it up under another when reopening a project.
+/// The plugin's LV2 URI: the identity LV2 hosts persist in saved
+/// sessions. Both the compile-time manifest writer and the runtime
+/// descriptor lookup call this so a host can rediscover the plugin
+/// under the same URI it persisted.
 ///
 /// Format: `<vendor_url>/lv2/<bundle_id>`, or `urn:truce:<bundle_id>`
 /// when `vendor_url` is empty (lilv's reference loader prefers an

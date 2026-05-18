@@ -91,8 +91,8 @@ fn sidecar_path(exe: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Locate `mt.exe`. Mirrors `locate_signtool` in `packaging_windows.rs`:
-/// PATH first, then the highest-versioned subdir under the Win10 SDK.
+/// Locate `mt.exe`: check `PATH` first, then the highest-versioned
+/// subdir under the Win10 SDK.
 fn locate_mt_exe() -> Option<PathBuf> {
     if let Ok(p) = which("mt.exe") {
         return Some(p);

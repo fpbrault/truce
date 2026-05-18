@@ -26,9 +26,9 @@
 //!   plugin's own `<target>/lv2-meta/<crate>/` directory and errors
 //!   out if a referenced type is missing.
 //! - Audio in/out counts default to category-derived stereo. Plugins
-//!   with custom `bus_layouts!` get the wrong port count in the TTL.
-//!   Future: read `audio_in` / `audio_out` from `[[plugin]]` in
-//!   `truce.toml` to override.
+//!   that override `Plugin::bus_layouts()` get the wrong port count
+//!   in the TTL until `audio_in` / `audio_out` are added to
+//!   `[[plugin]]` in `truce.toml`.
 
 use crate::{MeterField, ParamField};
 use proc_macro::TokenStream;
@@ -158,8 +158,9 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
         has_midi_out,
         params,
         meter_ids,
-        // truce-lv2 unconditionally writes the UI block; we mirror.
-        // Hosts that don't honour the UI URI still load the plugin.
+        // Always emit the UI block. Hosts that don't honour the UI
+        // URI still load the plugin from manifest.ttl + plugin.ttl
+        // and just skip the UI line.
         has_ui: true,
     };
 
@@ -358,11 +359,11 @@ fn audio_io_for(c: truce_build::lv2::Lv2Category) -> (u32, u32) {
 
 fn parse_category(s: &str) -> truce_build::lv2::Lv2Category {
     use truce_build::lv2::Lv2Category;
-    // Synonyms must match `truce_derive::plugin_info!` - `truce.toml`'s
-    // `category = "midi"` resolves to `PluginCategory::NoteEffect` at
-    // runtime, so the sidecar TTL has to agree or the LV2 plugin ends
-    // up with the wrong port set (missing `midi_out` for note effects,
-    // no MIDI decode for instruments).
+    // `truce.toml`'s `category = "midi"` resolves to
+    // `PluginCategory::NoteEffect` at runtime; the sidecar TTL has to
+    // agree with that mapping or the LV2 plugin ends up with the
+    // wrong port set (missing `midi_out` for note effects, no MIDI
+    // decode for instruments).
     match s.to_ascii_lowercase().as_str() {
         "instrument" => Lv2Category::Instrument,
         "midi" | "noteeffect" | "note_effect" | "note-effect" => Lv2Category::NoteEffect,

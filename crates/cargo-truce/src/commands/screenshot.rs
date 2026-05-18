@@ -27,19 +27,21 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
-/// FFI signature emitted by `truce::plugin!`'s `__truce_screenshot`.
-/// `(state_ptr, state_len, out_path_ptr, out_path_len, scale) -> u32`
-/// - 0 on success, non-zero on failure (logged to stderr by the
-/// plugin). `scale` is the render scale (default 2.0); `<= 0` falls
-/// back to [`truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE`] inside
-/// the plugin.
+/// FFI signature the CLI casts the dlopen'd `__truce_screenshot`
+/// symbol to.
 ///
-/// **Must stay byte-identical to the `__truce_screenshot` definition in
-/// `crates/truce/src/plugin_macro.rs`.** This typedef is what the CLI
-/// casts the dlopen'd symbol to; the cdylib has no link-time signature
-/// to cross-check against, so a mismatch (extra arg, reordered args,
-/// return-type change) becomes silent UB at the first call rather than
-/// a build failure. Update both sides together.
+/// Arguments: `(state_ptr, state_len, out_path_ptr, out_path_len,
+/// scale)`. Returns 0 on success, non-zero on failure (logged to
+/// stderr by the plugin side). `scale` is the render scale
+/// (default 2.0); `<= 0` falls back to
+/// [`truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE`] inside the
+/// plugin.
+///
+/// The cdylib has no link-time signature to cross-check against, so
+/// any mismatch with the plugin-side export becomes silent UB at the
+/// first call rather than a build failure. Changing this signature
+/// requires changing both the plugin-side emit and this typedef in
+/// lock-step.
 type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize, f64) -> u32;
 
 #[allow(clippy::too_many_lines)]

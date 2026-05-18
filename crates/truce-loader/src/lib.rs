@@ -48,11 +48,9 @@ pub mod __macro_deps {
     pub use truce_gui;
     // `ProbePlugin` is a vtable-binding shim emitted into every
     // `export_plugin!` expansion as the `truce_vtable_probe` symbol.
-    // It is not a public type - plugin authors never name it. Kept
+    // It is not a public type; plugin authors never name it. Kept
     // reachable here under `$crate::__macro_deps::` so the macro can
-    // resolve it without leaking the type at the crate root (where a
-    // prior version of this re-export was, and where the v0.40 audit
-    // re-flagged it as an unintended surface).
+    // resolve it without leaking the type at the crate root.
     pub use crate::canary::ProbePlugin;
 }
 
@@ -87,13 +85,13 @@ pub use loader::NativeLoader;
 #[macro_export]
 macro_rules! export_plugin {
     ($logic:ty, $params:ty) => {
-        // `Sample` here is the prelude's `type Sample = …` alias -
+        // `Sample` here is the prelude's `type Sample = ...` alias:
         // `f32` for `prelude` / `prelude32` / `prelude64m`, `f64` for
-        // `prelude64`. Lets `prelude64` plugins compile through the
-        // dylib export path even though `HotShell` (the loader-side
-        // consumer) is currently `f32`-only - a `prelude64` plugin
-        // would simply error at dylib-load time if someone tried to
-        // hot-reload it, rather than failing to compile in static mode.
+        // `prelude64`. `HotShell<P, S>` is generic over `S: Sample`
+        // so both precisions hot-reload through the same dylib export
+        // shape; the canary's `sample_precision` byte at load time
+        // guards against a shell built for one precision dlopening a
+        // dylib built for the other.
         #[unsafe(no_mangle)]
         pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogicCore<Sample>> {
             let params: Arc<$params> = unsafe {

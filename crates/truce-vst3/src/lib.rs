@@ -42,8 +42,8 @@ struct Vst3Instance<P: PluginExport> {
     plugin: P,
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`cb_param_*`, `cb_state_save`) read params
-    /// through this handle so they never form a `&Inst.plugin` reference
-    /// - the audio thread's `&mut Inst.plugin` would otherwise let LLVM
+    /// through this handle so they never form a `&Inst.plugin` reference;
+    /// the audio thread's `&mut Inst.plugin` would otherwise let LLVM
     /// deduce noalias on the plugin field and reorder loads past the
     /// audio thread's stores. Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
@@ -708,12 +708,11 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         // Walk the filtered iterator until we hit the index-th
-        // encodable event. Out-of-range index → leave `*out` untouched
-        // is the documented contract; `*out` was zero-initialized by
-        // the C++ shim before calling. Returning explicitly here makes
-        // a future shim regression (forgetting to bounds-check
-        // against `cb_get_output_event_count`) fail loudly rather
-        // than emit stale stack data.
+        // encodable event. Out-of-range index leaves `*out`
+        // untouched; the C++ shim zero-initialized the buffer before
+        // calling, so callers that forget to bounds-check against
+        // `cb_get_output_event_count` get a zero packet rather than
+        // stale stack data.
         if let Some(packet) = inst
             .output_events
             .iter()
@@ -926,7 +925,6 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         {
                             // Apply params synchronously so the editor
                             // sees the restore on its own thread.
-                            // Mirrors `cb_state_load`.
                             state::apply_params(&*params_for_state, &deserialized);
                             let _ = pending_state_for_set.force_push(deserialized);
                         }
@@ -1054,9 +1052,9 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     .unwrap_or_default();
 
     // NoteEffect plugins (arpeggiators, chord generators) emit MIDI
-    // back to the host. Mirrors the AU/AAX gating; instruments could
-    // in principle but it's rare enough that we'd rather make them
-    // opt in than advertise a phantom event-output bus on every synth.
+    // back to the host. Instruments could in principle, but it's rare
+    // enough that we'd rather make them opt in than advertise a
+    // phantom event-output bus on every synth.
     let has_midi_output = i32::from(matches!(info.category, PluginCategory::NoteEffect));
 
     let descriptor = Box::leak(Box::new(Vst3PluginDescriptor {

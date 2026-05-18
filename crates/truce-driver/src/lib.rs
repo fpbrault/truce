@@ -537,8 +537,8 @@ impl<P: PluginExport> PluginDriver<P> {
     /// calls compose; they run in declaration order, before the
     /// `.setup` closure (if any).
     ///
-    /// For automation *during* a run, use `.script(|s| s.set_param(...))`
-    /// - that emits a sample-accurate `ParamChange` event the plugin
+    /// For automation *during* a run, use `.script(|s| s.set_param(...))`,
+    /// which emits a sample-accurate `ParamChange` event the plugin
     /// processes inline.
     #[must_use]
     pub fn set_param(mut self, id: impl Into<u32>, normalized: f64) -> Self {

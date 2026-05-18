@@ -169,10 +169,10 @@ struct ClapPluginData<P: PluginExport> {
     /// Bounded SPSC handoff for state loads. Host (`state_load`) and
     /// editor (`set_state` callback) deserialize on their thread and
     /// push the result; the audio thread pops at the top of
-    /// `clap_plugin_process` and calls
-    /// [`state::apply_state`] under its exclusive
-    /// `&mut plugin`. Sidesteps the data race that the previous
-    /// "cast to `&mut` from the GUI thread" pattern produced.
+    /// `clap_plugin_process` and calls [`state::apply_state`] under
+    /// its exclusive `&mut plugin`. The queue is what makes the
+    /// transfer race-free: no GUI-thread `&mut plugin` is ever
+    /// constructed.
     pending_state: Arc<StateLoadQueue>,
     /// Flag: GUI changed params, need rescan on main thread.
     needs_rescan: Arc<AtomicBool>,
@@ -657,12 +657,10 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // CLAP carries MIDI 1.0 channel-voice messages as
                     // 3-byte packets. Demux back into the typed
                     // `EventBody` variants the plugin sees on every
-                    // other format. Mirrors the encoder at the output
-                    // path (`process()`'s `EventBody::*` → `clap_event_midi`
-                    // arms): without this, hosts that route raw MIDI
-                    // (`CLAP_NOTE_DIALECT_MIDI` ports) silently drop
-                    // CC / PitchBend / Aftertouch / ChannelPressure /
-                    // ProgramChange at the wrapper.
+                    // other format. Without this, hosts that route
+                    // raw MIDI (`CLAP_NOTE_DIALECT_MIDI` ports)
+                    // silently drop CC / PitchBend / Aftertouch /
+                    // ChannelPressure / ProgramChange at the wrapper.
                     let midi = &*header.cast::<clap_event_midi>();
                     let status = midi.data[0];
                     let channel = status & 0x0F;
@@ -882,9 +880,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         //    thread doesn't `Vec::new()` per process.
         // 2. **Channel indexing preserved.** A null channel pointer
         //    becomes an empty slice at the same flat-channel index
-        //    rather than being dropped - preserving channel layout
-        //    avoids the silent re-mapping the densifying loop used to
-        //    produce when only some channels were null.
+        //    rather than being dropped; densifying the channel list
+        //    would silently re-map indices when only some channels
+        //    were null.
         // 3. **No auto input→output copy.** Plugins that want
         //    pass-through must do `output.copy_from_slice(input)`
         //    themselves; auto-copying clobbers the previous-block tail
@@ -1987,7 +1985,6 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     {
                         // Apply params synchronously so the editor
                         // sees the restore on its own thread.
-                        // Mirrors `state_load`.
                         state::apply_params(&*params_for_state, &deserialized);
                         let _ = pending_state_for_set.force_push(deserialized);
                     }
@@ -2173,9 +2170,9 @@ impl<P: PluginExport> Extensions<P> {
     /// `OnceLock<Extensions<P>>` static can't reference the outer
     /// generic parameter, so we erase to `usize` and re-attach the
     /// type on read. `OnceLock::get_or_init` runs the constructor at
-    /// most once across all threads, so unlike the previous
-    /// `AtomicPtr<u8>` + manual `compare_exchange` shape we never
-    /// build-and-throw-away a losing `Box` on a race.
+    /// most once across all threads, so no losing `Box` ever gets
+    /// built-and-thrown-away on a race the way a hand-rolled
+    /// `AtomicPtr<u8>` + `compare_exchange` would.
     ///
     /// CLAP libraries only ship one plugin type per shared object, so
     /// there's exactly one monomorphization and one `OnceLock` per

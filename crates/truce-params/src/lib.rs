@@ -132,16 +132,15 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
 
     /// Static parameter metadata, available without an instance.
     ///
-    /// Format wrappers' `register_*` paths (see
-    /// `PluginExport::param_infos_static` in `truce-core`)
-    /// call this to learn the parameter set without constructing a
-    /// full plugin - historically each format built a throwaway
-    /// instance just to read `&self.param_infos()`, paying for any
-    /// allocation the constructor did (DSP buffers, FFT plans, image
-    /// atlases, etc.) at static-init time. The derive macro overrides
-    /// this with a `LazyLock`-cached `Vec<ParamInfo>` built from the
-    /// same compile-time metadata it uses for [`Self::param_infos`],
-    /// so registration becomes allocation-free after the first call.
+    /// Format wrappers' `register_*` paths call this to learn the
+    /// parameter set without constructing a full plugin. The
+    /// instance-based alternative would pay for any allocation the
+    /// constructor does (DSP buffers, FFT plans, image atlases, etc.)
+    /// at static-init time, which is fragile under AAX's `Describe`
+    /// running before main. The derive macro overrides this with a
+    /// `LazyLock`-cached `Vec<ParamInfo>` built from the same
+    /// compile-time metadata it uses for [`Self::param_infos`], so
+    /// registration becomes allocation-free after the first call.
     ///
     /// Default impl returns an empty vec - hand-written `Params` impls
     /// that don't override fall through to the runtime path inside
@@ -343,9 +342,9 @@ mod tests {
 
     #[test]
     fn int_param_no_fractional_zero() {
-        // Regression: transpose's IntParam(semitones, st) used to
-        // render "0.0 st" / "-5.0 st" because format_param_value
-        // hard-coded `{:.1}` regardless of param kind.
+        // IntParam values must render with no decimal places.
+        // A hard-coded `{:.1}` formatter (regardless of param kind)
+        // would render "0.0 st" / "-5.0 st" for semitone values.
         assert_eq!(
             format_param_value(&int_info(ParamUnit::Semitones), 0.0),
             "0 st"

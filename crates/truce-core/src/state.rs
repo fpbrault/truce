@@ -2,13 +2,14 @@
 const STATE_MAGIC: &[u8; 4] = b"OAST";
 const STATE_VERSION: u32 = 1;
 
-/// Reason a [`crate::Plugin::load_state`] / `truce_gui::PluginLogic::load_state`
-/// implementation failed to interpret the host-supplied extra-state
-/// blob. Format wrappers receive this on the audio-thread apply path
-/// and currently log it; future hosts will surface a non-success code
-/// to the DAW (e.g. CLAP `state_load` returning `false`).
+/// Reason a [`crate::Plugin::load_state`] /
+/// `truce_plugin::PluginLogic::load_state` implementation failed to
+/// interpret the host-supplied extra-state blob. Format wrappers
+/// receive this on the audio-thread apply path and log it; hosts
+/// that surface a non-success code to the DAW (e.g. CLAP
+/// `state_load` returning `false`) read the variant via that path.
 ///
-/// `Malformed` is the typical case - the blob's framing or content
+/// `Malformed` is the typical case: the blob's framing or content
 /// doesn't match what `save_state` would emit (version skew between
 /// older session files and newer plugin builds is the canonical
 /// example). `Other` carries a free-form message for plugin-specific

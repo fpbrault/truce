@@ -187,8 +187,9 @@ pub struct AuMidi2Event {
     /// Up to four 32-bit UMP words, MSB-first. UMP message types:
     /// 0x0 = utility (32-bit), 0x1 = system real-time (32-bit),
     /// 0x2 = MIDI 1.0 CV (32-bit), 0x3 = SysEx-7 (64-bit),
-    /// 0x4 = MIDI 2.0 CV (64-bit), 0x5 = data 128 (128-bit). Only
-    /// MIDI 2.0 CV is decoded today; the rest are reserved.
+    /// 0x4 = MIDI 2.0 CV (64-bit), 0x5 = data 128 (128-bit).
+    /// Types 0x3 (SysEx-7), 0x4 (MIDI 2.0 CV), and 0x5 (data 128
+    /// / SysEx-8) are decoded; 0x0 / 0x1 / 0x2 are reserved.
     pub words: [u32; 4],
 }
 

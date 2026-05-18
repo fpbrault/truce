@@ -16,8 +16,9 @@
 //! `main.rs` bins. This module just adapts the CLI input/output
 //! shape to the driver's builder.
 //!
-//! Instrument support is currently disabled - instruments need a
-//! MIDI-file driver, not yet wired up.
+//! Instrument support is disabled because instruments need a MIDI
+//! input source (e.g. a MIDI file driver), which this offline path
+//! doesn't expose.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -58,8 +59,8 @@ where
         .ok_or("offline render requires --output-file")?;
 
     if P::info().category != PluginCategory::Effect {
-        return Err("offline render currently only supports effect plugins \
-             (instruments need a --midi-file driver, not yet implemented)"
+        return Err("offline render only supports effect plugins; \
+             instruments need a MIDI input source which this path does not expose"
             .into());
     }
 

@@ -259,8 +259,8 @@ fn build_suite_tarball(ctx: &TarballCtx<'_>, suite: &ResolvedSuite<'_>) -> Res {
 
     // Suite tarball must contain install.sh + every bundle the manifest
     // listed for any member plugin, under its format-grouped path.
-    // Mirrors the macOS productbuild check - catches a staging
-    // silent-skip that would ship a partial suite archive.
+    // The check catches a staging silent-skip that would otherwise
+    // ship a partial suite archive.
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let expected: Vec<&str> = install_paths.iter().map(String::as_str).collect();

@@ -95,8 +95,7 @@ struct Inner<P: Params + 'static> {
     logical_w: u32,
     logical_h: u32,
     /// Last-painted normalized values (per knob region) for
-    /// host-driven param-change detection. Mirrors the macOS
-    /// editor's `last_painted_values`.
+    /// host-driven param-change detection.
     last_painted_values: Vec<f32>,
     /// Pinned shared state with the rest of the editor - needed so
     /// the `CADisplayLink` callback can flip `needs_repaint`, route

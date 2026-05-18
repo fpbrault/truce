@@ -353,12 +353,11 @@ impl<S: Sample> NativeLoader<S> {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 
-    /// Monotonic counter of successful (or attempted) reloads - bumps
+    /// Monotonic counter of successful (or attempted) reloads: bumps
     /// once per `copy_versioned()` invocation, which precedes every
-    /// candidate build. Two consumers (audio path + GUI watcher) that
-    /// share the same `NativeLoader` use this to detect "the other
-    /// side already reloaded" without having to drive reload
-    /// themselves.
+    /// candidate build. Consumers that share the same `NativeLoader`
+    /// use this to detect when "the other side already reloaded"
+    /// without having to drive reload themselves.
     #[must_use]
     pub fn load_counter(&self) -> u64 {
         self.load_counter

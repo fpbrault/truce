@@ -224,11 +224,10 @@ pub trait EditorBridge: Send + Sync {
 /// Adapter that implements [`EditorBridge`] over per-method closures.
 ///
 /// Format wrappers that prefer to compose state inline via closures
-/// (the historical shape, before the trait existed) construct one of
-/// these and wrap it in an `Arc<dyn EditorBridge>`. Wrappers that
-/// already have a typed host-pointer struct should `impl EditorBridge`
-/// for that struct directly and skip this adapter - one less layer of
-/// indirection per call.
+/// construct one of these and wrap it in an `Arc<dyn EditorBridge>`.
+/// Wrappers that already have a typed host-pointer struct should
+/// `impl EditorBridge` for that struct directly and skip this
+/// adapter; one less layer of indirection per call.
 pub struct ClosureBridge {
     pub begin_edit: Box<dyn Fn(u32) + Send + Sync>,
     pub set_param: Box<dyn Fn(u32, f64) + Send + Sync>,

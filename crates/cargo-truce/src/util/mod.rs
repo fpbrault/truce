@@ -89,13 +89,12 @@ pub(crate) mod fs_ctx {
 /// crate (`run`, `run_capture`, codesign argv assembly) take
 /// `&[&str]` rather than `&[OsStr]` because every other arg in
 /// those vecs is a literal; this is the standard way to thread
-/// a path through. The panic is preferable to `to_string_lossy`
-/// - passing a lossy path to `Command::arg` would silently
-/// invoke a different binary than the caller named.
+/// a path through. The panic is preferable to `to_string_lossy`,
+/// which would silently invoke a different binary than the caller
+/// named when passed to `Command::arg`.
 ///
-/// Today only the iOS install pipeline calls this; the gate is
-/// `macos` to match, and widens to `any(target_os = "macos", …)`
-/// when other shell-out sites fold in.
+/// Gated on `macos` because the iOS install pipeline is the only
+/// caller; widen the cfg if another shell-out site needs it.
 #[cfg(target_os = "macos")]
 #[track_caller]
 pub(crate) fn path_str(path: &Path) -> &str {

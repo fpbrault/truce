@@ -612,13 +612,13 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 ///
 /// Stages the bundle via `package::stage::stage_lv2`, which copies the
 /// shared library (`{slug}.so` on Linux/macOS, `{slug}.dll` on Windows
-/// - Windows's loader only accepts `.dll`) alongside the `manifest.ttl`
-/// and `plugin.ttl` that `truce-derive`'s `export_lv2!` proc-macro
-/// emitted at compile time as sidecar files.
+/// because Windows's loader only accepts `.dll`) alongside the
+/// `manifest.ttl` and `plugin.ttl` that `truce-derive`'s `export_lv2!`
+/// proc-macro emitted at compile time as sidecar files.
 ///
 /// Bundle and binary filenames are slugged to lowercase ASCII with hyphens
 /// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
-/// encoding - some LV2 hosts reject bundles whose TTL has spaces or other
+/// encoding. Some LV2 hosts reject bundles whose TTL has spaces or other
 /// non-URI characters in filenames even when the on-disk files are valid.
 fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope) -> Res {
     let lv2_dir = scope.lv2_dir();

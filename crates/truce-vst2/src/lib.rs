@@ -428,8 +428,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
 /// Map a truce `Event` body to a 3-byte VST2 MIDI packet. Returns
 /// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
-/// Transport, etc.). Mirrors `truce_vst3::try_encode_vst3_midi` so
-/// the two formats stay in sync.
+/// Transport, etc.).
 fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
     use truce_core::midi::pitch_bend_to_bytes;
     let (status, data1, data2) = match &event.body {
@@ -733,15 +732,15 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 /// **Contract:** `data` must point to memory allocated via the Rust
 /// global allocator with `cap == len`. `cb_state_save` upholds this
 /// via `Vec::into_boxed_slice` (which trims `cap` to `len`) then
-/// `mem::forget`. Don't change either side to a different allocator
-/// or cap-tracking strategy without updating the other -
-/// `Vec::from_raw_parts` requires both to match exactly.
+/// `mem::forget`. `Vec::from_raw_parts` requires the allocator and
+/// `cap` to match exactly, so any change to the allocation strategy
+/// on the save side must update this free side in lock-step.
 unsafe extern "C" fn cb_state_free(data: *mut u8, len: u32) {
     unsafe {
         if !data.is_null() && len > 0 {
-            // Mirrors the construction in `cb_state` (Vec with
-            // `len == cap`); `Box::from_raw_parts` doesn't fit
-            // because the source allocator is Vec's, not Box's.
+            // Reconstruct as a Vec (not a Box) because the original
+            // allocation came from `Vec::into_boxed_slice` and Box's
+            // free path expects different layout metadata.
             #[allow(clippy::same_length_and_capacity)]
             let v = Vec::from_raw_parts(data, len as usize, len as usize);
             drop(v);
@@ -878,7 +877,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         {
                             // Apply params synchronously so the
                             // editor's get_param immediately reflects
-                            // the restore. Mirrors `cb_state_load`.
+                            // the restore.
                             state::apply_params(&*params_for_state, &deserialized);
                             let _ = pending_state_for_set.force_push(deserialized);
                         }

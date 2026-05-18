@@ -280,10 +280,10 @@ mod tests {
         }
     }
 
-    /// `normalize` must never return NaN - a host that briefly
+    /// `normalize` must never return NaN. A host that briefly
     /// overshoots automation below `min` (or hands us a fresh
-    /// uninitialized -1.0) used to flow `(-1.0).ln()` (= NaN) into
-    /// saved state and the editor round-trip.
+    /// uninitialized -1.0) would feed `(-1.0).ln()` (= NaN) into
+    /// saved state and the editor round-trip without the clamp.
     #[test]
     fn logarithmic_normalize_never_nan() {
         let range = ParamRange::Logarithmic {

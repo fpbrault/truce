@@ -981,10 +981,10 @@ fn draw_widget_entry(ctx: &mut WidgetDrawCtx<'_>, w: &WidgetDraw<'_>) {
                 is_hovered,
                 is_open,
             );
-            // Mirrors `draw_dropdown`: the visible button box is
-            // `DROPDOWN_BOX_HEIGHT` tall, centered on `cy = y + h/2 - 8`.
-            // We store the *bottom* of that box so `open_dropdown` can
-            // anchor the popup directly underneath.
+            // The visible button box is `DROPDOWN_BOX_HEIGHT` tall,
+            // centered on `cy = y + h/2 - 8`. Store the *bottom* of
+            // that box so `open_dropdown` can anchor the popup
+            // directly underneath.
             let anchor_cy = w.y + w.h / 2.0 - 8.0;
             if let Some(region) = ctx.state.knob_regions.get_mut(w.region_idx) {
                 region.dropdown_anchor_y = anchor_cy + DROPDOWN_BOX_HEIGHT / 2.0;

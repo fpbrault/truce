@@ -25,9 +25,8 @@ use truce_core::editor::for_test_params;
 /// tests reach this via [`truce_test::assert_screenshot`].
 ///
 /// Returns `None` when no wgpu adapter is available (CI runners without
-/// a GPU, headless VMs). Mirrors `WgpuBackend::headless` in `truce-gpu`
-/// and `render_with_state` in `truce-egui` so all three GPU-backed
-/// screenshot paths handle adapter-acquisition failures uniformly.
+/// a GPU, headless VMs). Lets the caller fall back to a CPU path or
+/// skip the screenshot assertion rather than panicking.
 // `params: Arc<P>` is consumed by the iced program; refs would force
 // the caller to outlive the headless render.
 #[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]

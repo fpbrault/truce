@@ -573,8 +573,8 @@ fn sign_au_v3_inside_out(final_app: &Path, build_dir: &Path, fw_name: &str, sign
 ///    the bundle into `/Applications/`, and `lsregister -f -R`.
 /// 2. **Once for the batch** - `killall pkd` +
 ///    `killall AudioComponentRegistrar`, clear the AU cache, wait 2s
-///    for `pkd` to respawn. Previously this ran per-plugin, wasting
-///    `(N-1) × 2s` plus the daemon-respawn cost.
+///    for `pkd` to respawn. Hoisting this out of the per-plugin loop
+///    saves `(N-1) * 2s` plus the daemon-respawn cost.
 /// 3. **Per plugin** - `pluginkit -a` + poll-until-registered, then
 ///    print `Installed:`.
 fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
@@ -692,8 +692,7 @@ fn register_appex(appex_path: &str, appex_id: &str) -> bool {
 /// Build-then-install convenience for `cargo truce install --au3`.
 ///
 /// `no_build` skips the build phase and consumes whatever's already
-/// in `target/bundles/` - mirrors the behavior of the other formats'
-/// `--no-build` paths.
+/// in `target/bundles/`.
 pub(crate) fn build_and_install_au_v3(
     root: &Path,
     config: &Config,

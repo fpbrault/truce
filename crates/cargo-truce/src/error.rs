@@ -1,12 +1,11 @@
 //! Typed error enum for cargo-truce.
 //!
-//! Replaces the previous `Box<dyn Error>` blanket so callers can
-//! pattern-match on the failure mode (missing tool, codesign failure,
-//! manifest parse error, etc.) instead of string-grepping the
-//! `Display` output. The catch-all `Other` variant carries any
-//! still-stringly-typed errors from `Err("…".into())` sites the
-//! codebase hasn't migrated yet - `From<String>` and `From<&str>`
-//! conversions keep `?` propagation transparent during the migration.
+//! Callers pattern-match on the failure mode (missing tool, codesign
+//! failure, manifest parse error, etc.) instead of string-grepping a
+//! `Box<dyn Error>` Display output. The catch-all `Other` variant
+//! carries stringly-typed errors from `Err("...".into())` sites that
+//! haven't been migrated to a named variant; `From<String>` and
+//! `From<&str>` conversions keep `?` propagation transparent.
 
 use std::io;
 

@@ -1,17 +1,14 @@
-//! Platform glue for truce-iced - mirrors `truce-egui::platform` and
-//! `truce-gpu::platform` in shape.
+//! Platform glue for truce-iced.
 //!
 //! `ParentWindow`, `query_backing_scale`, and `note_linux_scale_factor`
 //! are re-exported from `truce-gui` so call sites have one canonical
 //! source. The wgpu-surface bridge can't follow the same pattern: iced
 //! pulls in `iced_wgpu` 0.13 which depends on **wgpu 0.19**, while
-//! `truce-gui` (and `truce-egui` / `truce-gpu`) is on **wgpu 24**.
-//! `wgpu::Surface` is therefore a different type in each dep tree, so
-//! the canonical helper produces a value `iced_wgpu` can't ingest.
-//! `create_wgpu_surface` below is the per-version copy required to
-//! bridge baseview's rwh-0.5 handle to the wgpu-0.19 surface type
-//! `iced_wgpu` expects. When `iced_wgpu` catches up to wgpu 24, this
-//! module collapses to a one-line re-export of the canonical helper.
+//! the rest of truce is on **wgpu 24**. `wgpu::Surface` is therefore
+//! a different type in each dep tree, so the canonical helper
+//! produces a value `iced_wgpu` can't ingest. `create_wgpu_surface`
+//! below is the per-version copy required to bridge baseview's
+//! rwh-0.5 handle to the wgpu-0.19 surface type `iced_wgpu` expects.
 
 use iced_wgpu::wgpu;
 use raw_window_handle::HasRawWindowHandle;
@@ -20,9 +17,6 @@ pub use truce_gui::platform::{ParentWindow, note_linux_scale_factor, query_backi
 
 /// Bridge a baseview raw-window-handle 0.5 to the wgpu-0.19
 /// `SurfaceTargetUnsafe` type that `iced_wgpu` 0.13 expects.
-///
-/// Logic mirrors `truce_gui::platform::create_wgpu_surface` but
-/// targets a different `wgpu::*` namespace (see module doc).
 ///
 /// # Safety
 /// The window handle must be valid for the lifetime of the returned

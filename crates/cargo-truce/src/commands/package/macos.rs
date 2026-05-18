@@ -46,7 +46,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     if formats.is_empty() {
         return Err("no formats to package".into());
     }
-    let effective_scope = compute_effective_scope(scope, &formats);
+    let effective_scope = scope;
 
     let plugins: Vec<&PluginDef> =
         crate::commands::pick_plugins(&config, parsed.plugin_filter.as_deref())?;
@@ -543,24 +543,6 @@ fn resolve_formats(
         }
         Ok(fmts)
     }
-}
-
-/// Widen `--user` scope to `System` when system-only formats (AAX,
-/// AU v3) are in the bundle. macOS Installer.app's `<domains>` is
-/// global to the installer, not per-payload - pure user-scope is only
-/// possible when the format mix supports it. Emits a `note_once` per
-/// system-only format so the developer sees why the widen happened.
-fn compute_effective_scope(scope: PkgScope, formats: &[PkgFormat]) -> PkgScope {
-    // Previously this widened `User` → `System` whenever AAX or AU v3
-    // was in the mix, because Distribution-level domains couldn't host
-    // both `/Library/...` and `~/Library/...` payloads in one install.
-    // Per-choice `auth="Root"` (emitted in the Distribution generator)
-    // now lets the user-scope installer escalate just those system-only
-    // payloads, so the User-scope build is honoured as requested and
-    // the user is prompted for admin once if they leave AAX / AU v3 /
-    // standalone selected.
-    let _ = formats;
-    scope
 }
 
 /// Drive Step 1 of the packaging pipeline: per-arch builds + lipo for

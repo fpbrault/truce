@@ -105,12 +105,11 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         .unwrap_or(&pkg_version)
         .to_string();
 
-    // Keep these mappings in sync with
-    // `truce_core::info::category_from_str`. Historically this match only
-    // knew about "instrument" and fell everything else through to
-    // `Effect` - which silently broke LV2 MIDI for every note-effect
-    // plugin because `truce-lv2::derive_port_layout` reads the category
-    // to decide whether to open the MIDI input decode path.
+    // Category-string vocabulary parsed by every consumer that reads
+    // `truce.toml`. Note-effect plugins (`midi` / `note_effect`) must
+    // map to a distinct variant from `Effect` so the LV2 MIDI input
+    // decode path stays open; collapsing them silently drops every
+    // host MIDI event.
     let category = match plugin.category.as_str() {
         "instrument" => quote! { ::truce::core::PluginCategory::Instrument },
         "midi" | "note_effect" => quote! { ::truce::core::PluginCategory::NoteEffect },
@@ -118,14 +117,13 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         "tool" => quote! { ::truce::core::PluginCategory::Tool },
         _ => quote! { ::truce::core::PluginCategory::Effect },
     };
-    // NoteEffect plugins → `aumi` (Apple's MIDI Processor type).
+    // NoteEffect plugins map to `aumi` (Apple's MIDI Processor type).
     // Pairs with empty `bus_layouts` at the plugin level: aumi
     // plugins must not expose audio I/O. Logic routes `aumi` to the
     // MIDI FX slot, which is where arpeggiators / transposers /
-    // note-shapers belong. Must stay in sync with
-    // `cargo-truce/src/config.rs::resolved_au_type` - a mismatch
-    // causes auval "Class Data fields … do not match component
-    // description".
+    // note-shapers belong. A mismatch with the AU-type computed at
+    // install / package time causes auval to report "Class Data
+    // fields ... do not match component description".
     let au_type = plugin
         .au_type
         .as_deref()
@@ -255,8 +253,7 @@ impl ParamField {
     /// `called Option::unwrap on a None`.
     pub(crate) fn id(&self) -> u32 {
         self.attrs.id.expect(
-            "ParamField::id called before the auto-assignment block ran; \
-             see `Auto-assign parameter IDs` near the top of derive_params",
+            "ParamField::id called before the auto-assignment block ran",
         )
     }
 }
@@ -283,8 +280,7 @@ impl MeterField {
     /// [`ParamField::id`].
     fn id(&self) -> u32 {
         self.id.expect(
-            "MeterField::id called before the auto-assignment block ran; \
-             see `Auto-assign meter IDs` near the top of derive_params",
+            "MeterField::id called before the auto-assignment block ran",
         )
     }
 }
@@ -1078,9 +1074,9 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // `gen_param_info_literal`) rather than a runtime `self.<f>.info`
     // read. Lifted into a `LazyLock<Vec<ParamInfo>>` so format
     // wrappers' `register_*` paths can read parameter metadata
-    // without constructing a plugin instance - see the
-    // `PluginExport::param_infos_static` doc on why that matters
-    // (AAX `Describe` runs at C++ static init time).
+    // without constructing a plugin instance. AAX's `Describe` runs
+    // at C++ static-init time and can't safely allocate a plugin
+    // there, so the static path is mandatory for that format.
     let own_info_literals: Vec<proc_macro2::TokenStream> = param_fields
         .iter()
         .filter_map(gen_param_info_literal)

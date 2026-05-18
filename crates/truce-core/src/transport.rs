@@ -9,10 +9,10 @@
 //! The implementation is a single-writer seqlock: the audio thread's
 //! write path takes no locks and always lands; UI readers retry on
 //! collision (the critical section is a single `TransportInfo` copy,
-//! a few hundred nanoseconds at worst). The previous `Mutex` design
-//! used `try_lock` on both sides and silently dropped audio-thread
-//! writes that happened to coincide with a UI read, so the visualizer
-//! could see stale tempo/beat values for one repaint frame.
+//! a few hundred nanoseconds at worst). A mutex-based design would
+//! either drop audio-thread writes on contention (`try_lock`) or
+//! introduce audio-thread blocking, both of which would let the
+//! visualizer drift from real transport state.
 
 use std::cell::UnsafeCell;
 use std::ptr::{read_volatile, write_volatile};

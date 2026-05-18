@@ -103,9 +103,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // attached to a visible window yet). `main_screen_scale`
         // hits `UIScreen.mainScreen.scale` and returns the device's
         // real scale (3.0 on Retina iPhones). Without this, Slint's
-        // software renderer paints at 1× into a buffer treated as
-        // 3× - visible as grainy edges. Mirrors the built-in iOS
-        // editor's `EditorScale::new` construction.
+        // software renderer paints at 1x into a buffer treated as
+        // 3x with visibly grainy edges.
         //
         // Editor dimensions × backing-scale stay well below 2^23,
         // so the f32 mantissa loss never matters; scale ≤ 4.0 on

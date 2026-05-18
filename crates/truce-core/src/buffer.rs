@@ -299,18 +299,18 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
     }
 }
 
-/// Scratch space for `RawBufferScratch::build` / `build_widening`.
+/// Scratch space for [`RawBufferScratch::build`].
 ///
-/// Callers allocate this on the stack and pass it to a `build*`
-/// method. The buffer borrows the slices stored here, so this struct
-/// must outlive the returned `AudioBuffer`.
+/// Callers allocate this on the stack and pass it to `build`. The
+/// buffer borrows the slices stored here, so this struct must outlive
+/// the returned `AudioBuffer`.
 ///
 /// Generic over the plugin's sample type `S`. When the host buffer
 /// matches `S`, slices point into host memory (zero-copy). When the
 /// host buffer is a different precision, the input is widened/narrowed
 /// into per-channel scratch; the output is rendered into scratch and
 /// the wrapper copies + casts it back to the host buffer at the end
-/// of the block (`finish_widening`).
+/// of the block via [`Self::finish_widening_f32`].
 pub struct RawBufferScratch<S: Sample = f32> {
     pub input_slices: Vec<&'static [S]>,
     pub output_slices: Vec<&'static mut [S]>,
@@ -321,10 +321,10 @@ pub struct RawBufferScratch<S: Sample = f32> {
     /// we widen/narrow on the way in. In either case the slice the
     /// plugin sees points into the matching slot here.
     input_copies: Vec<Vec<S>>,
-    /// Per-channel output scratch. Only populated by
-    /// [`Self::build_widening`] when the host buffer precision differs
-    /// from `S`; the wrapper copies + casts these back to the host
-    /// buffer at the end of the block via [`Self::finish_widening`].
+    /// Per-channel output scratch. Only populated by [`Self::build`]
+    /// when the host buffer precision differs from `S`; the wrapper
+    /// copies + casts these back to the host buffer at the end of the
+    /// block via [`Self::finish_widening_f32`].
     output_buffers: Vec<Vec<S>>,
 }
 

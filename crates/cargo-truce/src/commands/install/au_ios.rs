@@ -7,10 +7,9 @@
 //! signs the lot, and installs onto the booted iOS Simulator or a
 //! tethered device.
 //!
-//! Mirrors the shape of `install/au_v3.rs` (the macOS pipeline) but
-//! skips xcodebuild - for a one-app + one-appex + one-framework
-//! bundle the swiftc invocations are clearer and easier to iterate
-//! against than driving a pbxproj template.
+//! Skips xcodebuild because for a one-app + one-appex + one-framework
+//! bundle the direct swiftc invocations are clearer and easier to
+//! iterate against than driving a pbxproj template.
 
 #![cfg(target_os = "macos")]
 
@@ -76,12 +75,12 @@ pub(crate) fn install_one(root: &Path, p: &PluginDef, target: IosTarget) -> Res 
     install_one_inner(root, p, target, None)
 }
 
-/// Same as `install_one`, but lets the caller override
-/// `UISupportedInterfaceOrientations` for the container. The
-/// screenshot pipeline passes a single-element slice so iOS forces
-/// the simulator to rotate to a canonical orientation when the
-/// container launches - without that, the sim inherits whatever
-/// rotation the previous test left it as, and portrait-supporting
+/// Install with an explicit `UISupportedInterfaceOrientations`
+/// override for the container. The screenshot pipeline passes a
+/// single-element slice so iOS forces the simulator to rotate to a
+/// canonical orientation when the container launches; without that,
+/// the sim inherits whatever rotation the previous test left it as,
+/// and portrait-supporting
 /// plug-ins can render in landscape (and vice versa), producing
 /// non-deterministic baseline dimensions.
 pub(crate) fn install_one_screenshot(
@@ -177,11 +176,10 @@ pub(crate) fn build_bundle(
     let fw_name = format!("{}AU", capitalise_id(&p.bundle_id));
     // Full reverse-DNS CFBundleIdentifier: `{vendor.id}.{bundle_id}`.
     // `truce.toml` stores `bundle_id` as the short suffix
-    // (`"synth"`) - the iOS provisioning profile's wildcard App ID
+    // (`"synth"`); the iOS provisioning profile's wildcard App ID
     // (e.g. `TEAM.com.acme.*`) matches the assembled full ID, not
-    // the bare suffix. Mirrors the macOS AU v3 pipeline which uses
-    // the same construction for its plist identifiers. Underscores
-    // are illegal in iOS bundle identifiers; hyphens are accepted.
+    // the bare suffix. Underscores are illegal in iOS bundle
+    // identifiers; hyphens are accepted.
     let suffix = p.bundle_id.replace('_', "-");
     let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
     let appex_bundle_id = format!("{app_bundle_id}.AUExt");
@@ -514,7 +512,6 @@ pub(crate) fn build_bundle(
         &app_ent,
         render_entitlements_plist(
             p.resolved_ios_app_group(),
-            false,
             &app_bundle_id,
             team_for_app,
         ),
@@ -523,7 +520,6 @@ pub(crate) fn build_bundle(
         &appex_ent,
         render_entitlements_plist(
             p.resolved_ios_app_group(),
-            true,
             &appex_bundle_id,
             team_for_app,
         ),
@@ -1159,21 +1155,18 @@ fn app_info_plist(
 /// is omitted (no profile means nothing to validate against).
 fn render_entitlements_plist(
     app_group: Option<&str>,
-    is_appex: bool,
     bundle_id: &str,
     team_id_for_app_id: Option<&str>,
 ) -> String {
     let mut keys = String::new();
     // `com.apple.security.app-sandbox` and `network.client` are
-    // macOS-only entitlements - iOS apps don't carry them (the
-    // platform sandboxes everything by default). Claiming them in
-    // an iOS-signed binary triggers a profile-validation failure
-    // at `AMDeviceSecureInstallApplication` (error 0xe8008015):
-    // the iOS profile doesn't list those keys in its Entitlements
+    // macOS-only entitlements; iOS apps don't carry them because the
+    // platform sandboxes everything by default. Claiming them in an
+    // iOS-signed binary triggers a profile-validation failure at
+    // `AMDeviceSecureInstallApplication` (error 0xe8008015): the
+    // iOS profile doesn't list those keys in its Entitlements
     // allow-list, so the binary's signed claim is rejected as "not
-    // granted by the profile". `_` silences the unused-binding
-    // lint for the appex-only branch we just removed.
-    let _ = is_appex;
+    // granted by the profile".
     if let Some(group) = app_group {
         keys.push_str("    <key>com.apple.security.application-groups</key>\n    <array>\n");
         let _ = writeln!(keys, "        <string>{group}</string>");
@@ -1182,9 +1175,9 @@ fn render_entitlements_plist(
     if let Some(team) = team_id_for_app_id {
         // Development builds need `get-task-allow` so lldb / `os.log`
         // public-string capture / Instruments can attach. Production
-        // (Apple Distribution) builds should NOT carry it; once we
-        // wire a `--release` path that signs with a Distribution
-        // identity, gate this on the identity kind.
+        // (Apple Distribution) builds must not carry it; a release
+        // path that signs with a Distribution identity needs to gate
+        // this on the identity kind before shipping.
         let _ = writeln!(keys, "    <key>application-identifier</key>");
         let _ = writeln!(keys, "    <string>{team}.{bundle_id}</string>");
         let _ = writeln!(keys, "    <key>com.apple.developer.team-identifier</key>");

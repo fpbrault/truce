@@ -378,9 +378,9 @@ mod tests {
             .run();
     }
 
-    /// `category = "midi"` must surface as `PluginCategory::NoteEffect`
-    /// - anything else turns off the MIDI decode path in `truce-lv2::run`
-    /// and the plugin silently ignores host MIDI.
+    /// `category = "midi"` must surface as `PluginCategory::NoteEffect`;
+    /// any other category turns off the host's MIDI decode path and
+    /// the plugin silently ignores host MIDI.
     #[test]
     fn category_is_note_effect() {
         use truce_core::info::PluginCategory;

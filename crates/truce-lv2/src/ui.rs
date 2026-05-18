@@ -21,16 +21,15 @@
 //!
 //! # Scope
 //!
-//! Milestone 1 supports knob/slider manipulation end-to-end.
+//! Knob/slider manipulation works end-to-end.
 //! `begin_edit`/`end_edit` gestures forward to the host's `ui:touch`
 //! feature when present (Ardour, Reaper Linux); hosts without it (jalv)
-//! simply collapse the gestures to no-ops. `get_state`/`set_state` are
-//! still no-ops. Widget out-parameter currently returns the host-supplied
-//! PARENT (pragmatic for Ardour/Jalv which accept it; stricter X11UI /
-//! `CocoaUI` hosts may want the actual child window / view - follow-up).
+//! collapse the gestures to no-ops. `get_state`/`set_state` are no-ops.
+//! The widget out-parameter returns the host-supplied PARENT, which
+//! Ardour/Jalv accept; stricter X11UI / `CocoaUI` hosts may want the
+//! actual child window / view instead.
 
-// LV2 atoms / sequences are 8-byte aligned by spec - see the same
-// allow on `crate::atom`.
+// LV2 atoms / sequences are 8-byte aligned by spec.
 #![allow(clippy::cast_ptr_alignment)]
 
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -328,9 +327,9 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         #[cfg(target_os = "windows")]
         fit_win32_parent_to_child(parent_ptr);
 
-        // Set widget out-param. Strict X11UI / CocoaUI hosts want the child
-        // window / view we created; pragmatic ones (Ardour, Jalv, Reaper)
-        // accept the parent. See the module comment for follow-up.
+        // Set widget out-param. Strict X11UI / CocoaUI hosts want the
+        // child window / view we created; pragmatic ones (Ardour,
+        // Jalv, Reaper) accept the parent.
         if !widget.is_null() {
             *widget = parent_ptr;
         }
@@ -527,8 +526,8 @@ struct UridMapFeature {
 ///
 /// Replaces three separate walks (`ui:parent`, `ui:resize`,
 /// `urid:map`) with a single sweep. Returns the resolved values in
-/// one struct so callers stop juggling three independent helpers
-/// - and so an early `ui:parent` miss can short-circuit before any
+/// one struct so callers stop juggling three independent helpers,
+/// and so an early `ui:parent` miss can short-circuit before any
 /// further work.
 struct ParsedFeatures {
     /// `ui:parent` - `NSView*` (Cocoa) or `xcb_window_t` (X11). `None`

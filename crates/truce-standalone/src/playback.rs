@@ -221,7 +221,7 @@ pub struct CaptureSink {
     blocked_at_least_once: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
     writer: Option<thread::JoinHandle<()>>,
-    /// Mirror of the spec for the diagnostic line on finalize.
+    /// Copy of the spec for the diagnostic line on finalize.
     spec: hound::WavSpec,
     path: std::path::PathBuf,
 }

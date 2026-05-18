@@ -152,9 +152,8 @@ pub(crate) fn build_format_dylibs(
         _ => {}
     }
 
-    // Build banner. Mirrors the per-format pre-loop log line each
-    // command used to emit; the shell-mode label gets the extra-feature
-    // list parenthesised (e.g. "Building CLAP (shell)...").
+    // Build banner. Shell-mode label gets the extra-feature list
+    // parenthesised (e.g. "Building CLAP (shell)...").
     if extra_features.is_empty() {
         crate::vprintln!("Building {}...", format.label());
     } else {

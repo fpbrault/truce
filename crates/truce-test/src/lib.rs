@@ -595,9 +595,9 @@ type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
 /// directory and no auto-derived filename; every test names its
 /// own reference.
 ///
-/// Lifecycle: `P::create()` → `init()` → optional `state_file` load
-/// → optional `set_param` shortcuts → optional `setup` closure →
-/// render. Mirrors [`PluginDriver`]'s ordering so the same builder
+/// Lifecycle: `P::create()` -> `init()` -> optional `state_file` load
+/// -> optional `set_param` shortcuts -> optional `setup` closure ->
+/// render. Matches [`PluginDriver`]'s ordering so the same builder
 /// vocabulary works for both audio and GUI tests.
 ///
 /// # Examples

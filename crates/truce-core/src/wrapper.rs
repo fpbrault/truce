@@ -1,10 +1,10 @@
 //! Helpers shared across format wrappers (CLAP, VST3, VST2, AU, AAX, LV2).
 //!
 //! Each wrapper still owns its format-specific descriptor types and
-//! callback tables - those don't unify cleanly. What unifies is the
-//! "boring" boundary glue: building `CStrings` from `ParamInfo` fields,
-//! picking the default bus layout, and resolving install-time name
-//! overrides (see also [`crate::info::resolve_name_override`]).
+//! callback tables; those don't unify cleanly. What unifies is the
+//! "boring" boundary glue: building `CStrings` from `ParamInfo`
+//! fields, picking the default bus layout, and resolving install-time
+//! name overrides.
 //!
 //! Each helper is a single small function so the wrappers stay
 //! greppable - the per-format vtable construction code reads as
@@ -55,14 +55,13 @@ impl ParamCStrings {
 ///
 /// **Note for `aumi` (MIDI processor) plugins:** the convention is
 /// `bus_layouts: [BusLayout::new()]`, which has zero input *and* zero
-/// output channels. This helper returns `Some((0, 0))` for that case
-/// - which is correct for AU (the AU shim's `channelCapabilities`
+/// output channels. This helper returns `Some((0, 0))` for that case,
+/// which is correct for AU (the AU shim's `channelCapabilities`
 /// returns `[0, 0]` and the host treats the plugin as MIDI-only) but
 /// **wrong for AAX**, which requires every plugin to advertise at
-/// least stereo audio I/O. AAX maps `(0, 0)` → `(2, 2)` (synthesizing
-/// a stereo passthrough) inside `truce-aax::register_aax` after this
-/// helper returns. Don't push that remap into this helper - only AAX
-/// needs it.
+/// least stereo audio I/O. AAX maps `(0, 0)` to `(2, 2)` (synthesizing
+/// a stereo passthrough) after this helper returns. Don't push that
+/// remap into this helper; only AAX needs it.
 ///
 /// `None` indicates a plugin-author bug: zero-bus plugins must return
 /// `vec![BusLayout::new()]` explicitly. Callers should log a

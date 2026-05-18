@@ -163,14 +163,13 @@ pub(crate) fn note_once(message: &str) {
 
 // --- Per-format directory resolution ----------------------------------
 //
-// One impl block per OS. Every site that previously hard-coded
-// `/Library/Audio/Plug-Ins/...` or `%COMMONPROGRAMFILES%\...` reads
-// these instead, so toggling `--user` / `--system` rewrites the
-// destination uniformly across formats.
+// One impl block per OS. Toggling `--user` / `--system` rewrites the
+// destination uniformly across formats because every install site
+// reads through these helpers rather than hard-coding the path.
 
 // Each of these unwraps a typed error from `crate::dirs`. Threading
-// the `Result` out through every `_dir` method (and 30+ callers) is
-// a separate refactor; for now the panic message is at least
+// the `Result` out through every `_dir` method (and 30+ callers)
+// would be a large refactor; the panic message is at least
 // consistent with the `?`-form helper that other commands use.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn home() -> PathBuf {

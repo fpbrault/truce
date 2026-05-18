@@ -1,30 +1,20 @@
-//! Build manifest - the contract between `cargo truce build` and
+//! Build manifest: the contract between `cargo truce build` and
 //! `cargo truce package`.
 //!
 //! `cargo truce build` writes `target/bundles/manifest.toml` recording
 //! every bundle it produced (plugin crate, format, filename) plus the
 //! build context (host triple, profile). `cargo truce package` reads
 //! this manifest to know what to stage; absence of the manifest, or
-//! mismatch with the package host, is a hard error.
-//!
-//! The manifest replaces an earlier implicit contract where the
-//! packager probed `target/bundles/<Plugin>.<format>` directly. That
-//! probe couldn't tell a missing build apart from a partial build, and
-//! produced empty-payload tarballs that passed every downstream check.
-//! The manifest makes the contract explicit: build declares what it
-//! produced, package validates against that declaration.
+//! mismatch with the package host, is a hard error. Probing the
+//! bundles directory directly can't tell a missing build apart from
+//! a partial build, so the explicit declaration is what guards
+//! against empty-payload tarballs.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Bumped on any incompatible schema change. Consumers reject manifests
 /// whose `schema_version` doesn't match this constant.
-///
-/// v2 (current): `host_triple` renamed to `target_triple`; the manifest
-///              now lives at `target/bundles/<triple>/manifest.toml`
-///              instead of `target/bundles/manifest.toml`, so
-///              cross-target builds can coexist on disk.
-/// v1: top-level `host_triple` + flat `target/bundles/manifest.toml`.
 pub const SCHEMA_VERSION: u32 = 2;
 
 const FILENAME: &str = "manifest.toml";

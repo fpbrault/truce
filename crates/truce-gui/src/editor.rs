@@ -57,12 +57,11 @@ pub struct BuiltinEditor<P: Params> {
     /// live value drifts from the last-painted one, we force a
     /// repaint even if the UI never received a direct edit.
     last_painted_values: Vec<f32>,
-    /// Live content-scale factor, shared with the baseview handler via
-    /// [`crate::platform::EditorScale`]. `set_scale_factor` (host)
-    /// writes the cell; the handler holds a clone, compares against
-    /// `last_applied_scale` each frame, and rebuilds the CPU pixmap +
-    /// reconfigures the wgpu surface when the value diverges. Single
-    /// source of truth shared with egui / iced / slint / gpu backends.
+    /// Live content-scale factor (a [`crate::platform::EditorScale`]).
+    /// `set_scale_factor` (host) writes the cell; the baseview
+    /// handler holds a clone, compares against `last_applied_scale`
+    /// each frame, and rebuilds the CPU pixmap + reconfigures the
+    /// wgpu surface when the value diverges.
     scale: EditorScale,
 }
 
@@ -500,10 +499,10 @@ impl BlitBackend {
 
 /// Shared ownership of the blit backend between `BuiltinEditor` and the
 /// `BuiltinWindowHandler` baseview hands us. Sharing lets the editor
-/// drop the wgpu surface *before* it asks baseview to close the `NSView`
-/// - important on AAX where interleaving Metal teardown with baseview's
-/// close sequence inside Pro Tools' outer autorelease pool has been
-/// seen to leave stale refs in DFW container views.
+/// drop the wgpu surface *before* it asks baseview to close the
+/// `NSView`. Important on AAX where interleaving Metal teardown with
+/// baseview's close sequence inside Pro Tools' outer autorelease pool
+/// leaves stale refs in DFW container views.
 type SharedBackend = Arc<Mutex<Option<BlitBackend>>>;
 
 struct BuiltinWindowHandler<P: Params> {
@@ -836,9 +835,8 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     fn set_scale_factor(&mut self, factor: f64) {
         // Write to the shared cell; the baseview handler picks up the
         // change on its next frame and rebuilds the CPU pixmap +
-        // reconfigures the wgpu surface. Replaces the default no-op
-        // (host scale was previously dropped on the floor for the CPU
-        // path, the only backend not yet on `EditorScale`).
+        // reconfigures the wgpu surface. The trait's default no-op
+        // would silently swallow host scale changes here.
         self.scale.set(factor);
     }
 

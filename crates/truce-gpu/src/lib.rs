@@ -1,18 +1,16 @@
 //! GPU rendering backend for truce plugins.
 //!
-//! Uses wgpu (Metal/DX12/Vulkan) with lyon tessellation and fontdue
-//! glyph atlas. Implements `truce_gui::RenderBackend` so widgets
-//! render identically to the CPU path.
+//! Uses wgpu (Metal/DX12 backends per the workspace's feature pin) with
+//! lyon tessellation and a fontdue glyph atlas. Implements
+//! `truce_gui::RenderBackend` so widgets render identically to the CPU
+//! path.
 //!
 //! Platform windowing is provided by baseview.
 
 /// Crate-wide debug-print macro for GPU init / render hot-reload paths.
 /// Compiles to nothing unless the `hot-debug` feature is enabled.
-/// Defined at crate root so any module under `truce_gpu::*` can reach it
-/// without re-importing - `editor.rs` was the only initial caller, but
-/// future modules (e.g. a hypothetical `surface.rs`) shouldn't have to
-/// duplicate the definition. See `truce_loader::hot_debug` for the
-/// sibling copy used by the hot-reload shell.
+/// Defined at crate root so any module under `truce_gpu::*` can reach
+/// it without re-importing.
 #[macro_export]
 macro_rules! hot_debug {
     ($($arg:tt)*) => {

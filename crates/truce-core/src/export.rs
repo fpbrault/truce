@@ -68,10 +68,9 @@ pub trait PluginExport: Plugin + Sized {
 
     /// Static "does this plugin have an editor" predicate. AAX's
     /// `Describe` path needs to know this at registration time
-    /// (`has_editor` field on the static descriptor); the historical
-    /// way to learn it was `Self::create().editor().is_some()`, which
-    /// - paired with [`Self::param_infos_static`] - was the second
-    /// reason every format's registration walk constructed a plugin.
+    /// (`has_editor` field on the static descriptor). Paired with
+    /// [`Self::param_infos_static`], this is the second reason every
+    /// format's registration walk constructed a plugin.
     ///
     /// Default impl falls back to that runtime path so unannotated
     /// plugins keep working. Plugins that want to avoid the

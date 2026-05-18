@@ -1,5 +1,4 @@
-//! C ABI types for the Rust ↔ C++ VST3 shim boundary.
-//! Mirrors the AU wrapper's ffi.rs pattern.
+//! C ABI types for the Rust / C++ VST3 shim boundary.
 
 use std::ffi::c_void;
 use std::os::raw::c_char;
@@ -55,8 +54,7 @@ pub struct Vst3MidiEvent {
     pub data2: u8,
     // Carries the 8-bit VST3 noteId for note-expression events
     // (status 0xF0); zero on regular MIDI events where the byte just
-    // pads the struct to 4-byte alignment. Mirrors `note_id` in
-    // `vst3_shim.cpp`.
+    // pads the struct to 4-byte alignment.
     pub note_id: u8,
 }
 

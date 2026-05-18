@@ -26,14 +26,13 @@ struct GlyphCache {
     glyphs: HashMap<(char, u32), CachedGlyph>,
 }
 
-// Per-thread glyph cache. The previous global `Mutex<Option<GlyphCache>>`
-// took a lock once per draw_text call, which scaled fine for single-host
-// use but added avoidable cross-thread contention under multi-instance
-// hosts that drive multiple plugin UIs from different threads. Each
-// thread now lazy-inits its own cache; the font bytes are `'static`
-// (re-exported from `truce-font`) so the per-thread duplication only
-// covers parsed font tables and rasterized glyphs - small and bounded
-// (one per (char, size) the thread has actually drawn).
+// Per-thread glyph cache. A single shared `Mutex<Option<GlyphCache>>`
+// would force every `draw_text` call through a lock, contending
+// across multi-instance hosts that drive plugin UIs from different
+// threads. Each thread lazy-inits its own cache instead; the font
+// bytes are `'static` (re-exported from `truce-font`) so the
+// per-thread duplication only covers parsed font tables and
+// rasterized glyphs (one per `(char, size)` the thread has drawn).
 thread_local! {
     static CACHE: RefCell<Option<GlyphCache>> = const { RefCell::new(None) };
 }

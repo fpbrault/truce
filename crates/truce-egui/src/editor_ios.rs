@@ -1,21 +1,15 @@
-//! egui editor on iOS - `CAMetalLayer`-backed `UIView` running
+//! egui editor on iOS: `CAMetalLayer`-backed `UIView` running
 //! egui-wgpu, driven by `CADisplayLink`, with `UITouch` events
 //! translated into `egui::RawInput`.
 //!
-//! Shape mirrors `truce-gui::editor_ios` but with three differences:
-//!
-//! - The runtime `UIView` subclass overrides `+layerClass` to return
-//!   `CAMetalLayer` (so the backing layer is a Metal layer wgpu can
-//!   draw into directly). truce-gui's iOS editor uses the default
-//!   `CALayer` and blits a tiny-skia pixmap via `CGImage`; egui
-//!   needs the GPU path.
-//! - Per-frame work runs `egui::Context::run` with a `RawInput`
-//!   built from pending touch events + screen size, then hands the
-//!   tessellated primitives to `EguiRenderer::render` which presents
-//!   the next surface texture.
-//! - Touch handlers push `egui::Event::PointerMoved` /
-//!   `PointerButton{pressed: bool}` into a shared queue the next
-//!   tick drains.
+//! The runtime `UIView` subclass overrides `+layerClass` to return
+//! `CAMetalLayer` so the backing layer is a Metal layer wgpu can
+//! draw into directly. Per-frame work runs `egui::Context::run` with
+//! a `RawInput` built from pending touch events + screen size, then
+//! hands the tessellated primitives to `EguiRenderer::render` which
+//! presents the next surface texture. Touch handlers push
+//! `egui::Event::PointerMoved` / `PointerButton{pressed: bool}` into
+//! a shared queue the next tick drains.
 
 #![cfg(target_os = "ios")]
 
@@ -130,10 +124,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // actual scale. `main_screen_scale()` goes through
         // `UIScreen.mainScreen.scale` and returns 3.0 on iPhone
         // Retina regardless of the view hierarchy state. Without
-        // this, egui paints into a 1× wgpu surface that
-        // CoreAnimation upscales 3× - visibly grainy edges.
-        // Mirrors the built-in iOS editor's `EditorScale::new(...)`
-        // construction.
+        // this, egui paints into a 1x wgpu surface that
+        // CoreAnimation upscales 3x with visibly grainy edges.
         let scale = truce_gui::platform::main_screen_scale();
         // Physical-pixel math bounded by editor size × backing
         // scale (max ~4000 px in practice); the cast loss is
@@ -182,11 +174,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         let egui_ctx = egui::Context::default();
         // Pin egui's logical→physical scale to the device backing
-        // scale (3× on Retina iPhones). Without this, egui paints
-        // at 1× pixels-per-point into a 3×-sized wgpu surface and
-        // Core Animation upscales the result - visible as grainy
-        // edges on every widget. Mirrors the macOS editor's
-        // backingScaleFactor application.
+        // scale (3x on Retina iPhones). Without this, egui paints
+        // at 1x pixels-per-point into a 3x-sized wgpu surface and
+        // Core Animation upscales the result, visible as grainy
+        // edges on every widget.
         egui_ctx.set_pixels_per_point(scalef);
         if let Some(v) = self.visuals.clone() {
             egui_ctx.set_visuals(v);
@@ -505,20 +496,12 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         .renderer
         .render(&output.textures_delta, &clipped, inner.scale);
     // Drive the iOS soft keyboard from egui's focus state. egui
-    // reports `wants_keyboard_input()` while a `TextEdit` (or any
-    // focus-grabbing widget) is the active receiver; we mirror
-    // that into `becomeFirstResponder` / `resignFirstResponder` on
-    // the host UIView. UIKit only presents the keyboard for the
-    // current first responder, so without this the typing
-    // capabilities we just added (`insertText:`, `deleteBackward`)
-    // would never receive callbacks.
-    // Drive the iOS soft keyboard from egui's focus state. egui
     // sets `wants_keyboard_input()` while a `TextEdit` (or other
     // focus-grabbing widget) is the active receiver; we mirror
     // that into `becomeFirstResponder` / `resignFirstResponder`
     // on the host UIView. UIKit only presents the keyboard for
     // the current first responder *and* only if that responder
-    // conforms to `UIKeyInput` - the class declares both
+    // conforms to `UIKeyInput`; the class declares both
     // `UIKeyInput` + `UITextInputTraits` at class-build time
     // (via `add_protocol` in `install_editor_view`) so UIKit
     // accepts our `becomeFirstResponder`. Tapping a non-text

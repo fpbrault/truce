@@ -123,8 +123,8 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         // Apply parameter change events to the shell's params.
-        // ParamChange values from format wrappers are PLAIN (already denormalized).
-        // Using set_normalized here would double-denormalize. (Regression: see param_sync_test)
+        // ParamChange values from format wrappers are PLAIN (already
+        // denormalized). `set_normalized` here would double-denormalize.
         for e in events.iter() {
             if let EventBody::ParamChange { id, value } = &e.body {
                 self.params.set_plain(*id, *value);
@@ -175,8 +175,9 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         if let Some(editor) = self.logic.custom_editor() {
             return Some(editor);
         }
-        // iOS's `BuiltinEditor` already owns its UIView + (in phase
-        // 2) the CAMetalLayer wgpu surface; no `GpuEditor` wrapper.
+        // iOS's `BuiltinEditor` already owns its UIView and the
+        // CAMetalLayer-backed wgpu surface, so no `GpuEditor` wrapper
+        // is needed on that platform.
         #[cfg(target_os = "ios")]
         {
             self.try_builtin_editor()
@@ -259,7 +260,8 @@ macro_rules! export_static {
                 // `PluginLogicCore<Sample>` is the wrapper-facing
                 // trait; the user impl'd one of the leaf traits
                 // (`PluginLogic` / `PluginLogic64`), and the blanket
-                // bridge in `truce-gui` made them also satisfy
+                // bridge defined alongside those traits in
+                // `truce-plugin` makes them also satisfy
                 // `PluginLogicCore<Sample>` automatically. Sample
                 // resolves through the prelude alias in scope at the
                 // macro call site.

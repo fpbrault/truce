@@ -440,9 +440,8 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         })
         .map_err(|e| format!("could not spawn output worker: {e}"))?;
 
-    // Wait for the worker to confirm initial open, so any error
-    // propagates back to start_audio's caller (matches the
-    // pre-refactor synchronous behavior).
+    // Wait for the worker to confirm initial open so any error
+    // propagates back to `start_audio`'s caller synchronously.
     match open_result_rx.recv() {
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(e.into()),
@@ -752,7 +751,7 @@ fn open_output_stream<P: PluginExport>(
         format => {
             return Err(format!(
                 "audio output format {format:?} is not supported \
-                 (truce standalone currently only handles f32)"
+                 (truce standalone handles f32 only)"
             ));
         }
     };
@@ -1087,11 +1086,11 @@ fn audio_callback<P: PluginExport>(
     }
     // Build raw-pointer arrays that mirror `input_bufs` / `channel_bufs`
     // and feed them through the shared `RawBufferScratch::build` helper.
-    // Standalone never aliases input and output buffers (`input_bufs` is
-    // a copy of `channel_bufs` for effects, plain empty for instruments),
-    // so the alias-detection scratch path inside `build` is dormant - but
-    // routing through the same helper keeps every format wrapper on a
-    // single audited unsafe path.
+    // Standalone never aliases input and output buffers (`input_bufs`
+    // is a copy of `channel_bufs` for effects, plain empty for
+    // instruments), so the alias-detection scratch path inside
+    // `build` is dormant; routing through the same helper keeps
+    // every host on a single unsafe path.
     ptr_scratch.inputs.clear();
     ptr_scratch.outputs.clear();
     for buf in input_bufs.iter() {

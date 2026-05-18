@@ -33,7 +33,7 @@ pub mod __reexport {
     }
 }
 
-// Single implementation module; the three preludes are wafer-thin
+// Single implementation module; the four preludes are wafer-thin
 // alias wrappers that swap the `FloatParamRead*` trait + `Sample`
 // type alias.
 mod prelude_impl {
@@ -121,7 +121,7 @@ define_prelude! {
     /// `f32`-flavoured prelude. `param.read()` resolves to `f32`
     /// via [`FloatParamReadF32`](truce_params::FloatParamReadF32);
     /// the audio buffer is `f32` (the host wire format for nearly
-    /// every plugin format). Mirrors fundsp's `prelude32`.
+    /// every plugin format).
     prelude32, sample = f32, leaf = PluginLogic,
     float_read = FloatParamReadF32, ctx_read = PluginContextReadF32
 }

@@ -225,10 +225,11 @@ struct AaxInstance<P: PluginExport> {
     /// thread) and `_load_state` (main thread). `_save_state` snapshots
     /// it before reading params and re-checks after serialization; if
     /// the counter advanced during the read the result isn't cached
-    /// (it would be an inconsistent snapshot of the audio state). The
-    /// previous `AtomicBool`-based dirty flag had a race where
-    /// `swap(false)` could clear a bit that the audio thread had just
-    /// re-set, leaving the cache one update behind.
+    /// (it would be an inconsistent snapshot of the audio state). A
+    /// boolean dirty flag instead of a counter would let
+    /// `swap(false)` clear a bit that the audio thread had just
+    /// re-set, leaving the cache one update behind, so the counter
+    /// is required for correctness.
     state_revision: AtomicU64,
     /// Bounded SPSC handoff for state loads. Host (`_load_state`)
     /// and editor (`set_state` callback) deserialize on their thread
@@ -664,12 +665,12 @@ macro_rules! export_aax {
 //
 // `&*` vs `&mut *` on the `ctx` cast below: the choice tracks what each
 // callback actually mutates on the `AaxInstance`. Read-only or
-// interior-mutability-only paths (`_get_param`, `_set_param` - which
+// interior-mutability-only paths (`_get_param`, `_set_param` which
 // goes through atomics in `Params`, `_format_param`, `_save_state`)
-// take `&*`; paths that write `inst.event_list` / `inst.sample_rate` /
-// `inst.editor` take `&mut *`. The sequential-per-instance guarantee
-// from the AAX SDK means a single mutable reference is always exclusive
-// when we take one. Mirrors the pattern in `truce-au` and `truce-vst3`.
+// take `&*`; paths that write `inst.event_list` / `inst.sample_rate`
+// / `inst.editor` take `&mut *`. The sequential-per-instance
+// guarantee from the AAX SDK means a single mutable reference is
+// always exclusive when we take one.
 // ---------------------------------------------------------------------------
 
 pub unsafe fn _get_descriptor(out: *mut TruceAaxDescriptor) {
@@ -921,10 +922,9 @@ pub unsafe fn _process<P: PluginExport>(
 /// Transport, `SysEx`, etc.). The AAX SDK's
 /// `AAX_IMIDINode::PostMIDIPacket` doc enumerates the supported set:
 /// `NoteOn` / `NoteOff`, Pitch bend, Polyphonic key pressure, Program
-/// change, Channel pressure, Bank-select-CC#0. Mirrors
-/// `truce_vst2::try_encode_vst2_midi` so the two formats stay in sync.
+/// change, Channel pressure, Bank-select-CC#0.
 ///
-/// `SysEx` is **not** dropped here - it goes through a separate
+/// `SysEx` is **not** dropped here; it goes through a separate
 /// multi-packet path the C++ template assembles / fragments
 /// around `0xF0` ... `0xF7` framing
 /// (see `_push_sysex_input`, `_output_sysex_count`,
@@ -1121,9 +1121,8 @@ unsafe fn save_state_body<P: PluginExport>(
 ) -> u32 {
     // Allocator pin: AAX uses the Rust global allocator on both the
     // save (`finalize_blob` boxes a `Vec`) and free (`_free_state`
-    // reconstitutes a `Vec` via `Vec::from_raw_parts`) paths. VST3 / AU
-    // use libc malloc/free instead; do not cross wires when refactoring
-    // `_save_state` paths together.
+    // reconstitutes a `Vec` via `Vec::from_raw_parts`) paths. Mixing
+    // the two sides through different allocators is UB.
 
     /// Cap on retries when the audio thread keeps bumping the
     /// revision mid-walk. A handful of attempts covers the common
@@ -1145,14 +1144,9 @@ unsafe fn save_state_body<P: PluginExport>(
     //      didn't advance, the serialized blob is consistent with
     //      `revision_before` and we cache it. If it did advance, an
     //      audio-thread `_set_param` ran during our read and the
-    //      blob may not represent any single moment in time -
+    //      blob may not represent any single moment in time;
     //      return it (best-effort) but don't cache, so the next
     //      call re-serializes.
-    //
-    // The previous `AtomicBool::swap(false)` design had a window
-    // where the audio thread could re-set the flag between the
-    // swap and the read, then have its update overwritten when we
-    // wrote the cache; this counter scheme detects that case.
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
         let (ids, values) = inst.params_arc.collect_values();
         // `plugin.save_state()` reads through the plugin reference: a
@@ -1380,7 +1374,6 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     {
                         // Apply params synchronously so the editor
                         // sees the restore on its own thread.
-                        // Mirrors `_load_state`.
                         state::apply_params(&*params_for_state, &deserialized);
                         let _ = pending_state_for_set.force_push(deserialized);
                     }
@@ -1440,12 +1433,9 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
 /// **Contract:** `data` must point to memory allocated via the Rust
 /// global allocator with `cap == len`. `_save_state` honors this by
 /// going through `Vec::into_boxed_slice` (which trims capacity to len)
-/// then `mem::forget`. Don't change either side to use `libc::malloc`
-/// / `Vec::into_raw_parts` / a different cap-tracking strategy
-/// without updating the other - `Vec::from_raw_parts` requires the
-/// allocator and `cap` to match exactly. AAX never calls
-/// `_free_state` with a non-Rust pointer today; the comment exists to
-/// flag that drift if VST3's `libc_malloc` shape ever migrates here.
+/// then `mem::forget`. `Vec::from_raw_parts` requires the allocator
+/// and `cap` to match exactly, so any change to the allocation
+/// strategy on the save side must update this free side in lock-step.
 pub unsafe fn _free_state(data: *mut u8, len: u32) {
     if !data.is_null() && len > 0 {
         // `finalize_blob` produced this pointer via

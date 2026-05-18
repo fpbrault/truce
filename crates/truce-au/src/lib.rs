@@ -338,9 +338,9 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     }
                     _ => {
                         // mt 0x0 (utility), 0x1 (system real-time),
-                        // 0x2 (MIDI 1 CV - already arrived via the
+                        // 0x2 (MIDI 1 CV, already arrived via the
                         // legacy `events` slice above), 0xD / 0xF
-                        // (flex / stream) - out of scope today.
+                        // (flex / stream): not decoded.
                     }
                 }
             }
@@ -499,9 +499,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         //
         // Allocator pin: this wrapper allocates with libc `malloc` and
         // the AU shim frees with libc `free`. The Rust global allocator
-        // must not appear on either side. (VST2 uses the Rust global
-        // allocator for both save + free; do not cross wires when
-        // refactoring `_save_state` paths together.)
+        // must not appear on either side; mixing allocators is UB.
         let extra = inst.plugin.save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, &extra);
 
@@ -567,7 +565,7 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
 
 /// Map a truce `Event` body to a 3-byte AU MIDI packet. Returns
 /// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
-/// Transport, etc.). Mirrors the VST2/VST3 encoders.
+/// Transport, etc.).
 fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
     let (status, data1, data2) = match &event.body {
         EventBody::NoteOn {
@@ -703,13 +701,13 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         if ctx.is_null() {
             return;
         }
-        // Lazily install the editor here too - some AU validators
+        // Lazily install the editor here too. Some AU validators
         // (`auval`, Logic Pro's plugin validator) call `..._get_size`
         // before `..._has_editor`, which is the canonical install
-        // site. Without this, those validators saw `inst.editor ==
-        // None` and silently received a 0×0 view, which shows up as
-        // "plugin reports invalid size" in their reports. Mirrors
-        // `cb_gui_has_editor`'s `&mut *` install.
+        // site. Without the lazy install here those validators see
+        // `inst.editor == None` and silently receive a 0x0 view,
+        // which shows up as "plugin reports invalid size" in their
+        // reports.
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
             inst.editor = inst.plugin.editor();
@@ -834,7 +832,6 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         {
                             // Apply params synchronously so the editor
                             // sees the restore on its own thread.
-                            // Mirrors `cb_state_load`.
                             state::apply_params(&*params_for_state, &deserialized);
                             let _ = pending_state_for_set.force_push(deserialized);
                         }
@@ -868,11 +865,10 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
         // `[NSTimer invalidate]` (which baseview's drop chain calls
         // via `WindowHandle::drop`) re-enters that pool's pop
         // sequence, the host crashes inside `objc_release` on a
-        // freed `NSAutoreleasePool*` (same root cause as the AAX
-        // incident in `aax_editor_crash` memory note). The editor's
-        // `close()` has already released the NSView contents and
-        // Metal resources; the lightweight Rust struct that survives
-        // is reopened in-place by the next `gui_open` call.
+        // freed `NSAutoreleasePool*`. The editor's `close()` has
+        // already released the NSView contents and Metal resources;
+        // the lightweight Rust struct that survives is reopened
+        // in-place by the next `gui_open` call.
     }
 }
 
@@ -881,9 +877,9 @@ unsafe extern "C" {
     fn free(ptr: *mut std::ffi::c_void);
 }
 
-// AU v2 host-side automation notifiers live in `au_v2_shim.c`,
-// which only compiles on macOS. iOS doesn't have AU v2 at all -
-// AU v3 host notifies via the parameter tree directly.
+// AU v2 host-side automation notifiers: gated to macOS because v2 is
+// macOS-only. iOS uses AU v3 exclusively, where host notification
+// goes through the parameter tree directly.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
@@ -1037,8 +1033,10 @@ macro_rules! export_au {
                 ::truce_au::register_au::<$plugin_type>();
             }
 
-            // AU v2 factory - delegates to au_v2_shim.c, which the
-            // build.rs always compiles into the shim static lib.
+            // AU v2 factory: delegates to au_v2_shim.c. The whole
+            // `_au_entry` module is gated on `target_os = "macos"`
+            // because v2 only exists on macOS, matching `build.rs`'s
+            // `is_macos` gate on compiling au_v2_shim.c.
             unsafe extern "C" {
                 fn truce_au_v2_factory_bridge(
                     desc: *const ::std::ffi::c_void,

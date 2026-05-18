@@ -93,12 +93,11 @@ pub struct EguiEditor<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
     font: Option<&'static [u8]>,
-    /// Live content-scale factor. The editor writes here from
-    /// `set_scale_factor`; the baseview handler holds a clone and
-    /// applies surface/renderer reconfiguration on the next frame
-    /// when the value diverges from its last-applied snapshot. Single
-    /// source of truth shared with iced / slint backends - see
-    /// [`truce_gui::EditorScale`].
+    /// Live content-scale factor (a [`truce_gui::EditorScale`]). The
+    /// editor writes here from `set_scale_factor`; the baseview
+    /// handler holds a clone and applies surface/renderer
+    /// reconfiguration on the next frame when the value diverges
+    /// from its last-applied snapshot.
     scale: EditorScale,
     /// Active baseview window handle - exists only while editor is open.
     window: Option<baseview::WindowHandle>,

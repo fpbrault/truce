@@ -29,12 +29,10 @@ pub fn home_dir() -> Option<PathBuf> {
 
 /// Hard-required form of [`home_dir`]. Returns a typed error so the
 /// surrounding command can print one line ("can't determine home
-/// directory: set HOME / USERPROFILE") instead of panicking.
-///
-/// `install_scope` calls this via `.expect()` for its `_dir`
-/// helpers (those signatures predate the Result-form and threading
-/// the error through every call site is a bigger refactor than the
-/// helper deserves). New callers should prefer `?`-propagation.
+/// directory: set HOME / USERPROFILE") instead of panicking. New
+/// callers should prefer `?`-propagation; `install_scope` calls this
+/// via `.expect()` because routing the error through every `_dir`
+/// helper would be a large refactor.
 ///
 /// Windows callers go through `require_local_appdata` / `require_appdata`
 /// instead; gate accordingly so the function isn't dead-code on Windows.

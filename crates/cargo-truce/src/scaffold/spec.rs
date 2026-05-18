@@ -25,8 +25,8 @@ pub enum DepForm {
     Workspace,
 }
 
-/// Per-feature opt-in flags. Booleans for now; if we ever grow a
-/// `--minimal` / `--no-vst3` axis it lands here as a new bool.
+/// Per-feature opt-in flags. One boolean per feature so adding a new
+/// flag is a straightforward struct extension.
 #[derive(Clone, Copy)]
 pub struct FeatureSet {
     pub standalone: bool,
@@ -40,9 +40,9 @@ pub struct VendorInfo {
 }
 
 impl VendorInfo {
-    /// Single-mode placeholder - the user is expected to edit
-    /// `truce.toml` after scaffolding. Kept identical to the
-    /// pre-refactor placeholder so existing test fixtures stand.
+    /// Single-mode placeholder; the user is expected to edit
+    /// `truce.toml` after scaffolding. Changing these strings will
+    /// invalidate the scaffold golden fixtures.
     #[must_use]
     pub fn placeholder() -> Self {
         Self {
@@ -52,8 +52,7 @@ impl VendorInfo {
     }
 
     /// Derive a vendor identity from a workspace name when the
-    /// user didn't pass `--vendor` / `--vendor-id`. Mirrors the
-    /// pre-refactor behavior of `scaffold_workspace`.
+    /// user didn't pass `--vendor` / `--vendor-id`.
     #[must_use]
     pub fn derive_from_workspace_name(workspace_name: &str) -> Self {
         Self {

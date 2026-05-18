@@ -2,15 +2,12 @@
 //!
 //! **Pedagogical variant.** This crate rebuilds the fundsp graph
 //! *inline on the audio thread* whenever the Time parameter crosses
-//! the hysteresis threshold. That's a real-time-safety violation -
-//! `Box::new` + `graph.allocate()` can block on the system allocator
-//! - and is shown here only because it makes the integration shape
-//! obvious in one file.
-//!
-//! For the production pattern (rebuild on a dedicated worker thread
-//! with a lock-free swap into `process()`), see the sibling crate
-//! `truce-example-fundsp-reverb-worker`. The two crates are
-//! otherwise identical in topology, params, and signal flow.
+//! the hysteresis threshold. That's a real-time-safety violation
+//! (`Box::new` + `graph.allocate()` can block on the system allocator)
+//! and is shown here only because it makes the integration shape
+//! obvious in one file. The production pattern rebuilds the graph
+//! on a dedicated worker thread and swaps it in via a lock-free
+//! queue.
 //!
 //! ```text
 //!     in (L,R) ──► high-pass (low cut) ──► low-pass (high cut) ──► reverb_stereo ──┐
@@ -178,8 +175,7 @@ impl PluginLogic for FundspReverbSimple {
             // This is the rt-safety violation called out at the top
             // of the file: the rebuild path allocates on the audio
             // thread. Acceptable for a teaching example; not for
-            // shipping. The worker-pattern sibling crate keeps
-            // process() allocation-free.
+            // shipping.
             self.rebuild_graph(self.last_built_sr, time_s);
             self.last_built_time_s = time_s;
         }

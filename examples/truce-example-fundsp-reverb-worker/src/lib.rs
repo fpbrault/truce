@@ -6,10 +6,6 @@
 //! `Box::new`, `graph.allocate()`, or drops a graph. This is the
 //! production pattern.
 //!
-//! For the simpler inline-rebuild version (rt-unsafe but easier to
-//! read end-to-end), see the sibling crate
-//! `truce-example-fundsp-reverb-simple`.
-//!
 //! ```text
 //!     in (L,R) ──► high-pass (low cut) ──► low-pass (high cut) ──► reverb_stereo ──┐
 //!                                                                                  │

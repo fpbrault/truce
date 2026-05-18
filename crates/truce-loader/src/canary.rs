@@ -251,26 +251,25 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
 
 /// Verify a probe plugin returns the expected values.
 ///
-/// Coverage notes - methods exercised, in source-declaration order:
+/// Coverage notes: methods exercised, in source-declaration order:
 /// `latency`, `tail`, `layout`, `hit_test`, `save_state` (default
 /// path), `uses_custom_render`, `custom_editor`, then `load_state` +
-/// `save_state` (echo path). 8 of 11 trait methods covered. The three
-/// not exercised - `reset`, `process`, `render` - would require
-/// constructing an `AudioBuffer` / `RenderBackend` mock, which is
-/// heavyweight enough to outweigh the marginal vtable-reorder
-/// detection benefit. (Trait-object dispatch goes through a vtable
-/// whose slot order is rustc-internal and not stable; we don't depend
-/// on a particular layout - the goal here is just to call enough of
-/// the surface that any ABI-affecting reshuffle is likely to land on
-/// a method we *do* exercise.)
+/// `save_state` (echo path). 8 of `PluginLogicCore`'s 12 instance
+/// methods covered. The four not exercised (`reset`, `process`,
+/// `render`, `state_changed`) would require constructing an
+/// `AudioBuffer` / `RenderBackend` mock, which is heavyweight enough
+/// to outweigh the marginal vtable-reorder detection benefit.
+/// (Trait-object dispatch goes through a vtable whose slot order is
+/// rustc-internal and not stable; we don't depend on a particular
+/// layout. The goal here is just to call enough of the surface that
+/// any ABI-affecting reshuffle is likely to land on a method we *do*
+/// exercise.)
 ///
 /// # Errors
 ///
 /// Returns `Err(ProbeError)` on the first canary value that failed
 /// to round-trip. Each variant pins which trait method drifted so
-/// callers can pattern-match (today only the in-crate loader logs
-/// the `Display`, but a future ABI-divergence dashboard could
-/// group failures by variant).
+/// callers can pattern-match.
 #[cfg(feature = "shell")]
 pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogicCore<S>) -> Result<(), ProbeError> {
     if probe.latency() != 0xAAAA {

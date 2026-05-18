@@ -13,10 +13,9 @@ use truce_params::Params;
 /// callers should go through the `Editor::screenshot()` trait.
 ///
 /// Returns `None` when no wgpu adapter is available (CI runners without
-/// a GPU, headless VMs, container environments). Mirrors
-/// `WgpuBackend::headless` in `truce-gpu`, so all three GPU-backed
-/// screenshot paths funnel adapter-acquisition failures through `None`
-/// rather than mixing panics with optional returns.
+/// a GPU, headless VMs, container environments). Lets the caller fall
+/// back to a CPU path or skip the screenshot assertion rather than
+/// panicking.
 // Physical-pixel dimensions stay below `u32::MAX` after the
 // `pixels_per_point` multiplication (max ~16384 logical × 4 = 65536).
 #[allow(

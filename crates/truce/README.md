@@ -11,14 +11,12 @@ and `plugin_info!()`), giving you a single import path for everything.
 
 ## Key re-exports
 
-- `Plugin`, `PluginExport`, `AudioBuffer`, `Editor` -- from truce-core
-- `FloatParam`, `IntParam`, `BoolParam`, `EnumParam`, `Smoother` -- from truce-params
-- `FloatParamReadF32` / `FloatParamReadF64` extension traits — bring `param.read()` into scope at the prelude's precision
-- `#[derive(Params)]`, `#[derive(ParamEnum)]`, `#[derive(State)]`, `plugin_info!()` -- from truce-derive
-- `PluginLogic` -- from truce-plugin (the user-facing leaf trait — `PluginLogic` for `f32`, `PluginLogic64` for `f64`; the prelude aliases the right one as `PluginLogic`)
-- `export_plugin!`, `export_static!`, `HotShell` -- from truce-loader
-- The `truce::plugin!` macro -- generates all the format-export glue from
-  one declaration
+- `Plugin`, `PluginExport`, `AudioBuffer`, `Editor` from truce-core
+- `FloatParam`, `IntParam`, `BoolParam`, `EnumParam`, `Smoother` from truce-params
+- `FloatParamReadF32` / `FloatParamReadF64` extension traits, bringing `param.read()` into scope at the prelude's precision
+- `#[derive(Params)]`, `#[derive(ParamEnum)]`, `#[derive(State)]` from truce-derive (at the crate root); `plugin_info!()` is available via the preludes
+- `PluginLogic` from truce-plugin (the user-facing leaf trait. `PluginLogic` for `f32`, `PluginLogic64` for `f64`; the prelude aliases the right one as `PluginLogic`)
+- The `truce::plugin!` macro generates all the format-export glue from one declaration
 
 ## Preludes
 

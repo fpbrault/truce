@@ -418,8 +418,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let clap_name = format!("{}.clap", p.name);
                 let user_path = InstallScope::User.clap_dir().join(&clap_name);
                 let system_path = InstallScope::System.clap_dir().join(&clap_name);
-                // Prefer the user-scope bundle (today's default); fall
-                // through to system-scope if the user installed there.
+                // Prefer the user-scope bundle (the default install
+                // location); fall through to system-scope if the
+                // user installed there instead.
                 let installed = if user_path.exists() {
                     user_path.clone()
                 } else {
@@ -433,12 +434,11 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 
                 // CLAP plugin shape is per-platform:
                 //   macOS: a `.clap` *bundle* directory with a binary
-                //          at `Contents/MacOS/<name>`. Current truce
-                //          installs lay this out directly; the
-                //          scratch-bundle branch below is a fallback
-                //          for legacy flat installs from older truce
-                //          releases (pre-bundle layout) so validate
-                //          keeps working until they're reinstalled.
+                //          at `Contents/MacOS/<name>`. The scratch-
+                //          bundle branch below is a fallback for
+                //          flat-file `.clap` installs that some
+                //          third-party tools still produce; truce's
+                //          own installer writes the bundle layout.
                 //   Linux:   a `.so` renamed `.clap`. dlopen-loadable
                 //          directly - no bundle.
                 //   Windows: a `.dll` renamed `.clap`. LoadLibrary-

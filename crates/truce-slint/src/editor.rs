@@ -503,9 +503,9 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
 
     fn set_scale_factor(&mut self, factor: f64) {
         // Write to the shared cell; the baseview handler picks up the
-        // change on its next frame and reconfigures the slint window /
-        // wgpu surface / blit pipeline. Replaces the default no-op
-        // (host scale was previously dropped on the floor for slint).
+        // change on its next frame and reconfigures the slint window
+        // / wgpu surface / blit pipeline. The trait's default no-op
+        // would silently swallow host scale changes here.
         self.scale.set(factor);
     }
 

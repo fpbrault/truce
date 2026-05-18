@@ -50,10 +50,10 @@ impl<'a> ProcessContext<'a> {
     /// Returns `None` when no params callback is wired up (e.g. when a
     /// plugin runs under the bare test driver without a `with_params`
     /// closure). Callers that always run inside a real format wrapper
-    /// can `.unwrap_or_default()`. The previous always-`0.0` return
-    /// silently masked test-harness misconfiguration as "this param
-    /// happens to be at zero", which is indistinguishable from the
-    /// host actually setting it to zero.
+    /// can `.unwrap_or_default()`. Distinguishing "no callback" from
+    /// "value is zero" lets test harnesses notice when they forgot to
+    /// wire up params rather than masking the misconfiguration as
+    /// "host set the value to zero".
     #[must_use]
     pub fn param(&self, id: u32) -> Option<f64> {
         self.params_fn.map(|f| f(id))

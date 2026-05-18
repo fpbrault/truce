@@ -280,8 +280,9 @@ pub unsafe fn connect_port<P: PluginExport>(
         // Snapshot the port-range boundaries up-front (cheap copies of
         // u32 start indices) so we can dispatch on `port` without
         // holding a borrow of `inst.layout` while writing back to a
-        // sibling `inst.<port_array>` field. Avoids the previous
-        // `layout.clone()` allocation per call.
+        // sibling `inst.<port_array>` field. The alternative
+        // (`layout.clone()` per call) would allocate on every
+        // connect.
         let audio_in_start = inst.layout.audio_in_start();
         let audio_out_start = inst.layout.audio_out_start();
         let control_start = inst.layout.control_start();
