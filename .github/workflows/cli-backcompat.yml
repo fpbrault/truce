@@ -1,0 +1,145 @@
+name: scaffold backwards-compat
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Asks one question: would a plugin scaffolded by the LAST released
+# `cargo-truce` still compile against THIS commit of truce?
+#
+# Catches accidental breakage in the public surface that older
+# scaffold-templated plugins lean on (renamed prelude items, dropped
+# re-exports, derive-macro signature shifts).
+#
+# Minimal v1: macOS only, single effect shape, against the latest
+# git tag. Expand to more shapes / OSes / multiple prior versions
+# once the workflow proves stable. See
+# `../truce-docs/docs/internal/scaffold-backcompat-check.md`.
+jobs:
+  backcompat:
+    name: scaffold w/ last release, build against HEAD
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-backcompat
+          cache-bin: false
+
+      # Latest non-prerelease tag on the truce repo, e.g. `v0.43.0`.
+      # Sort by semver-ish descending; pick the first plain
+      # `vN.M.P` (skip alpha/beta/rc).
+      - name: Resolve latest released tag
+        id: latest
+        shell: bash
+        run: |
+          tag=$(git ls-remote --tags --sort='-v:refname' \
+                  https://github.com/truce-audio/truce \
+                  | grep -oE 'refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+                  | head -1 \
+                  | sed 's|refs/tags/||')
+          if [ -z "$tag" ]; then
+            echo "::error::No released tags found on truce-audio/truce"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Latest released tag: $tag"
+
+      # Cache the installed binary by tag so subsequent runs against
+      # the same released version skip the ~minute-long install.
+      - name: Cache released cargo-truce
+        id: cache-old-cargo-truce
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/old-cargo-truce
+          key: old-cargo-truce-${{ steps.latest.outputs.tag }}-macos-14
+
+      - name: Install released cargo-truce
+        if: steps.cache-old-cargo-truce.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cargo install --git https://github.com/truce-audio/truce \
+                        --tag "${{ steps.latest.outputs.tag }}" \
+                        cargo-truce \
+                        --root "$RUNNER_TEMP/old-cargo-truce"
+
+      - name: Show released cargo-truce version
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" --version || \
+          "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" -h | head -1
+
+      - name: Scaffold a single-effect plugin with the released cargo-truce
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/scaffold"
+          cd "$RUNNER_TEMP/scaffold"
+          "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" new probe-fx \
+            --vendor Probe --vendor-id com.probe.test
+          ls -la probe-fx/
+
+      # Rewrite scaffolded `{ git = ".../truce", tag = "..." }` to
+      # `{ path = "<workspace>/crates/<name>" }`. Same Python regex
+      # `cli-scaffold.yml` uses; promotes the older scaffold's deps
+      # to consume THIS commit's source instead of the published tag
+      # it was generated against.
+      - name: Rewrite git deps to local truce HEAD
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, pathlib
+          truce_crates = pathlib.Path(os.environ["GITHUB_WORKSPACE"], "crates").as_posix()
+          root = pathlib.Path(os.environ["RUNNER_TEMP"], "scaffold", "probe-fx")
+          needle = '{ git = "https://github.com/truce-audio/truce"'
+          tag_re = re.compile(r',\s*tag\s*=\s*"[^"]*"')
+          rewrote = 0
+          for path in root.rglob("Cargo.toml"):
+              content = path.read_text()
+              if needle not in content:
+                  continue
+              new_lines = []
+              for line in content.splitlines():
+                  stripped = line.lstrip()
+                  if stripped.startswith("#") or needle not in line:
+                      new_lines.append(line)
+                      continue
+                  eq = line.find("=")
+                  key = line[:eq].strip() if eq >= 0 else "truce"
+                  replacement = f'{{ path = "{truce_crates}/{key}"'
+                  out = line.replace(needle, replacement, 1)
+                  out = tag_re.sub("", out, count=1)
+                  new_lines.append(out)
+              suffix = "\n" if content.endswith("\n") else ""
+              path.write_text("\n".join(new_lines) + suffix)
+              rewrote += 1
+              print(f"rewrote {path}")
+          if rewrote == 0:
+              print("::error::no Cargo.toml had a git dep to rewrite - scaffold layout may have changed")
+              raise SystemExit(1)
+          PY
+
+      # `cargo check` (not `build`) is enough for the contract this
+      # workflow guards: catches removed / renamed public items the
+      # scaffold template uses. Build / link is downstream and out of
+      # scope for backwards-compat (the install + package CI in
+      # `cli-install.yml` already exercises those against current
+      # templates).
+      - name: cargo check against truce HEAD
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/probe-fx
+        run: cargo check --all-targets
