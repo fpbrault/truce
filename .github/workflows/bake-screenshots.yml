@@ -55,8 +55,14 @@ env:
   # safeguard. The desktop bake jobs don't care about order.
   EXAMPLE_CRATES: >-
     truce-example-gain
+    truce-example-gain-simd
     truce-example-synth
     truce-example-eq
+    truce-example-saturate
+    truce-example-drywet
+    truce-example-gate
+    truce-example-widen
+    truce-example-surround-meter
     truce-example-gain-egui
     truce-example-arpeggio
     truce-example-gain-iced

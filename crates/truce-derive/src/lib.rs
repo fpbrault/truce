@@ -1415,6 +1415,50 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    // --- Inherent `<field>_block::<N>()` accessors on the params struct ---
+    //
+    // For every `FloatParam` field, emit an inherent
+    // `<field>_block::<N>() -> [f32; N]` method that returns N
+    // smoothed samples in one shot (one atomic load + one atomic
+    // store per call, vs one of each per sample for `read()`).
+    //
+    // The decision to emit unconditionally (rather than gating on
+    // `#[param(block_read = true)]`) is recorded in
+    // `simd-friendly-dsp.md` §6.3: every smoothed param wants this
+    // and making it opt-in is a footgun. Only `FloatParam` fields
+    // get an accessor; `BoolParam`/`IntParam`/`EnumParam` have no
+    // smoother so the method wouldn't be meaningful.
+    //
+    // f32-only: f64 plugins use `prelude64`'s
+    // `FloatParamReadF64::read_block` directly (`self.params.gain.read_block::<N>()`).
+    // The inherent method matches the default prelude's precision,
+    // which keeps the common (f32) path one identifier shorter
+    // without inventing two suffixed variants.
+    let block_accessors: Vec<proc_macro2::TokenStream> = param_fields
+        .iter()
+        .filter(|f| matches!(f.kind, ParamKind::Float))
+        .map(|f| {
+            let ident = &f.ident;
+            let block_ident = syn::Ident::new(&format!("{ident}_block"), ident.span());
+            quote! {
+                #[inline]
+                #[must_use]
+                pub fn #block_ident<const N: usize>(&self) -> [f32; N] {
+                    self.#ident.raw_smoothed_next_block::<N>()
+                }
+            }
+        })
+        .collect();
+    let block_accessors_impl = if block_accessors.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            impl #struct_name {
+                #(#block_accessors)*
+            }
+        }
+    };
+
     // --- Generate ParamId enum (includes both params and meters) ---
     let param_id_enum = if !param_fields.is_empty() || !meter_fields.is_empty() {
         let enum_name = syn::Ident::new(&format!("{struct_name}ParamId"), struct_name.span());
@@ -1501,6 +1545,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         #(#attr_errors)*
 
         #new_impl
+
+        #block_accessors_impl
 
         #param_id_enum
 

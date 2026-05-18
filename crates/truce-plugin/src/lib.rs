@@ -38,6 +38,7 @@
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
+use truce_core::denormal::DenormalGuard;
 use truce_core::editor::Editor;
 use truce_core::events::EventList;
 use truce_core::process::{ProcessContext, ProcessStatus};
@@ -328,6 +329,11 @@ macro_rules! plugin_logic_bridge {
                 events: &EventList,
                 context: &mut ProcessContext,
             ) -> ProcessStatus {
+                // FTZ/DAZ (or FZ on AArch64) for the duration of
+                // the user's process body. Denormals on filter
+                // feedback paths stall the core; the guard pays
+                // ~two MXCSR writes per block to avoid that.
+                let _denormal_guard = DenormalGuard::new();
                 <Self as $leaf>::process(self, buffer, events, context)
             }
 

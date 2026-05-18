@@ -182,6 +182,50 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
         self.io_pair(ch, ch)
     }
 
+    /// Iterate per-channel, in fixed-size `N`-sample chunks. The
+    /// last chunk of each channel may be shorter than `N`; it's
+    /// yielded as a [`ChunkItem::Tail`] with the actual remaining
+    /// length, and the caller falls back to scalar for it. Full
+    /// `N`-sample chunks arrive as [`ChunkItem::Full`] carrying
+    /// `&[S; N]` / `&mut [S; N]` stack arrays - exactly the shape
+    /// the per-op SIMD primitives in `truce-simd` expect.
+    ///
+    /// Iteration order is channel-major: all chunks of channel 0,
+    /// then all chunks of channel 1, etc. Matches the natural
+    /// orientation for per-channel state (biquad coefficients,
+    /// per-channel meters) and lets the caller read its smoothed
+    /// params once per chunk instead of once per sample.
+    ///
+    /// The returned object is a "lending iterator" - it doesn't
+    /// implement [`Iterator`] because each yielded item borrows
+    /// from the iterator itself. Use `while let Some(chunk) = …
+    /// .next()`:
+    ///
+    /// ```ignore
+    /// let mut chunks = buffer.chunks_mut::<32>();
+    /// while let Some(chunk) = chunks.next() {
+    ///     match chunk {
+    ///         ChunkItem::Full { ch, inp, out } => {
+    ///             // SIMD-friendly path, inp / out are &[f32; 32]
+    ///         }
+    ///         ChunkItem::Tail { ch, inp, out } => {
+    ///             // scalar fallback for the trailing samples
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Const-generic `N` is the chunk size; pick it to match the
+    /// SIMD width × unroll factor for your inner op (32 / 64 are
+    /// good defaults for current Apple Silicon + `x86_64`).
+    pub fn chunks_mut<const N: usize>(&mut self) -> ChunksMut<'_, 'a, S, N> {
+        ChunksMut {
+            buffer: self,
+            ch: 0,
+            pos: 0,
+        }
+    }
+
     /// Iterate per-frame and hand a fixed-size `(input, output)`
     /// stack-array pair to `tick`. Sized at the type level by const
     /// generic `N`, which must equal [`Self::channels`].
@@ -295,6 +339,118 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
                 offset: new_offset,
                 num_samples: len,
             })
+        }
+    }
+}
+
+/// One yielded chunk from [`AudioBuffer::chunks_mut`].
+///
+/// `Full` is the SIMD-friendly path: `inp` and `out` are stack
+/// arrays of exactly `N` elements, ready to feed `truce-simd`'s
+/// block ops. `Tail` is the trailing fragment when `num_samples()`
+/// isn't a multiple of `N`; fall back to a scalar loop.
+pub enum ChunkItem<'b, S: Sample, const N: usize> {
+    /// Full N-sample chunk. The `&[S; N]` / `&mut [S; N]` are the
+    /// shape `truce-simd` ops are written against - no slice
+    /// length check at the call site.
+    Full {
+        /// Channel index this chunk belongs to.
+        ch: usize,
+        /// Sample offset within the audio block this chunk starts
+        /// at. Use this when indexing into a precomputed envelope
+        /// array - `chunks_mut` iterates channel-major, so the
+        /// envelope (typically read once per audio block via
+        /// `read_block::<num_samples>()`) is shared across all
+        /// channel passes.
+        sample: usize,
+        /// Read-only N-sample input slice.
+        inp: &'b [S; N],
+        /// Mutable N-sample output slice.
+        out: &'b mut [S; N],
+    },
+    /// Trailing chunk when `num_samples()` isn't a multiple of `N`.
+    /// Length is in `(0, N)`. Fall back to scalar processing.
+    Tail {
+        /// Channel index this chunk belongs to.
+        ch: usize,
+        /// Sample offset within the audio block this chunk starts at.
+        sample: usize,
+        /// Read-only tail input slice; length < N.
+        inp: &'b [S],
+        /// Mutable tail output slice; length < N.
+        out: &'b mut [S],
+    },
+}
+
+/// Lending iterator returned by [`AudioBuffer::chunks_mut`].
+///
+/// Does not implement [`Iterator`] because each yielded
+/// [`ChunkItem`] borrows from the iterator itself - the standard
+/// "GATs would help here" pattern. Drive it with `while let
+/// Some(chunk) = chunks.next()` instead. See
+/// [`AudioBuffer::chunks_mut`] for a worked example.
+pub struct ChunksMut<'b, 'a, S: Sample, const N: usize> {
+    buffer: &'b mut AudioBuffer<'a, S>,
+    /// Current channel being walked.
+    ch: usize,
+    /// Position within the current channel, relative to
+    /// `buffer.offset`. Advances by N each Full chunk, then jumps
+    /// to `num_samples` for the Tail (or directly past it when
+    /// `num_samples` is a multiple of N).
+    pos: usize,
+}
+
+impl<S: Sample, const N: usize> ChunksMut<'_, '_, S, N> {
+    /// Yield the next chunk, or `None` when every channel has been
+    /// fully walked.
+    ///
+    /// Method-on-self rather than `Iterator::next` because each
+    /// yielded [`ChunkItem`] borrows from `self`; GATs would be
+    /// needed to express that through the `Iterator` trait.
+    #[allow(clippy::should_implement_trait, clippy::missing_panics_doc)]
+    pub fn next(&mut self) -> Option<ChunkItem<'_, S, N>> {
+        loop {
+            if self.ch >= self.buffer.outputs.len() {
+                return None;
+            }
+            let ns = self.buffer.num_samples;
+            if self.pos >= ns {
+                self.ch += 1;
+                self.pos = 0;
+                continue;
+            }
+            let abs_start = self.buffer.offset + self.pos;
+            let remaining = ns - self.pos;
+            let take = remaining.min(N);
+            let abs_end = abs_start + take;
+            let ch = self.ch;
+            let sample = self.pos;
+
+            let inp_slice = &self.buffer.inputs[ch][abs_start..abs_end];
+            let out_slice: &mut [S] = &mut self.buffer.outputs[ch][abs_start..abs_end];
+
+            self.pos += take;
+
+            // Full vs Tail by length: full chunks convert to `&[S;
+            // N]` / `&mut [S; N]` for the SIMD-friendly path; tails
+            // fall back to slice form.
+            return Some(if take == N {
+                ChunkItem::Full {
+                    ch,
+                    sample,
+                    // Length-checked above; `try_into` here is a
+                    // free reinterpret.
+                    inp: inp_slice.try_into().expect("len == N by construction"),
+                    out: out_slice.try_into().expect("len == N by construction"),
+                }
+            } else {
+                ChunkItem::Tail {
+                    ch,
+                    sample,
+                    inp: inp_slice,
+                    out: out_slice,
+                }
+            });
         }
     }
 }

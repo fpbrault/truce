@@ -81,6 +81,16 @@ impl FloatParam {
         self.smoother.current()
     }
 
+    /// Internal: advance the smoother by `N` samples in one call.
+    /// Plugin authors reach this through [`FloatParamReadF32::read_block`]
+    /// / [`FloatParamReadF64::read_block`] in the prelude.
+    #[doc(hidden)]
+    #[inline]
+    pub fn raw_smoothed_next_block<const N: usize>(&self) -> [f32; N] {
+        let target = self.value.load();
+        self.smoother.next_block::<N>(target)
+    }
+
     /// Read the value rounded to the nearest non-negative `usize`.
     /// Use this for discrete-range params consumed as array indices.
     /// Negatives, NaN, and infinities saturate at `0` / `usize::MAX`.
@@ -114,6 +124,30 @@ impl FloatParam {
         }
     }
 
+    /// True when the smoother is mid-step toward a new target.
+    /// Inverse of [`Smoother::is_converged`].
+    ///
+    /// Use to branch in `process()` between a constant-gain fast
+    /// path (smoothers at target, gain identical across the whole
+    /// block, one `gain_block` per channel) and the envelope slow
+    /// path (`read_block` + per-sample envelope + `chunks_mut`).
+    /// `SmoothingStyle::None` always reports `false` here, so the
+    /// fast path is unconditional for plugins that disable
+    /// smoothing.
+    ///
+    /// ```ignore
+    /// if !self.params.gain.is_smoothing() && !self.params.pan.is_smoothing() {
+    ///     // fast path: gain is constant for the whole block.
+    /// } else {
+    ///     // slow path: envelope precompute + chunked apply.
+    /// }
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn is_smoothing(&self) -> bool {
+        !self.smoother.is_converged(self.value.load())
+    }
+
     /// Parameter ID.
     pub fn id(&self) -> u32 {
         self.info.id
@@ -142,6 +176,15 @@ pub trait FloatParamReadF32 {
     #[must_use]
     fn read(&self) -> f32;
 
+    /// Advance the smoother by `N` samples in one call, returning the
+    /// per-sample values as a stack array. One atomic load and one
+    /// atomic store regardless of `N`, vs. one of each *per sample*
+    /// for [`Self::read`]; pulls smoother traffic out of the hot
+    /// inner loop. Pair with `AudioBuffer::chunks_mut` (in
+    /// `truce-core`) to drive an N-sample chunked DSP loop.
+    #[must_use]
+    fn read_block<const N: usize>(&self) -> [f32; N];
+
     /// Current smoothed value without advancing.
     #[must_use]
     fn current(&self) -> f32;
@@ -158,6 +201,11 @@ pub trait FloatParamReadF32 {
 pub trait FloatParamReadF64 {
     #[must_use]
     fn read(&self) -> f64;
+    /// f64 view of [`FloatParamReadF32::read_block`]; the smoother
+    /// itself stores `f32` internally, so this is a per-element
+    /// widen on top of the same one-atomic-pair fast path.
+    #[must_use]
+    fn read_block<const N: usize>(&self) -> [f64; N];
     #[must_use]
     fn current(&self) -> f64;
     #[must_use]
@@ -168,6 +216,11 @@ impl FloatParamReadF32 for FloatParam {
     #[inline]
     fn read(&self) -> f32 {
         self.raw_smoothed_next()
+    }
+
+    #[inline]
+    fn read_block<const N: usize>(&self) -> [f32; N] {
+        self.raw_smoothed_next_block::<N>()
     }
 
     #[inline]
@@ -185,6 +238,16 @@ impl FloatParamReadF64 for FloatParam {
     #[inline]
     fn read(&self) -> f64 {
         f64::from(self.raw_smoothed_next())
+    }
+
+    #[inline]
+    fn read_block<const N: usize>(&self) -> [f64; N] {
+        let block = self.raw_smoothed_next_block::<N>();
+        let mut out = [0.0_f64; N];
+        for (i, &v) in block.iter().enumerate() {
+            out[i] = f64::from(v);
+        }
+        out
     }
 
     #[inline]

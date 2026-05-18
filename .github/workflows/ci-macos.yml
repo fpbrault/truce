@@ -45,6 +45,15 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+      # Ratio-based regression guard: gain_simd_fast must run at
+      # least 5x faster than the naive gain shape on the same
+      # runner. Same-runner ratios cancel most of CI's timing
+      # noise. Local measurement is ~22x; threshold of 5x leaves
+      # generous headroom for slow runners while still catching
+      # real regressions in is_smoothing / chunks_mut / gain_block.
+      - name: perf regression (gain vs gain-simd)
+        run: cargo test --release -p truce-simd --test gain_perf_regression -- --ignored --nocapture
+
       # ─────────────────────────────────────────────────────────────────
       # CLAP + VST3 validation against industry validators.
       # `validate --clap --pluginval` exits non-zero on any FAIL; the

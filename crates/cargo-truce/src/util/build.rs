@@ -128,20 +128,11 @@ fn cargo_build_inner(
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] deployment_target: &str,
     profile: &str,
 ) -> crate::Res {
-    // If the caller passed `--target <triple>`, make sure rustup has
-    // it installed before firing cargo. Catches the common "cross-arch
-    // build fails with E0463 can't find crate for core" failure mode.
-    {
-        let mut it = extra_args.iter();
-        while let Some(a) = it.next() {
-            if *a == "--target" {
-                if let Some(triple) = it.next() {
-                    ensure_rustup_target(triple)?;
-                }
-            } else if let Some(triple) = a.strip_prefix("--target=") {
-                ensure_rustup_target(triple)?;
-            }
-        }
+    let targets = extract_target_triples(extra_args);
+    for triple in &targets {
+        // Catches the common "cross-arch build fails with E0463 can't
+        // find crate for core" failure mode.
+        ensure_rustup_target(triple)?;
     }
 
     let mut cmd = Command::new("cargo");
@@ -157,6 +148,7 @@ fn cargo_build_inner(
     }
     #[cfg(target_os = "macos")]
     cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
+    apply_target_cpu(&mut cmd, &targets);
     if let Some(wrapper) = sccache_wrapper() {
         // Cache rustc invocations at the input-hash level. Wins
         // every time cargo's fingerprint flips but the rustc inputs
@@ -195,17 +187,9 @@ pub(crate) fn cargo_rustc_bin(
     bin_name: &str,
     link_args: &[&str],
 ) -> crate::Res {
-    {
-        let mut it = base_args.iter();
-        while let Some(a) = it.next() {
-            if *a == "--target" {
-                if let Some(triple) = it.next() {
-                    ensure_rustup_target(triple)?;
-                }
-            } else if let Some(triple) = a.strip_prefix("--target=") {
-                ensure_rustup_target(triple)?;
-            }
-        }
+    let targets = extract_target_triples(base_args);
+    for triple in &targets {
+        ensure_rustup_target(triple)?;
     }
 
     let mut cmd = Command::new("cargo");
@@ -221,6 +205,7 @@ pub(crate) fn cargo_rustc_bin(
     }
     cmd.arg("-p").arg(package);
     cmd.arg("--bin").arg(bin_name);
+    apply_target_cpu(&mut cmd, &targets);
     if let Some(wrapper) = sccache_wrapper() {
         cmd.env("RUSTC_WRAPPER", wrapper);
     }
@@ -241,6 +226,78 @@ pub(crate) fn cargo_rustc_bin(
         return Err("cargo rustc failed".into());
     }
     Ok(())
+}
+
+/// Extract every `--target <triple>` / `--target=<triple>` value from a
+/// flat arg vector, preserving order. Used to pre-fetch rustup targets
+/// and to scope per-target `RUSTFLAGS`.
+fn extract_target_triples<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if *a == "--target" {
+            if let Some(t) = it.next() {
+                out.push(*t);
+            }
+        } else if let Some(t) = a.strip_prefix("--target=") {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// Apply the active [`crate::util::TargetCpu`] choice to a `cargo build`
+/// command. When `--target <triple>` is in play we set
+/// `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` per target so a multi-arch
+/// invocation (lipo universal builds) can give each slice the right
+/// flag; otherwise we set plain `RUSTFLAGS` since cargo's
+/// per-target rustflags don't apply to host builds that omit
+/// `--target`.
+fn apply_target_cpu(cmd: &mut Command, targets: &[&str]) {
+    use crate::util::resolve_target_cpu;
+
+    if targets.is_empty() {
+        if let Some(cpu) = resolve_target_cpu(truce_build::host_triple()) {
+            append_rustflags_env(cmd, "RUSTFLAGS", &format!("-C target-cpu={cpu}"));
+        }
+        return;
+    }
+    for triple in targets {
+        let Some(cpu) = resolve_target_cpu(triple) else {
+            continue;
+        };
+        let var = cargo_target_rustflags_var(triple);
+        append_rustflags_env(cmd, &var, &format!("-C target-cpu={cpu}"));
+    }
+}
+
+/// Build the cargo-recognised env var name for per-target rustflags:
+/// `aarch64-apple-darwin` -> `CARGO_TARGET_AARCH64_APPLE_DARWIN_RUSTFLAGS`.
+fn cargo_target_rustflags_var(triple: &str) -> String {
+    let normalised: String = triple
+        .chars()
+        .map(|c| {
+            if c == '-' || c == '.' {
+                '_'
+            } else {
+                c.to_ascii_uppercase()
+            }
+        })
+        .collect();
+    format!("CARGO_TARGET_{normalised}_RUSTFLAGS")
+}
+
+/// Append `flag` to env var `var` (space-separated). Reads the prior
+/// value from the process env so a user-set `RUSTFLAGS` is preserved
+/// instead of clobbered.
+fn append_rustflags_env(cmd: &mut Command, var: &str, flag: &str) {
+    let prior = std::env::var(var).unwrap_or_default();
+    let combined = if prior.is_empty() {
+        flag.to_string()
+    } else {
+        format!("{prior} {flag}")
+    };
+    cmd.env(var, combined);
 }
 
 /// Resolve a path to `sccache` if it's available and the user hasn't

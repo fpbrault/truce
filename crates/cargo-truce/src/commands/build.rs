@@ -10,7 +10,7 @@ use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
 #[cfg(target_os = "macos")]
 use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
-use crate::util::fs_ctx;
+use crate::util::{fs_ctx, parse_target_cpu_arg};
 use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
 use std::path::PathBuf;
 use truce_build::{BundleEntry, BundleManifest};
@@ -34,6 +34,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut aax = false;
     let mut shell_mode = false;
     let mut debug = false;
+    let mut target_cpu_arg: Option<String> = None;
     let mut plugin_filter: Option<String> = None;
     let mut targets: Vec<String> = Vec::new();
 
@@ -49,6 +50,10 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--aax" => aax = true,
             "--shell" => shell_mode = true,
             "--debug" => debug = true,
+            "--target-cpu" => {
+                target_cpu_arg =
+                    Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
+            }
             "-p" => plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string()),
             "--target" => {
                 targets.push(crate::util::arg_value(args, &mut i, "--target")?.to_string());
@@ -61,6 +66,11 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         }
         i += 1;
     }
+
+    let target_cpu = target_cpu_arg
+        .as_deref()
+        .map(parse_target_cpu_arg)
+        .unwrap_or_default();
 
     // No format flags → enable every format in the project's default
     // features, mirroring `install`'s discovery rule.
@@ -98,6 +108,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     } else {
         crate::set_debug_profile(debug);
     }
+    crate::set_target_cpu(target_cpu);
 
     // AU v3 + shell is unreliable due to the appex sandbox. Same
     // warning as `cargo truce install --shell --au3`.
@@ -379,6 +390,7 @@ fn print_help() {
         "\
 Usage: cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
                          [-p <crate>] [--target <triple>]... [--shell] [--debug]
+                         [--target-cpu <value>]
 
 Build per-format bundles into target/bundles/ without installing.
 Defaults to release; pass --debug for the cargo dev profile.
@@ -389,6 +401,12 @@ Pass --target <triple> (repeatable) to cross-build for a specific
 cargo target; bundles land in target/bundles/<triple>/. Without
 --target, the host build lands in target/bundles/ (flat layout, as
 before).
+
+x86_64 builds default to `-C target-cpu=x86-64-v3` (AVX2 + FMA +
+BMI2) so `wide`'s compile-time SIMD dispatch picks the wider path.
+Modern DAWs already require this floor, so any host that loads a
+truce plugin already has the feature set. aarch64 builds use NEON
+unconditionally and get no extra flag. Override with `--target-cpu`.
 
 Options:
   --clap           CLAP only
@@ -406,6 +424,14 @@ Options:
                    log_skip it.
   --shell          Build dynamic shells + per-plugin logic dylibs
   --debug          Cargo dev profile (faster compile, slower DSP)
+  --target-cpu <value>
+                   Override the x86_64 default. Accepted values:
+                     baseline   no flag (rustc default = x86-64 / SSE2)
+                     v2|v3|v4   x86-64-v<N> (v3 is the implicit default)
+                     native     -C target-cpu=native (local-dev only;
+                                won't run on machines without the
+                                build host's exact feature set)
+                     <literal>  passed verbatim to rustc (apple-m1, znver4)
   -h, --help       Show this message"
     );
 }

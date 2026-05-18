@@ -1,6 +1,7 @@
 pub mod buffer;
 pub mod bus;
 pub mod custom_state;
+pub mod denormal;
 pub mod editor;
 pub mod events;
 pub mod export;

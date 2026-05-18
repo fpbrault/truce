@@ -1,14 +1,24 @@
-//! 3-band parametric EQ using biquad filters.
+//! 3-band parametric EQ using the upstream
+//! [`biquad`](https://crates.io/crates/biquad) crate. Each band
+//! has frequency, gain, and Q controls.
 //!
-//! Each band has frequency, gain, and Q controls. Demonstrates
-//! multi-parameter DSP, filter state management, and parameter groups.
+//! Each filter is `DirectForm2Transposed::<f64, StereoSample>`,
+//! where `StereoSample` is a local newtype over `wide::f64x2`
+//! (the glue lives in this crate's `src/biquad.rs`). The biquad
+//! crate's generic-T trait split lets us swap a scalar f64
+//! sample for a packed f64x2 without forking the crate; the
+//! filter inner loop then advances both channels through one
+//! SIMD register pair, which on Apple Silicon NEON / x86 AVX2
+//! is roughly half the cycles of two scalar biquads.
 
-// EQ runs all the filter math in f64 (biquad coefficient stability).
+mod biquad;
+
+use ::biquad::{Biquad, DirectForm2Transposed};
+use biquad::{StereoSample, high_shelf, low_shelf, peaking};
 use truce::prelude64::*;
 use truce_gui::layout::{GridLayout, knob, section, widgets};
 
-mod biquad;
-use biquad::Biquad;
+type StereoBiquad = DirectForm2Transposed<f64, StereoSample>;
 
 // --- Parameters ---
 
@@ -123,19 +133,39 @@ pub struct EqParams {
 // --- Plugin ---
 
 const NUM_BANDS: usize = 3;
-const MAX_CHANNELS: usize = 2;
 
 pub struct Eq {
     pub params: Arc<EqParams>,
-    filters: [[Biquad; NUM_BANDS]; MAX_CHANNELS],
+    /// One stereo filter per band; L and R advance through the
+    /// same coefficients in parallel `f64x2` lanes. Mono input
+    /// feeds both lanes and the L lane is the sole output.
+    bands: [StereoBiquad; NUM_BANDS],
     sample_rate: f64,
+}
+
+/// Identity coefficients for a fresh biquad (passes input through
+/// unchanged). `reset()` writes the real coefficients before the
+/// first audio block.
+fn identity_coeffs() -> ::biquad::Coefficients<f64> {
+    ::biquad::Coefficients {
+        a1: 0.0,
+        a2: 0.0,
+        b0: 1.0,
+        b1: 0.0,
+        b2: 0.0,
+    }
 }
 
 impl Eq {
     pub fn new(params: Arc<EqParams>) -> Self {
+        let id = identity_coeffs();
         Self {
             params,
-            filters: [[Biquad::new(); NUM_BANDS]; MAX_CHANNELS],
+            bands: [
+                StereoBiquad::new(id),
+                StereoBiquad::new(id),
+                StereoBiquad::new(id),
+            ],
             sample_rate: 44100.0,
         }
     }
@@ -146,10 +176,8 @@ impl PluginLogic for Eq {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
-        for ch in &mut self.filters {
-            for band in ch {
-                band.reset();
-            }
+        for band in &mut self.bands {
+            band.reset_state();
         }
     }
 
@@ -160,9 +188,11 @@ impl PluginLogic for Eq {
         _context: &mut ProcessContext,
     ) -> ProcessStatus {
         let sr = self.sample_rate;
-        let num_ch = buffer.channels().min(MAX_CHANNELS);
+        let num_ch = buffer.channels();
+        let stereo = num_ch >= 2;
+        let n = buffer.num_samples();
 
-        for i in 0..buffer.num_samples() {
+        for i in 0..n {
             // All reads return `f64` because the prelude is `prelude64`.
             let low_freq = self.params.low_freq.read();
             let low_gain = self.params.low_gain.read();
@@ -175,18 +205,27 @@ impl PluginLogic for Eq {
             let high_q = self.params.high_q.read();
             let output = db_to_linear(self.params.output.read());
 
-            for ch in 0..num_ch {
-                // Update filter coefficients per-sample (smoothed params change each sample)
-                self.filters[ch][0].set_low_shelf(low_freq, low_gain, low_q, sr);
-                self.filters[ch][1].set_peaking(mid_freq, mid_gain, mid_q, sr);
-                self.filters[ch][2].set_high_shelf(high_freq, high_gain, high_q, sr);
+            // Per-sample coefficient updates because every shape
+            // param is smoothed; one coefficient set serves both
+            // channels.
+            self.bands[0].update_coefficients(low_shelf(low_freq, low_gain, low_q, sr));
+            self.bands[1].update_coefficients(peaking(mid_freq, mid_gain, mid_q, sr));
+            self.bands[2].update_coefficients(high_shelf(high_freq, high_gain, high_q, sr));
 
-                let (inp, out) = buffer.io(ch);
-                let mut sample = inp[i];
-                for band in &mut self.filters[ch] {
-                    sample = band.process(sample);
-                }
-                out[i] = sample * output;
+            // Read both channels (or duplicate the mono channel
+            // into the second lane) before advancing any filter,
+            // so the L and R lanes step in lockstep.
+            let in_l = buffer.io(0).0[i];
+            let in_r = if stereo { buffer.io(1).0[i] } else { in_l };
+
+            let mut sample = StereoSample::from_lr(in_l, in_r);
+            for band in &mut self.bands {
+                sample = band.run(sample);
+            }
+            let (l, r) = sample.to_lr();
+            buffer.io(0).1[i] = l * output;
+            if stereo {
+                buffer.io(1).1[i] = r * output;
             }
         }
 

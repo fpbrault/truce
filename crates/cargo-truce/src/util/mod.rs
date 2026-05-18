@@ -172,6 +172,84 @@ pub(crate) fn set_debug_profile(debug: bool) {
     set_build_profile(if debug { "debug" } else { "release" });
 }
 
+/// CPU baseline the build should target. Threaded into `RUSTFLAGS=-C
+/// target-cpu=<value>` so `wide`'s compile-time `cfg(target_feature)`
+/// dispatch picks the right SIMD path. Resolved per cargo target
+/// triple inside `cargo_build_inner`, so the same setting can apply
+/// across a multi-arch invocation without an x86-only flag leaking
+/// onto aarch64 slices (and vice versa).
+#[derive(Clone, Debug, Default)]
+pub(crate) enum TargetCpu {
+    /// No `--target-cpu` was passed. Apply a sane per-arch default:
+    /// `x86-64-v3` on `x86_64` targets (AVX2 + FMA + BMI2); nothing
+    /// on `aarch64` (NEON is the `ARMv8` baseline) or other arches.
+    ///
+    /// `x86-64-v3` matches the floor modern DAWs already require -
+    /// any host where a truce plugin actually loads already has
+    /// AVX2 - so the perf win is free in practice.
+    #[default]
+    Default,
+    /// `--target-cpu baseline`: drop the v3 default, pass no flag.
+    /// Yields rustc's base target (`x86-64` on `x86_64` = SSE2-only),
+    /// for plugin authors who need maximum compatibility.
+    Baseline,
+    /// `--target-cpu <value>`: pass `-C target-cpu=<value>` verbatim.
+    /// Accepts shorthands `v2` / `v3` / `v4` (expanded to
+    /// `x86-64-v<N>`) plus any literal rustc target-cpu name
+    /// (`apple-m1`, `znver4`, etc.).
+    Named(String),
+    /// `--target-cpu native`: pass `-C target-cpu=native`.
+    /// Local-development only; the resulting binary won't run on
+    /// machines without the build host's exact feature set.
+    Native,
+}
+
+static TARGET_CPU: OnceLock<TargetCpu> = OnceLock::new();
+
+pub(crate) fn set_target_cpu(choice: TargetCpu) {
+    TARGET_CPU.get_or_init(|| choice);
+}
+
+/// Parse a user-supplied `--target-cpu` value into a [`TargetCpu`].
+/// Accepts `baseline`, `native`, the level shorthands `v2`/`v3`/`v4`
+/// (expanded to `x86-64-v<N>`), and any other literal value (passed
+/// through to rustc unchanged).
+pub(crate) fn parse_target_cpu_arg(raw: &str) -> TargetCpu {
+    match raw {
+        "baseline" => TargetCpu::Baseline,
+        "native" => TargetCpu::Native,
+        "v2" => TargetCpu::Named("x86-64-v2".to_string()),
+        "v3" => TargetCpu::Named("x86-64-v3".to_string()),
+        "v4" => TargetCpu::Named("x86-64-v4".to_string()),
+        other => TargetCpu::Named(other.to_string()),
+    }
+}
+
+/// Resolve the active [`TargetCpu`] for a specific cargo target triple
+/// (e.g. `x86_64-apple-darwin`, `aarch64-unknown-linux-gnu`). Returns
+/// the string to pass to `-C target-cpu=<value>`, or `None` to omit
+/// the flag entirely.
+///
+/// The `Default` variant inspects the triple's arch prefix: x86 gets
+/// `x86-64-v3`, everything else gets `None`. This is why per-target
+/// resolution matters - a global `RUSTFLAGS=-C target-cpu=x86-64-v3`
+/// would error on an aarch64 slice of a universal macOS build.
+pub(crate) fn resolve_target_cpu(triple: &str) -> Option<String> {
+    let choice = TARGET_CPU.get().cloned().unwrap_or_default();
+    match choice {
+        TargetCpu::Default => {
+            if triple.starts_with("x86_64") || triple.starts_with("i686") {
+                Some("x86-64-v3".to_string())
+            } else {
+                None
+            }
+        }
+        TargetCpu::Baseline => None,
+        TargetCpu::Named(value) => Some(value),
+        TargetCpu::Native => Some("native".to_string()),
+    }
+}
+
 /// Preflight check for `cargo truce install --shell` / `build --shell`:
 /// the project's `Cargo.toml` (single-crate plugin or workspace root)
 /// must declare a `[profile.shell]` table so `cargo build --profile

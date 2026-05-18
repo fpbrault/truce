@@ -26,10 +26,16 @@ members = [
     "crates/truce-slint",
     "crates/truce-slint-build",
     "crates/truce-shim-types",
-    "crates/truce-dsp",
+    "crates/truce-simd",
     "crates/truce-font",
     "crates/truce-utils",
     "examples/truce-example-gain",
+    "examples/truce-example-gain-simd",
+    "examples/truce-example-saturate",
+    "examples/truce-example-drywet",
+    "examples/truce-example-gate",
+    "examples/truce-example-widen",
+    "examples/truce-example-surround-meter",
     "examples/truce-example-synth",
     "examples/truce-example-eq",
     "examples/truce-example-transpose",
@@ -109,7 +115,7 @@ truce-egui = { path = "crates/truce-egui" }
 truce-iced = { path = "crates/truce-iced" }
 truce-slint = { path = "crates/truce-slint" }
 truce-slint-build = { path = "crates/truce-slint-build" }
-truce-dsp = { path = "crates/truce-dsp" }
+truce-simd = { path = "crates/truce-simd" }
 truce-font = { path = "crates/truce-font" }
 truce-build = { version = "0.44.0", path = "crates/truce-build" }
 truce-shim-types = { version = "0.44.0", path = "crates/truce-shim-types" }

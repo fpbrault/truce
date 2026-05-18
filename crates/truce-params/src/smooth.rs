@@ -105,6 +105,95 @@ impl Smoother {
     pub fn current(&self) -> f32 {
         self.current.load() as f32
     }
+
+    /// True when the smoother's internal state matches `target`
+    /// closely enough that further smoothing would be a no-op.
+    ///
+    /// `SmoothingStyle::None` always returns `true`. For `Linear`
+    /// / `Exponential`, the comparison uses the same snap threshold
+    /// `next()` applies: `(target.abs() * 1e-6).max(1e-8)`.
+    /// Exponential smoothing asymptotes but never lands exactly
+    /// on `target`; the threshold gates "close enough that any
+    /// further step is denormal-territory".
+    ///
+    /// Costs one atomic load. Plugin authors typically reach this
+    /// through [`crate::types::FloatParam::is_smoothing`] which
+    /// loads the target and inverts the answer.
+    #[inline]
+    #[must_use]
+    pub fn is_converged(&self, target: f64) -> bool {
+        match self.style {
+            SmoothingStyle::None => true,
+            SmoothingStyle::Linear(_) | SmoothingStyle::Exponential(_) => {
+                let current = self.current.load();
+                let threshold = (target.abs() * 1e-6).max(1e-8);
+                (target - current).abs() < threshold
+            }
+        }
+    }
+
+    /// Advance the smoother by `N` samples in one call, returning the
+    /// intermediate per-sample values as a stack-allocated array.
+    ///
+    /// Issues exactly **one** atomic load and **one** atomic store
+    /// against `current`, regardless of `N`. The inner stepping runs
+    /// in a register-resident loop the optimizer can unroll and (for
+    /// `Exponential` / `None`) vectorize. Compare with [`Self::next`]
+    /// which costs one load + one store *per sample* and therefore
+    /// forces the compiler to keep `current` in memory across
+    /// iterations.
+    ///
+    /// Semantics match `next` step-for-step: the i-th element of the
+    /// returned array is what `next(target)` would have produced if
+    /// called for the i-th time in sequence.
+    // Smoother state stays in `[-1e10, 1e10]`; the f32 narrowing
+    // matches the per-sample `next()` contract.
+    #[allow(clippy::cast_possible_truncation)]
+    #[inline]
+    pub fn next_block<const N: usize>(&self, target: f64) -> [f32; N] {
+        let mut current = self.current.load();
+        let coeff = self.coeff.load();
+        let mut out = [0.0_f32; N];
+
+        match self.style {
+            SmoothingStyle::None => {
+                // Snap immediately; every output is `target`.
+                out.fill(target as f32);
+                current = target;
+            }
+            SmoothingStyle::Linear(_) => {
+                // Threshold matches `next()`'s per-step floor. Hoisted
+                // out of the loop because it depends only on `target`.
+                let threshold = (target.abs() * 1e-6).max(1e-8);
+                for slot in &mut out {
+                    let diff = target - current;
+                    if diff.abs() < threshold {
+                        current = target;
+                    } else {
+                        let step = diff * coeff;
+                        current = if step.abs() >= diff.abs() {
+                            target
+                        } else {
+                            current + step
+                        };
+                    }
+                    *slot = current as f32;
+                }
+            }
+            SmoothingStyle::Exponential(_) => {
+                // Standard one-pole exponential. `current` is a local
+                // (no atomic), so LLVM keeps it in a register and the
+                // body auto-vectorizes for large enough N.
+                for slot in &mut out {
+                    current += coeff * (target - current);
+                    *slot = current as f32;
+                }
+            }
+        }
+
+        self.current.store(current);
+        out
+    }
 }
 
 /// Pure coefficient calculation: smoothing style + sample rate →
@@ -128,5 +217,50 @@ fn compute_coeff(style: SmoothingStyle, sr: f64) -> f64 {
                 1.0
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_converged_none_always_true() {
+        let s = Smoother::new(SmoothingStyle::None);
+        assert!(s.is_converged(0.0));
+        assert!(s.is_converged(42.0));
+        assert!(s.is_converged(-1e6));
+    }
+
+    #[test]
+    fn is_converged_linear_after_snap() {
+        let s = Smoother::new(SmoothingStyle::Linear(5.0));
+        s.snap(2.5);
+        assert!(s.is_converged(2.5));
+        assert!(!s.is_converged(2.6));
+    }
+
+    #[test]
+    fn is_converged_exponential_at_target() {
+        let s = Smoother::new(SmoothingStyle::Exponential(5.0));
+        s.snap(1.0);
+        assert!(s.is_converged(1.0));
+        // Step partway toward 2.0: still smoothing.
+        let _ = s.next(2.0);
+        assert!(!s.is_converged(2.0));
+    }
+
+    #[test]
+    fn is_converged_threshold_scales_with_magnitude() {
+        // Target near zero: floor at 1e-8.
+        let s = Smoother::new(SmoothingStyle::Linear(5.0));
+        s.snap(0.0);
+        assert!(s.is_converged(1e-9));
+        assert!(!s.is_converged(1e-7));
+
+        // Large target: threshold scales by 1e-6.
+        s.snap(20_000.0);
+        assert!(s.is_converged(20_000.01));
+        assert!(!s.is_converged(20_001.0));
     }
 }

@@ -45,8 +45,8 @@ pub(crate) use util::{
     cargo_build, cargo_build_debug, check_cmd, codesign_bundle, confirm_prompt,
     detect_default_features, find_on_path, is_debug_profile, log_output, log_skip, project_root,
     read_standalone_bin_name, release_lib, run_sudo, set_build_profile, set_debug_profile,
-    tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, verify_shell_profile_declared,
-    vprintln,
+    set_target_cpu, tag_fail, tag_ok, tag_warn, take_outputs, take_skipped,
+    verify_shell_profile_declared, vprintln,
 };
 // `tmp_dir` is the raw escape hatch - used by `reset_au` (macOS only)
 // to walk every subdir under `tmp/`. Most callers pick the typed
