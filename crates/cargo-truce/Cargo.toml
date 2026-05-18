@@ -2,7 +2,11 @@
 name = "cargo-truce"
 version.workspace = true
 edition = "2024"
-license = "MIT OR Apache-2.0"
+# Same dual-license shape as the workspace — Apache 2.0 for plug-in
+# authors using `cargo truce`, permission-gated Framework License
+# for redistributing it as part of a competing build tool. See
+# LICENSE + LICENSE-APACHE at the workspace root.
+license-file = "../../LICENSE"
 description = "Build tool for truce audio plugins"
 repository = "https://github.com/truce-audio/truce"
 keywords = ["audio", "plugin", "vst", "clap", "daw"]

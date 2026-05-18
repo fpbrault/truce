@@ -221,4 +221,31 @@ informed countless decisions here.
 
 ## License
 
-MIT OR Apache-2.0
+**Plug-in authors: Apache License 2.0.** Build, ship, sell, and
+modify your plug-ins without restriction — commercial or
+non-commercial, open- or closed-source, freely or however else.
+Full Apache 2.0 grant, full Apache 2.0 patent protection, no fees,
+no splash screen, no revenue cap. See [`LICENSE-APACHE`](LICENSE-APACHE).
+
+**Free and open-source frameworks on top of truce: also Apache
+License 2.0, no permission required.** If you're building a
+free, OSI-licensed framework / SDK / developer tool on top of
+truce, with full source publicly available and no paid offerings
+tied to it, the Section 2.1 exemption in
+[`LICENSE`](LICENSE) gives you the same Apache 2.0 grant as
+plug-in authors. Community frameworks, academic projects,
+research libraries, hobbyist tools — all welcome, no email
+needed. Voluntary sponsorship / donations are explicitly fine.
+
+**Commercial frameworks: separate Framework License required, by
+permission only.** The one carve-out: a Framework License is
+needed if you're using truce as the core of a **commercial**
+plug-in framework that you redistribute to other developers —
+anything sold, subscription-gated, dual-licensed commercially,
+or bundled into a paid offering. See
+[`COMMERCIAL_FRAMEWORK_LICENSING.md`](COMMERCIAL_FRAMEWORK_LICENSING.md) for the
+permission process and [`LICENSE`](LICENSE) for the precise
+boundary.
+
+If you're building an audio plug-in or a free OSS project:
+ignore the third paragraph.

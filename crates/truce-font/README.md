@@ -15,8 +15,8 @@ payload + license file out of the framework's main crates.
 
 ## License
 
-This crate is dual-licensed `MIT OR Apache-2.0`, matching the rest
-of the truce workspace.
+The wrapper code in this crate is licensed under the **Apache
+License, Version 2.0**.
 
 The bundled JetBrains Mono font is itself licensed under the **SIL
 Open Font License, Version 1.1**. The full license text is at
