@@ -824,9 +824,15 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
 
-    // Step 4: Generate distribution.xml
+    // Step 4: Generate distribution.xml. Pass the sanitized
+    // file stem (not `p.name`) so the `<pkg-ref>` URLs match the
+    // pkgbuild outputs on disk - a display name like
+    // `Truce Dry/Wet` would otherwise produce
+    // `Truce Dry/Wet-LV2.pkg` here, while pkgbuild already wrote
+    // `Truce Dry-Wet-LV2.pkg`. productbuild silently fails to
+    // find any component and emits an empty ~15 KB installer.
     let dist_xml = generate_distribution_xml(
-        &p.name,
+        &p.file_stem(),
         &o.config.vendor.id,
         &p.bundle_id,
         o.formats,
