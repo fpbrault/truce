@@ -43,6 +43,7 @@ pub struct SurroundMeterParams {
     #[param(
         name = "Trim",
         range = "linear(-24, 24)",
+        default = 0.0,
         unit = "dB",
         smooth = "exp(10)"
     )]
