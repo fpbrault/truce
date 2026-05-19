@@ -1422,12 +1422,12 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // smoothed samples in one shot (one atomic load + one atomic
     // store per call, vs one of each per sample for `read()`).
     //
-    // The decision to emit unconditionally (rather than gating on
-    // `#[param(block_read = true)]`) is recorded in
-    // `simd-friendly-dsp.md` §6.3: every smoothed param wants this
-    // and making it opt-in is a footgun. Only `FloatParam` fields
-    // get an accessor; `BoolParam`/`IntParam`/`EnumParam` have no
-    // smoother so the method wouldn't be meaningful.
+    // Emit unconditionally rather than gating on
+    // `#[param(block_read = true)]`: every smoothed param wants this
+    // and making it opt-in is a footgun (the per-block path is the
+    // one we want plugin authors to default to). Only `FloatParam`
+    // fields get an accessor; `BoolParam`/`IntParam`/`EnumParam`
+    // have no smoother so the method wouldn't be meaningful.
     //
     // f32-only: f64 plugins use `prelude64`'s
     // `FloatParamReadF64::read_block` directly (`self.params.gain.read_block::<N>()`).

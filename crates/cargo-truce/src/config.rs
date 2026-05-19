@@ -302,18 +302,33 @@ impl PluginDef {
         self.ios_app_group.as_deref()
     }
 
+    /// Filesystem-safe form of the plugin's display name. Use this
+    /// for every path component derived from the name (bundle
+    /// directories, executable filenames inside Mach-O bundles, the
+    /// staged `{name}.{ext}` artefacts under `target/bundles/`). The
+    /// raw `self.name` stays untouched and is what hosts / Info.plist
+    /// keys / DAW browsers display - sanitisation only kicks in at
+    /// the path-construction boundary so a name like
+    /// "Truce Dry/Wet" still shows up as written but lands on disk
+    /// as `Truce Dry-Wet.aaxplugin`.
+    pub(crate) fn file_stem(&self) -> String {
+        truce_utils::safe_filename(&self.name)
+    }
     /// Name used for the AU v3 containing `.app` bundle directory.
     /// When `au3_name` is set in truce.toml it wins (both display
     /// name in host browsers and bundle path stay in sync). Otherwise
     /// we fall back to the historical `"{name} v3"` disambiguator so
-    /// projects that haven't opted in are unaffected. macOS-only -
-    /// AU v3 only installs to `/Applications/` on macOS.
+    /// projects that haven't opted in are unaffected. Sanitised
+    /// through [`truce_utils::safe_filename`] so callers can use the
+    /// result directly as a path component. macOS-only - AU v3 only
+    /// installs to `/Applications/` on macOS.
     #[cfg(target_os = "macos")]
     pub(crate) fn au3_app_name(&self) -> String {
-        match self.au3_name.as_deref() {
+        let raw = match self.au3_name.as_deref() {
             Some(n) if !n.is_empty() => n.to_string(),
             _ => format!("{} v3", self.name),
-        }
+        };
+        truce_utils::safe_filename(&raw)
     }
     #[cfg(target_os = "macos")]
     pub(crate) fn fw_name(&self) -> String {

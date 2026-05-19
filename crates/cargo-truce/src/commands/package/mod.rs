@@ -295,13 +295,13 @@ impl PkgFormat {
             // Spotlight search. AU3 stays distinct via its `v3`
             // suffix (or the user's `au3_name` override), so there's
             // no `/Applications/` collision.
-            PkgFormat::Standalone => format!("{}.app", plugin.name),
+            PkgFormat::Standalone => format!("{}.app", plugin.file_stem()),
             // LV2 bundle names follow the spec's lowercase-hyphenated
             // convention (the same slug `derive(Params)` bakes into
             // `manifest.ttl` / `plugin.ttl`). Anything else and hosts
             // can't resolve the bundle from the TTL's binary URI.
             PkgFormat::Lv2 => format!("{}.lv2", stage::lv2_slug(&plugin.name)),
-            _ => format!("{}.{}", plugin.name, self.extension()),
+            _ => format!("{}.{}", plugin.file_stem(), self.extension()),
         }
     }
 

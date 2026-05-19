@@ -210,7 +210,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         for p in &plugins {
             if clap {
                 stage_clap(&root, p, &config, &plan.stage_dir, &identity, plan.target)?;
-                let filename = format!("{}.clap", p.name);
+                let filename = format!("{}.clap", p.file_stem());
                 crate::log_output(format!(
                     "CLAP: {}",
                     plan.stage_dir.join(&filename).display()
@@ -219,7 +219,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             }
             if vst3 {
                 stage_vst3(&root, p, &config, &plan.stage_dir, plan.target)?;
-                let filename = format!("{}.vst3", p.name);
+                let filename = format!("{}.vst3", p.file_stem());
                 crate::log_output(format!(
                     "VST3: {}",
                     plan.stage_dir.join(&filename).display()
@@ -232,7 +232,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 let staged = stage_vst2(&root, p, &config, &plan.stage_dir, plan.target)?;
                 crate::log_output(format!("VST2: {}", staged.display()));
                 let filename = staged.file_name().map_or_else(
-                    || format!("{}.vst", p.name),
+                    || format!("{}.vst", p.file_stem()),
                     |n| n.to_string_lossy().into_owned(),
                 );
                 produced.push(entry(p, "vst2", filename));
@@ -261,7 +261,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                     // are still macOS-host so the existing helper works.
                     let _ = plan; // referenced via stage_dir below
                     stage_au2(&root, p, &config, &plan.stage_dir)?;
-                    let filename = format!("{}.component", p.name);
+                    let filename = format!("{}.component", p.file_stem());
                     crate::log_output(format!(
                         "AU:   {}",
                         plan.stage_dir.join(&filename).display()

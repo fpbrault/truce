@@ -184,6 +184,7 @@ pub(crate) fn build_bundle(
     let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
     let appex_bundle_id = format!("{app_bundle_id}.AUExt");
     let app_name = &p.name;
+    let app_file = p.file_stem();
     let dylib_stem = p.dylib_stem();
 
     eprintln!(
@@ -343,8 +344,8 @@ pub(crate) fn build_bundle(
             .join(format!("{fw_name}.framework")),
     )?;
 
-    eprintln!("==> [4/5] {app_name}.app (swiftc)");
-    let app_dir = out.join(format!("{app_name}.app"));
+    eprintln!("==> [4/5] {app_file}.app (swiftc)");
+    let app_dir = out.join(format!("{app_file}.app"));
     fs_ctx::create_dir_all(app_dir.join("PlugIns"))?;
     fs_ctx::create_dir_all(app_dir.join("Frameworks"))?;
 
@@ -477,7 +478,7 @@ pub(crate) fn build_bundle(
         fs_ctx::write(&info_path, patched)?;
     }
 
-    eprintln!("==> [5/5] assemble + codesign {app_name}.app");
+    eprintln!("==> [5/5] assemble + codesign {app_file}.app");
     crate::copy_dir_recursive(&appex_dir, &app_dir.join("PlugIns/AUExt.appex"))?;
     crate::copy_dir_recursive(
         &fw_dir,
@@ -737,7 +738,7 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
         format!("app bundle has no file name: {}", app_dir.display()).into()
     })?;
     crate::copy_dir_recursive(&app_dir, &payload.join(file_name))?;
-    let ipa_path = out_dir.join(format!("{}.ipa", p.name));
+    let ipa_path = out_dir.join(format!("{}.ipa", p.file_stem()));
     // `zip -r` over `Payload/` is the canonical Apple shape - the
     // `.ipa` extension is documentation. Strip resource forks
     // (`-X`) so Linux / Windows hosts that unpack the ipa don't see

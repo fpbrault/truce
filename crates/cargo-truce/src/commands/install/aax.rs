@@ -445,7 +445,7 @@ pub(crate) fn emit_aax_bundle(
 
     let bundles_dir = truce_build::target_dir(root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
-    let bundle = bundles_dir.join(format!("{}.aaxplugin", p.name));
+    let bundle = bundles_dir.join(format!("{}.aaxplugin", p.file_stem()));
     let _ = fs::remove_dir_all(&bundle);
 
     #[cfg(target_os = "macos")]
@@ -454,7 +454,8 @@ pub(crate) fn emit_aax_bundle(
         fs_ctx::create_dir_all(contents.join("MacOS"))?;
         fs_ctx::create_dir_all(contents.join("Resources"))?;
 
-        fs_ctx::copy(&template, contents.join("MacOS").join(&p.name))?;
+        let exec_name = p.file_stem();
+        fs_ctx::copy(&template, contents.join("MacOS").join(&exec_name))?;
         fs_ctx::copy(
             &dylib,
             contents
@@ -462,24 +463,27 @@ pub(crate) fn emit_aax_bundle(
                 .join(format!("lib{}_aax.dylib", p.dylib_stem())),
         )?;
 
+        // CFBundleExecutable must match the on-disk filename, so use
+        // the sanitised stem there. CFBundleName is the user-visible
+        // string and stays as the raw display name.
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>com.truce.{bundle_id}.aax</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>TDMw</string>
     <key>CFBundleVersion</key>
     <string>1</string>
 </dict>
 </plist>"#,
-            name = p.name,
+            display_name = p.name,
             bundle_id = p.bundle_id,
         );
         fs_ctx::write(contents.join("Info.plist"), plist)?;
@@ -516,7 +520,10 @@ pub(crate) fn emit_aax_bundle(
         fs_ctx::create_dir_all(&x64_dir)?;
         fs_ctx::create_dir_all(&resources_dir)?;
 
-        fs_ctx::copy(&template, x64_dir.join(format!("{}.aaxplugin", p.name)))?;
+        fs_ctx::copy(
+            &template,
+            x64_dir.join(format!("{}.aaxplugin", p.file_stem())),
+        )?;
         fs_ctx::copy(
             &dylib,
             resources_dir.join(format!("{}_aax.dll", p.dylib_stem())),
@@ -545,7 +552,7 @@ pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res
 /// been called first.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
-    let bundle_name = format!("{}.aaxplugin", p.name);
+    let bundle_name = format!("{}.aaxplugin", p.file_stem());
     let built = truce_build::target_dir(root)
         .join("bundles")
         .join(&bundle_name);

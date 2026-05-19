@@ -8,7 +8,7 @@
 //!    [`FloatParam::read`]) vs. the new way
 //!    ([`FloatParam::read_block::<N>`]) across N ∈ {8, 16, 32, 64, 128}.
 //!    Doubles as the empirical input that picks the default `N` in
-//!    plugin examples (Phase 2 of `simd-friendly-dsp.md`).
+//!    plugin examples.
 //!
 //! 2. **`gain_inner_loop`** - end-to-end "single audio block of a gain
 //!    plugin". Pre-vec walks samples in the outer loop with

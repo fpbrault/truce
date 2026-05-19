@@ -317,7 +317,7 @@ fn package_one_suite(
         .flat_map(|plugin| {
             o.formats
                 .iter()
-                .map(move |fmt| format!("{}-{}.pkg", plugin.name, fmt.label()))
+                .map(move |fmt| format!("{}-{}.pkg", plugin.file_stem(), fmt.label()))
         })
         .collect();
     super::verify::assert_pkg_contains_components(&pkg_path, &expected)?;
@@ -374,7 +374,7 @@ fn generate_suite_distribution_xml(
         for fmt in formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, fmt.pkg_id_suffix());
-            let component_file = format!("{}-{}.pkg", plugin.name, fmt.label());
+            let component_file = format!("{}-{}.pkg", plugin.file_stem(), fmt.label());
             let label = fmt.label();
             let desc = fmt.choice_description();
             // All formats checked by default - see matching note in
@@ -861,7 +861,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     let expected: Vec<String> = o
         .formats
         .iter()
-        .map(|fmt| format!("{}-{}.pkg", p.name, fmt.label()))
+        .map(|fmt| format!("{}-{}.pkg", p.file_stem(), fmt.label()))
         .collect();
     super::verify::assert_pkg_contains_components(&pkg_path, &expected)?;
 
@@ -952,7 +952,7 @@ fn run_pkgbuild_for_format(
         p.bundle_id,
         fmt.pkg_id_suffix()
     );
-    let component_pkg = components_dir.join(format!("{}-{}.pkg", p.name, fmt.label()));
+    let component_pkg = components_dir.join(format!("{}-{}.pkg", p.file_stem(), fmt.label()));
 
     // Stage every format through an isolated `_pkgroot_<fmt>/` so
     // pkgbuild sees exactly one payload per call. Historically we

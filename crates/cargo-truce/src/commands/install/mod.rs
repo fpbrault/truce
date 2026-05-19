@@ -363,7 +363,7 @@ pub(crate) fn install_clap(
         return Err(format!("Missing: {}", dylib.display()).into());
     }
     let clap_dir = scope.clap_dir();
-    let bundle = clap_dir.join(format!("{}.clap", p.name));
+    let bundle = clap_dir.join(format!("{}.clap", p.file_stem()));
 
     #[cfg(target_os = "macos")]
     {
@@ -374,24 +374,25 @@ pub(crate) fn install_clap(
         // building the directory.
         let contents = bundle.join("Contents");
         let macos_dir = contents.join("MacOS");
+        let exec_name = p.file_stem();
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>{vendor_id}.{bundle_id}</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
     <string>1</string>
 </dict>
 </plist>"#,
-            name = p.name,
+            display_name = p.name,
             bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
@@ -406,7 +407,7 @@ pub(crate) fn install_clap(
                 run_sudo("rm", &[OsStr::new("-f"), bundle.as_os_str()])?;
             }
             run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
-            let dst_dylib = macos_dir.join(&p.name);
+            let dst_dylib = macos_dir.join(&exec_name);
             run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
             let dst_plist = contents.join("Info.plist");
             run_sudo("cp", &[OsStr::new(&plist_tmp), dst_plist.as_os_str()])?;
@@ -415,7 +416,7 @@ pub(crate) fn install_clap(
                 fs::remove_file(&bundle)?;
             }
             fs_ctx::create_dir_all(&macos_dir)?;
-            fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+            fs_ctx::copy(&dylib, macos_dir.join(&exec_name))?;
             fs_ctx::copy(&plist_tmp, contents.join("Info.plist"))?;
         }
 
@@ -450,30 +451,31 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = scope.vst3_dir().join(format!("{}.vst3", p.name));
+    let bundle = scope.vst3_dir().join(format!("{}.vst3", p.file_stem()));
 
     #[cfg(target_os = "macos")]
     {
         let contents = bundle.join("Contents");
         let macos_dir = contents.join("MacOS");
+        let exec_name = p.file_stem();
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>{vendor_id}.{bundle_id}</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
     <string>1</string>
 </dict>
 </plist>"#,
-            name = p.name,
+            display_name = p.name,
             bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
@@ -485,13 +487,13 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 
         if scope.needs_sudo() {
             run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
-            let dst_dylib = macos_dir.join(&p.name);
+            let dst_dylib = macos_dir.join(&exec_name);
             run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
             let dst_plist = contents.join("Info.plist");
             run_sudo("cp", &[OsStr::new(&plist_tmp), dst_plist.as_os_str()])?;
         } else {
             fs_ctx::create_dir_all(&macos_dir)?;
-            fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+            fs_ctx::copy(&dylib, macos_dir.join(&exec_name))?;
             fs_ctx::copy(&plist_tmp, contents.join("Info.plist"))?;
         }
 
@@ -507,7 +509,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
     {
         // VST3 on Windows: <vst3_dir>\{name}.vst3\Contents\x86_64-win\{name}.vst3
         let arch_dir = bundle.join("Contents").join("x86_64-win");
-        let dst = arch_dir.join(format!("{}.vst3", p.name));
+        let dst = arch_dir.join(format!("{}.vst3", p.file_stem()));
         fs_ctx::create_dir_all(&arch_dir)?;
         fs_ctx::copy(&dylib, &dst)?;
         crate::log_output(format!("VST3: {}", bundle.display()));
@@ -516,7 +518,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
     #[cfg(target_os = "linux")]
     {
         let arch_dir = bundle.join("Contents").join("x86_64-linux");
-        let dst = arch_dir.join(format!("{}.so", p.name));
+        let dst = arch_dir.join(format!("{}.so", p.file_stem()));
         fs_ctx::create_dir_all(&arch_dir)?;
         fs_ctx::copy(&dylib, &dst)?;
         crate::log_output(format!("VST3: {}", bundle.display()));
@@ -538,26 +540,27 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 
     #[cfg(target_os = "macos")]
     {
-        let bundle = vst_dir.join(format!("{}.vst", p.name));
+        let bundle = vst_dir.join(format!("{}.vst", p.file_stem()));
         let macos_dir = bundle.join("Contents/MacOS");
+        let exec_name = p.file_stem();
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>{vendor_id}.{bundle_id}.vst2</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
     <string>1</string>
 </dict>
 </plist>"#,
-            name = p.name,
+            display_name = p.name,
             bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
@@ -570,7 +573,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
         if scope.needs_sudo() {
             run_sudo("rm", &[OsStr::new("-rf"), bundle.as_os_str()])?;
             run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
-            let dst_dylib = macos_dir.join(&p.name);
+            let dst_dylib = macos_dir.join(&exec_name);
             run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
             let dst_plist = bundle.join("Contents/Info.plist");
             run_sudo("cp", &[OsStr::new(&plist_tmp), dst_plist.as_os_str()])?;
@@ -583,7 +586,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
         } else {
             let _ = fs::remove_dir_all(&bundle);
             fs_ctx::create_dir_all(&macos_dir)?;
-            fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+            fs_ctx::copy(&dylib, macos_dir.join(&exec_name))?;
             fs_ctx::write(bundle.join("Contents/Info.plist"), &plist)?;
             fs_ctx::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
         }
@@ -601,7 +604,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
         // Windows VST2 is system-only (effective_scope guarantees the
         // fallback note); `vst_dir` resolves to %PROGRAMFILES%\Steinberg\VstPlugins.
         fs_ctx::create_dir_all(&vst_dir)?;
-        let dst = vst_dir.join(format!("{}.dll", p.name));
+        let dst = vst_dir.join(format!("{}.dll", p.file_stem()));
         fs_ctx::copy(&dylib, &dst)?;
         crate::log_output(format!("VST2: {}", dst.display()));
     }
@@ -609,7 +612,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
     #[cfg(target_os = "linux")]
     {
         fs_ctx::create_dir_all(&vst_dir)?;
-        let dst = vst_dir.join(format!("{}.so", p.name));
+        let dst = vst_dir.join(format!("{}.so", p.file_stem()));
         fs_ctx::copy(&dylib, &dst)?;
         crate::log_output(format!("VST2: {}", dst.display()));
     }
@@ -694,20 +697,23 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = scope.au_v2_dir().join(format!("{}.component", p.name));
+    let bundle = scope
+        .au_v2_dir()
+        .join(format!("{}.component", p.file_stem()));
     let bundle_str = bundle.to_str().unwrap().to_string();
     let contents = bundle.join("Contents");
     let macos_dir = contents.join("MacOS");
+    let exec_name = p.file_stem();
 
     if scope.needs_sudo() {
         let _ = run_sudo("rm", &[OsStr::new("-rf"), bundle.as_os_str()]);
         run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
-        let dst_dylib = macos_dir.join(&p.name);
+        let dst_dylib = macos_dir.join(&exec_name);
         run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
     } else {
         let _ = fs::remove_dir_all(&bundle);
         fs_ctx::create_dir_all(&macos_dir)?;
-        fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+        fs_ctx::copy(&dylib, macos_dir.join(&exec_name))?;
     }
 
     let plist = format!(
@@ -716,11 +722,11 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>{vendor_id}.{bundle_id}.component</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
@@ -735,9 +741,9 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
             <key>manufacturer</key>
             <string>{au_mfr}</string>
             <key>name</key>
-            <string>{vendor}: {name}</string>
+            <string>{vendor}: {display_name}</string>
             <key>description</key>
-            <string>{name}</string>
+            <string>{display_name}</string>
             <key>version</key>
             <integer>65536</integer>
             <key>factoryFunction</key>
@@ -752,7 +758,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
     </array>
 </dict>
 </plist>"#,
-        name = p.name,
+        display_name = p.name,
         bundle_id = p.bundle_id,
         vendor_id = config.vendor.id,
         vendor = config.vendor.name,
