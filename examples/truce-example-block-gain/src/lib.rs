@@ -86,8 +86,8 @@ impl PluginLogic for Gain {
             // Slow path: vectorized envelope precompute, then SIMD
             // apply via chunks_mut.
             let n = buffer.num_samples().min(MAX_BLOCK);
-            let gain_db = self.params.gain_block::<MAX_BLOCK>();
-            let pan = self.params.pan_block::<MAX_BLOCK>();
+            let gain_db = self.params.gain.read_block::<MAX_BLOCK>();
+            let pan = self.params.pan.read_block::<MAX_BLOCK>();
 
             // Vectorize the transcendental into `lin`. This is the
             // only step in the slow path that doesn't autovectorize

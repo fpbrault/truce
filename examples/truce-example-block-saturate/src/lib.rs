@@ -95,8 +95,8 @@ impl PluginLogic for Saturate {
         } else {
             // Slow path: per-sample drive + output envelopes.
             let n = buffer.num_samples().min(MAX_BLOCK);
-            let drive_db = self.params.drive_block::<MAX_BLOCK>();
-            let output_db = self.params.output_block::<MAX_BLOCK>();
+            let drive_db = self.params.drive.read_block::<MAX_BLOCK>();
+            let output_db = self.params.output.read_block::<MAX_BLOCK>();
             let mut drive_lin_buf = [0.0_f32; MAX_BLOCK];
             let mut output_lin_buf = [0.0_f32; MAX_BLOCK];
             math::db_to_linear_block(&mut drive_lin_buf[..n], &drive_db[..n]);
