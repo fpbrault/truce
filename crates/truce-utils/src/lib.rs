@@ -14,6 +14,10 @@
 //!   dylib for hot-reload).
 //! - [`slugify`] - ASCII-safe filesystem / IRI slug used by the LV2
 //!   staging path and runtime bundle-name derivation.
+//! - [`safe_filename`] - case-preserving sanitizer for plugin
+//!   display names used as path components (`{name}.aaxplugin`,
+//!   `{name}.vst3`, etc.). Replaces filesystem-reserved characters
+//!   without lowercasing or collapsing words.
 //!
 //! `truce-core` re-exports the modules above so consumers that pull
 //! `truce-core` don't need a second dependency. Crates that want to
@@ -47,6 +51,44 @@ pub fn slugify(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// Sanitize a plugin's display name into a filesystem-safe form,
+/// preserving case and spaces. Use this whenever the name is going
+/// to land in a path component (`{name}.aaxplugin`, `{name}.vst3`,
+/// the executable inside an AAX `Contents/MacOS/`, etc.). The
+/// in-Info.plist / in-host-browser display name should keep using
+/// the raw `name` so users still see "Truce Dry/Wet" in their DAW.
+///
+/// Replacements:
+/// - POSIX path separator `/`, Windows path separator `\`, NTFS /
+///   HFS path-reserved chars `:<>"|?*`, NUL and ASCII control chars
+///   → `-`.
+/// - Leading and trailing whitespace + ASCII dots stripped (Windows
+///   forbids trailing dots / spaces; trimming both keeps behaviour
+///   identical across platforms).
+/// - Runs of `-` collapsed to a single `-` so `Dry//Wet` doesn't
+///   produce `Dry--Wet`.
+#[must_use]
+pub fn safe_filename(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for c in name.chars() {
+        let reserved = matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*')
+            || c == '\0'
+            || c.is_control();
+        if reserved {
+            if !prev_dash {
+                out.push('-');
+                prev_dash = true;
+            }
+        } else {
+            out.push(c);
+            prev_dash = false;
+        }
+    }
+    out.trim_matches(|c: char| c.is_whitespace() || c == '.' || c == '-')
+        .to_string()
+}
+
 #[cfg(test)]
 mod slugify_tests {
     use super::slugify;
@@ -58,5 +100,46 @@ mod slugify_tests {
         assert_eq!(slugify("--leading and trailing--"), "leading-and-trailing");
         assert_eq!(slugify("ABC123"), "abc123");
         assert_eq!(slugify(""), "");
+    }
+}
+
+#[cfg(test)]
+mod safe_filename_tests {
+    use super::safe_filename;
+
+    #[test]
+    fn replaces_path_separators() {
+        assert_eq!(safe_filename("Truce Dry/Wet"), "Truce Dry-Wet");
+        assert_eq!(safe_filename(r"Foo\Bar"), "Foo-Bar");
+    }
+
+    #[test]
+    fn replaces_windows_reserved() {
+        assert_eq!(safe_filename(r#"a:b<c>d"e|f?g*h"#), "a-b-c-d-e-f-g-h");
+    }
+
+    #[test]
+    fn collapses_runs_of_replacements() {
+        assert_eq!(safe_filename("Dry//Wet"), "Dry-Wet");
+        assert_eq!(safe_filename("A//B\\\\C"), "A-B-C");
+    }
+
+    #[test]
+    fn preserves_case_and_spaces() {
+        assert_eq!(safe_filename("Truce DryWet"), "Truce DryWet");
+        assert_eq!(safe_filename("ALL CAPS"), "ALL CAPS");
+    }
+
+    #[test]
+    fn trims_whitespace_and_dots() {
+        assert_eq!(safe_filename("  Foo  "), "Foo");
+        assert_eq!(safe_filename(".hidden."), "hidden");
+        assert_eq!(safe_filename(" . . trim . . "), "trim");
+    }
+
+    #[test]
+    fn empty_in_empty_out() {
+        assert_eq!(safe_filename(""), "");
+        assert_eq!(safe_filename("///"), "");
     }
 }

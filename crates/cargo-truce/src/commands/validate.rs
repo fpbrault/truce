@@ -249,10 +249,10 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 {
                     let user_path = InstallScope::User
                         .au_v2_dir()
-                        .join(format!("{}.component", p.name));
+                        .join(format!("{}.component", p.file_stem()));
                     let system_path = InstallScope::System
                         .au_v2_dir()
-                        .join(format!("{}.component", p.name));
+                        .join(format!("{}.component", p.file_stem()));
                     warn_on_scope_collision(Format::Au2, &user_path, &system_path);
                 }
                 eprint!(
@@ -286,7 +286,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     {
                         let expected = PathBuf::from(format!(
                             "/Library/Audio/Plug-Ins/Components/{}.component",
-                            p.name
+                            p.file_stem()
                         ));
                         warn_on_au_collision(
                             p.resolved_au_type(),
@@ -371,10 +371,10 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             for p in &plugins {
                 let user_path = InstallScope::User
                     .vst3_dir()
-                    .join(format!("{}.vst3", p.name));
+                    .join(format!("{}.vst3", p.file_stem()));
                 let system_path = InstallScope::System
                     .vst3_dir()
-                    .join(format!("{}.vst3", p.name));
+                    .join(format!("{}.vst3", p.file_stem()));
                 // Validate the system bundle when it's there (the
                 // historical default), else fall through to user.
                 let validate_path = if system_path.exists() {
@@ -436,7 +436,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             };
 
             for p in &plugins {
-                let clap_name = format!("{}.clap", p.name);
+                let clap_name = format!("{}.clap", p.file_stem());
                 let user_path = InstallScope::User.clap_dir().join(&clap_name);
                 let system_path = InstallScope::System.clap_dir().join(&clap_name);
                 // Prefer the user-scope bundle (the default install
@@ -604,10 +604,10 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
         // host scan.
         let user_path = InstallScope::User
             .vst2_dir()
-            .join(format!("{}.vst", p.name));
+            .join(format!("{}.vst", p.file_stem()));
         let system_path = InstallScope::System
             .vst2_dir()
-            .join(format!("{}.vst", p.name));
+            .join(format!("{}.vst", p.file_stem()));
         warn_on_scope_collision(Format::Vst2, &user_path, &system_path);
 
         eprint!("  {} ... ", p.name);

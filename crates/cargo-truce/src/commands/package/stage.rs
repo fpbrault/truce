@@ -124,13 +124,14 @@ pub(crate) fn stage_clap(
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = staging.join(format!("{}.clap", p.name));
+    let bundle = staging.join(format!("{}.clap", p.file_stem()));
 
     #[cfg(target_os = "macos")]
     {
         let macos_dir = bundle.join("Contents/MacOS");
         fs::create_dir_all(&macos_dir)?;
-        fs::copy(&dylib, macos_dir.join(&p.name))?;
+        let exec_name = p.file_stem();
+        fs::copy(&dylib, macos_dir.join(&exec_name))?;
 
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -138,18 +139,18 @@ pub(crate) fn stage_clap(
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>{vendor_id}.{bundle_id}</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
     <string>1</string>
 </dict>
 </plist>"#,
-            name = p.name,
+            display_name = p.name,
             bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
@@ -184,7 +185,7 @@ pub(crate) fn stage_vst3(
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = staging.join(format!("{}.vst3", p.name));
+    let bundle = staging.join(format!("{}.vst3", p.file_stem()));
 
     // VST3 bundle layout is platform-specific (Steinberg "Bundle Locations"
     // section of the SDK docs):
@@ -198,7 +199,8 @@ pub(crate) fn stage_vst3(
     {
         let macos_dir = bundle.join("Contents/MacOS");
         fs::create_dir_all(&macos_dir)?;
-        fs::copy(&dylib, macos_dir.join(&p.name))?;
+        let exec_name = p.file_stem();
+        fs::copy(&dylib, macos_dir.join(&exec_name))?;
 
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -206,18 +208,18 @@ pub(crate) fn stage_vst3(
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>{vendor_id}.{bundle_id}</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
     <string>1</string>
 </dict>
 </plist>"#,
-            name = p.name,
+            display_name = p.name,
             bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
@@ -237,7 +239,7 @@ pub(crate) fn stage_vst3(
         };
         let arch_dir = bundle.join("Contents").join(vst3_arch_subdir(triple));
         fs::create_dir_all(&arch_dir)?;
-        let inner_filename = format!("{}.{}", p.name, vst3_inner_extension(triple));
+        let inner_filename = format!("{}.{}", p.file_stem(), vst3_inner_extension(triple));
         fs::copy(&dylib, arch_dir.join(inner_filename))?;
     }
     #[cfg(target_os = "macos")]
@@ -304,24 +306,25 @@ pub(crate) fn stage_vst2(
 
     #[cfg(target_os = "linux")]
     {
-        let dst = staging.join(format!("{}.so", p.name));
+        let dst = staging.join(format!("{}.so", p.file_stem()));
         fs::copy(&dylib, &dst)?;
         Ok(dst)
     }
 
     #[cfg(target_os = "windows")]
     {
-        let dst = staging.join(format!("{}.dll", p.name));
+        let dst = staging.join(format!("{}.dll", p.file_stem()));
         fs::copy(&dylib, &dst)?;
         Ok(dst)
     }
 
     #[cfg(target_os = "macos")]
     {
-        let bundle = staging.join(format!("{}.vst", p.name));
+        let bundle = staging.join(format!("{}.vst", p.file_stem()));
         let macos_dir = bundle.join("Contents/MacOS");
         fs::create_dir_all(&macos_dir)?;
-        fs::copy(&dylib, macos_dir.join(&p.name))?;
+        let exec_name = p.file_stem();
+        fs::copy(&dylib, macos_dir.join(&exec_name))?;
 
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -329,18 +332,18 @@ pub(crate) fn stage_vst2(
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>com.truce.{bundle_id}.vst2</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
     <string>1</string>
 </dict>
 </plist>"#,
-            name = p.name,
+            display_name = p.name,
             bundle_id = p.bundle_id,
         );
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
@@ -363,10 +366,11 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = staging.join(format!("{}.component", p.name));
+    let bundle = staging.join(format!("{}.component", p.file_stem()));
     let macos_dir = bundle.join("Contents/MacOS");
     fs::create_dir_all(&macos_dir)?;
-    fs::copy(&dylib, macos_dir.join(&p.name))?;
+    let exec_name = p.file_stem();
+    fs::copy(&dylib, macos_dir.join(&exec_name))?;
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -374,11 +378,11 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>{name}</string>
+    <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
     <string>{vendor_id}.{bundle_id}.component</string>
     <key>CFBundleName</key>
-    <string>{name}</string>
+    <string>{display_name}</string>
     <key>CFBundlePackageType</key>
     <string>BNDL</string>
     <key>CFBundleVersion</key>
@@ -393,9 +397,9 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
             <key>manufacturer</key>
             <string>{au_mfr}</string>
             <key>name</key>
-            <string>{vendor}: {name}</string>
+            <string>{vendor}: {display_name}</string>
             <key>description</key>
-            <string>{name}</string>
+            <string>{display_name}</string>
             <key>version</key>
             <integer>65536</integer>
             <key>factoryFunction</key>
@@ -410,7 +414,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     </array>
 </dict>
 </plist>"#,
-        name = p.name,
+        display_name = p.name,
         bundle_id = p.bundle_id,
         vendor_id = config.vendor.id,
         vendor = config.vendor.name,
@@ -450,7 +454,7 @@ pub(crate) fn stage_aax(
     _universal_mac: bool,
     no_pace_sign: bool,
 ) -> Res {
-    let bundle_name = format!("{}.aaxplugin", p.name);
+    let bundle_name = format!("{}.aaxplugin", p.file_stem());
     let built = truce_build::target_dir(root)
         .join("bundles")
         .join(&bundle_name);
@@ -548,7 +552,7 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
         .into());
     }
 
-    let staged_app = staging.join(format!("{}.app", p.name));
+    let staged_app = staging.join(format!("{}.app", p.file_stem()));
     let _ = fs::remove_dir_all(&staged_app);
     let macos_dir = staged_app.join("Contents/MacOS");
     fs::create_dir_all(&macos_dir)?;

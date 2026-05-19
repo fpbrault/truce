@@ -457,13 +457,13 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         for p in &plugins {
             if clap {
                 for s in &scopes_to_scan {
-                    let path = s.clap_dir().join(format!("{}.clap", p.name));
+                    let path = s.clap_dir().join(format!("{}.clap", p.file_stem()));
                     push_if_exists("CLAP", path, s.needs_sudo(), &mut targets);
                 }
             }
             if vst3 {
                 for s in &scopes_to_scan {
-                    let path = s.vst3_dir().join(format!("{}.vst3", p.name));
+                    let path = s.vst3_dir().join(format!("{}.vst3", p.file_stem()));
                     push_if_exists("VST3", path, s.needs_sudo(), &mut targets);
                 }
             }
@@ -471,21 +471,21 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 #[cfg(target_os = "macos")]
                 {
                     for s in &scopes_to_scan {
-                        let path = s.vst2_dir().join(format!("{}.vst", p.name));
+                        let path = s.vst2_dir().join(format!("{}.vst", p.file_stem()));
                         push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                     }
                 }
                 #[cfg(target_os = "windows")]
                 if scan_system {
                     let s = InstallScope::System;
-                    let path = s.vst2_dir().join(format!("{}.dll", p.name));
+                    let path = s.vst2_dir().join(format!("{}.dll", p.file_stem()));
                     push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                 }
                 #[cfg(target_os = "linux")]
                 {
                     // Linux VST2 is `~/.vst/<name>.so` for both scopes.
                     let s = InstallScope::User;
-                    let path = s.vst2_dir().join(format!("{}.so", p.name));
+                    let path = s.vst2_dir().join(format!("{}.so", p.file_stem()));
                     push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                 }
             }
@@ -512,7 +512,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             #[cfg(target_os = "macos")]
             if au2 {
                 for s in &scopes_to_scan {
-                    let path = s.au_v2_dir().join(format!("{}.component", p.name));
+                    let path = s.au_v2_dir().join(format!("{}.component", p.file_stem()));
                     push_if_exists("AU v2", path, s.needs_sudo(), &mut targets);
                 }
             }
@@ -524,7 +524,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             if aax && scan_system {
                 let path = PathBuf::from(format!(
                     "/Library/Application Support/Avid/Audio/Plug-Ins/{}.aaxplugin",
-                    p.name
+                    p.file_stem()
                 ));
                 push_if_exists("AAX", path, true, &mut targets);
             }
@@ -540,13 +540,13 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                         let dir = s.standalone_dir();
                         push_if_exists(
                             "Standalone",
-                            dir.join(format!("{}.app", p.name)),
+                            dir.join(format!("{}.app", p.file_stem())),
                             s.needs_sudo(),
                             &mut targets,
                         );
                         push_if_exists(
                             "Standalone",
-                            dir.join(format!("{}.standalone.app", p.name)),
+                            dir.join(format!("{}.standalone.app", p.file_stem())),
                             s.needs_sudo(),
                             &mut targets,
                         );

@@ -209,12 +209,12 @@ pub(crate) fn cmd_package(
             // `--no-pace-sign` (or `--no-sign`) skips the wraptool round-trip
             // while keeping Authenticode for smoke tests.
             if !opts.no_pace_sign && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
-                let aax_bundle = staging.join(format!("{}.aaxplugin", p.name));
+                let aax_bundle = staging.join(format!("{}.aaxplugin", p.file_stem()));
                 for &arch in &archs {
                     let inner_wrapper = aax_bundle
                         .join("Contents")
                         .join(arch.aax_bundle_subdir())
-                        .join(format!("{}.aaxplugin", p.name));
+                        .join(format!("{}.aaxplugin", p.file_stem()));
                     if inner_wrapper.exists() {
                         pace_sign_aax(&inner_wrapper)?;
                     }
@@ -733,7 +733,7 @@ fn stage_clap(
     }
     let dst_dir = staging.join("clap").join(arch.tag());
     fs::create_dir_all(&dst_dir)?;
-    let dst = dst_dir.join(format!("{}.clap", p.name));
+    let dst = dst_dir.join(format!("{}.clap", p.file_stem()));
     fs::copy(&dll, &dst)?;
     Ok(dst)
 }
@@ -806,10 +806,10 @@ fn stage_vst3(
         return Err(format!("Missing: {}", dll.display()).into());
     }
     let bundle_root = staging.join("vst3");
-    let bundle = bundle_root.join(format!("{}.vst3", p.name));
+    let bundle = bundle_root.join(format!("{}.vst3", p.file_stem()));
     let arch_dir = bundle.join("Contents").join(arch.vst3_bundle_subdir());
     fs::create_dir_all(&arch_dir)?;
-    let inner = arch_dir.join(format!("{}.vst3", p.name));
+    let inner = arch_dir.join(format!("{}.vst3", p.file_stem()));
     fs::copy(&dll, &inner)?;
     Ok(inner)
 }
@@ -830,7 +830,7 @@ fn stage_vst2(
     }
     let dst_dir = staging.join("vst2").join(arch.tag());
     fs::create_dir_all(&dst_dir)?;
-    let dst = dst_dir.join(format!("{}.dll", p.name));
+    let dst = dst_dir.join(format!("{}.dll", p.file_stem()));
     fs::copy(&dll, &dst)?;
     Ok(dst)
 }
@@ -959,14 +959,14 @@ fn stage_aax(
     }
 
     let bundle_root = staging.join("aax");
-    let bundle = bundle_root.join(format!("{}.aaxplugin", p.name));
+    let bundle = bundle_root.join(format!("{}.aaxplugin", p.file_stem()));
     let contents = bundle.join("Contents");
     let arch_dir = contents.join(arch.aax_bundle_subdir());
     let resources_dir = contents.join("Resources");
     fs::create_dir_all(&arch_dir)?;
     fs::create_dir_all(&resources_dir)?;
 
-    let wrapper = arch_dir.join(format!("{}.aaxplugin", p.name));
+    let wrapper = arch_dir.join(format!("{}.aaxplugin", p.file_stem()));
     // Arch-tagged dylib so multi-arch bundles don't collide in Resources/.
     // The bridge C++ code scans Resources/*.dll via FindFirstFileA and loads
     // the first one whose arch matches the current process - arch tagging
@@ -1826,7 +1826,7 @@ fn component_install_size(
                 let f = staging
                     .join("clap")
                     .join(a.tag())
-                    .join(format!("{}.clap", p.name));
+                    .join(format!("{}.clap", p.file_stem()));
                 fs::metadata(&f).ok().map(|m| m.len())
             })
             .max()
@@ -1837,7 +1837,7 @@ fn component_install_size(
                 let f = staging
                     .join("vst2")
                     .join(a.tag())
-                    .join(format!("{}.dll", p.name));
+                    .join(format!("{}.dll", p.file_stem()));
                 fs::metadata(&f).ok().map(|m| m.len())
             })
             .max()
@@ -1861,7 +1861,7 @@ fn component_install_size(
         PkgFormat::Vst3 => {
             let contents = staging
                 .join("vst3")
-                .join(format!("{}.vst3", p.name))
+                .join(format!("{}.vst3", p.file_stem()))
                 .join("Contents");
             archs
                 .iter()
@@ -1869,9 +1869,11 @@ fn component_install_size(
                 .max()
                 .unwrap_or(0)
         }
-        PkgFormat::Aax => {
-            dir_size_recursive(&staging.join("aax").join(format!("{}.aaxplugin", p.name)))
-        }
+        PkgFormat::Aax => dir_size_recursive(
+            &staging
+                .join("aax")
+                .join(format!("{}.aaxplugin", p.file_stem())),
+        ),
         PkgFormat::Standalone => {
             let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
                 .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
@@ -2003,7 +2005,7 @@ fn iss_files_block(
             let src = staging
                 .join("clap")
                 .join(arch.tag())
-                .join(format!("{}.clap", p.name));
+                .join(format!("{}.clap", p.file_stem()));
             let src_quoted = iss_escape_path(&src);
             let dest = format!("{}\\CLAP", scoped_cf(scope));
             iss_dual_dest(
@@ -2022,7 +2024,7 @@ fn iss_files_block(
             // a use case we're optimizing for here).
             let src_dir = staging
                 .join("vst3")
-                .join(format!("{}.vst3", p.name))
+                .join(format!("{}.vst3", p.file_stem()))
                 .join("Contents")
                 .join(arch.vst3_bundle_subdir());
             let src_glob = src_dir.join("*");
@@ -2049,7 +2051,7 @@ fn iss_files_block(
             let src = staging
                 .join("vst2")
                 .join(arch.tag())
-                .join(format!("{}.dll", p.name));
+                .join(format!("{}.dll", p.file_stem()));
             let src_quoted = iss_escape_path(&src);
             iss_admin_only(
                 scope,
@@ -2103,7 +2105,7 @@ fn iss_files_block(
             // to it - ISCC would fail on a missing Source otherwise.
             let src_arch_dir = staging
                 .join("aax")
-                .join(format!("{}.aaxplugin", p.name))
+                .join(format!("{}.aaxplugin", p.file_stem()))
                 .join("Contents")
                 .join(arch.aax_bundle_subdir());
             if !src_arch_dir.exists() {
@@ -2112,7 +2114,7 @@ fn iss_files_block(
             let src_arch_glob = src_arch_dir.join("*");
             let resource_dll = staging
                 .join("aax")
-                .join(format!("{}.aaxplugin", p.name))
+                .join(format!("{}.aaxplugin", p.file_stem()))
                 .join("Contents")
                 .join("Resources")
                 .join(format!("{}_aax_{}.dll", p.dylib_stem(), arch.tag()));

@@ -56,7 +56,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
 
     let bundles_dir = truce_build::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
-    let staged = bundles_dir.join(standalone_bundle_name(&plugin.name));
+    let staged = bundles_dir.join(standalone_bundle_name(&plugin.file_stem()));
 
     if !no_build {
         eprintln!("Building {} standalone...", plugin.name);

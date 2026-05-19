@@ -484,7 +484,7 @@ fn stage_standalone_payload(
     // `target/bundles/<Plugin>.standalone`. macOS uses `.app`,
     // Windows uses `.exe`. We're producing a Linux tarball, so the
     // ELF is the canonical case.
-    let candidate = bundles_dir.join(format!("{}.standalone", plugin.name));
+    let candidate = bundles_dir.join(format!("{}.standalone", plugin.file_stem()));
     if !candidate.exists() {
         return Ok(None);
     }

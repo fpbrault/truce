@@ -11,11 +11,9 @@
 //! residual gap between this design and the pre-vectorization
 //! baseline; routing through the vectorized math closes it.
 //!
-//! Decision context lives in
-//! `truce-docs/internal/simd-friendly-dsp-shared-param-fix.md` §4
-//! (Approach B). The trade-off vs. a scalar precompute: one extra
-//! stack allocation (`lin: [f32; MAX_BLOCK]`) and one extra pass
-//! over the envelope. Net win measurable when N smoothers ≥ ~4.
+//! Trade-off vs. a scalar precompute: one extra stack allocation
+//! (`lin: [f32; MAX_BLOCK]`) and one extra pass over the envelope.
+//! Net win measurable when N smoothers ≥ ~4.
 
 use truce::prelude::*;
 use truce_core::buffer::ChunkItem;
