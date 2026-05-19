@@ -109,7 +109,7 @@ impl PluginLogic for Gate {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![
             knob(P::Threshold, "Thresh").at(0, 0),
-            meter(&[P::MeterLeft, P::MeterRight], "Level").at(0, 1),
+            meter(&[P::MeterLeft, P::MeterRight], "Level").at(1, 0),
         ])])
         .with_title("GATE")
     }
