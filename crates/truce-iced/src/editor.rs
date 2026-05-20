@@ -1,8 +1,10 @@
 //! `IcedEditor` - implements `truce_core::Editor` using iced for rendering.
 //!
-//! Uses `iced_runtime::program::State` for manual iced runtime driving
-//! and `iced_wgpu` for GPU-accelerated rendering, embedded as a child
-//! of the host's parent window via baseview.
+//! Drives iced's `UserInterface` directly each frame against a wgpu
+//! surface provided by baseview. Used to lean on
+//! `iced_runtime::program::State` for this; that surface was removed
+//! in iced 0.14, so this module now manages the build / update / draw
+//! / cache cycle inline.
 
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -13,9 +15,6 @@ use truce_core::editor::{Editor, PluginContext};
 use truce_gui::EditorScale;
 use truce_gui::layout::GridLayout;
 use truce_params::Params;
-
-// Use iced_wgpu::Renderer directly (matches iced::Renderer when tiny-skia is disabled)
-type IcedRenderer = iced_wgpu::Renderer;
 
 use crate::auto_layout;
 use crate::param_cache::ParamCache;
@@ -82,7 +81,10 @@ impl<P: Params> IcedPlugin<P> for AutoPlugin {
     }
 }
 
-// IcedProgram - adapts IcedPlugin to iced_runtime::Program
+// IcedProgram - holds the plugin model + the shadow state the runtime
+// reads / writes each frame. Used to implement `iced_runtime::Program`,
+// but that trait no longer exists in iced 0.14; the runtime drives
+// this type directly via `dispatch` / `view`.
 
 pub(crate) struct IcedProgram<P: Params + 'static, M: IcedPlugin<P>> {
     pub(crate) plugin: M,
@@ -104,31 +106,32 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedProgram<P, M> {
             }
         }
     }
-}
 
-impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgram<P, M> {
-    type Renderer = IcedRenderer;
-    type Theme = iced::Theme;
-    type Message = Message<M::Message>;
-
-    fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
-        // Handle param messages - forward to host
+    /// Handle a single message: forward param events to the host, sync
+    /// the shadow cache on `Tick`, and otherwise hand the message to
+    /// the plugin's own `update`. The plugin may return a `Task` -
+    /// truce-iced doesn't run an executor for embedded use, so the
+    /// task is dropped. Plugin code that needs async work should
+    /// thread it through its own host hooks rather than relying on
+    /// iced's task runtime.
+    pub(crate) fn dispatch(&mut self, message: Message<M::Message>) {
         if let Message::Param(ref param_msg) = message {
             self.apply_param_message(param_msg);
         }
 
         match message {
             Message::Tick => {
-                // Sync params and meters from atomics
                 self.param_cache.sync(&self.context);
                 self.param_cache.sync_meters(&self.context, &self.meter_ids);
-                Task::none()
             }
-            other => self.plugin.update(other, &self.param_cache, &self.context),
+            other => {
+                let _: Task<Message<M::Message>> =
+                    self.plugin.update(other, &self.param_cache, &self.context);
+            }
         }
     }
 
-    fn view(&self) -> iced::Element<'_, Self::Message> {
+    pub(crate) fn view(&self) -> iced::Element<'_, Message<M::Message>> {
         self.plugin.view(&self.param_cache)
     }
 }
@@ -295,16 +298,29 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
 }
 
 /// Holds the full wgpu + iced rendering pipeline.
-struct RenderState<P: Params, M: IcedPlugin<P>> {
+///
+/// Replaces what `iced_runtime::program::State` used to encapsulate
+/// in our 0.13 setup: we own the plugin model + the `UserInterface`
+/// cache that lets iced reuse layout work between frames, and drive
+/// the build / update / draw / extract-cache cycle by hand each
+/// `tick()`.
+struct RenderState<P: Params + 'static, M: IcedPlugin<P>> {
+    /// Cloned wgpu handle for surface (re)configuration. The "primary"
+    /// device + queue handles live inside `renderer`'s `Engine`.
     device: wgpu::Device,
-    queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
-    engine: iced_wgpu::Engine,
     renderer: iced_wgpu::Renderer,
-    state: iced_runtime::program::State<IcedProgram<P, M>>,
+    program: IcedProgram<P, M>,
+    /// `iced_runtime::UserInterface` cache between frames. Holds widget
+    /// internal state (focus, scroll positions, ...) so we don't lose
+    /// it between layout passes. `None` only mid-`tick()` between
+    /// build and extract.
+    ui_cache: Option<iced_runtime::user_interface::Cache>,
+    /// Most recent mouse interaction reported by the UI's draw pass.
+    /// Polled by the baseview handler to update the OS cursor.
+    interaction: iced::mouse::Interaction,
     viewport: iced_graphics::Viewport,
-    debug: iced_runtime::Debug,
     theme: iced::Theme,
     bg_color: Color,
 }
@@ -331,33 +347,36 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         let w = truce_gui::to_physical_px(lw, render_scale);
         let h = truce_gui::to_physical_px(lh, render_scale);
 
-        let Some(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            }))
-        else {
-            log::warn!("no suitable GPU adapter found");
-            self.program = Some(program);
-            return false;
-        };
+            })) {
+                Ok(a) => a,
+                Err(e) => {
+                    log::warn!("no suitable GPU adapter found: {e}");
+                    self.program = Some(program);
+                    return false;
+                }
+            };
 
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
+        let (device, queue) =
+            match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("truce-iced"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )) {
-            Ok(dq) => dq,
-            Err(e) => {
-                log::error!("failed to create wgpu device: {e}");
-                self.program = Some(program);
-                return false;
-            }
-        };
+                experimental_features: wgpu::ExperimentalFeatures::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+            })) {
+                Ok(dq) => dq,
+                Err(e) => {
+                    log::error!("failed to create wgpu device: {e}");
+                    self.program = Some(program);
+                    return false;
+                }
+            };
 
         let surface_caps = surface.get_capabilities(&adapter);
         if surface_caps.formats.is_empty() {
@@ -388,12 +407,17 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         };
         surface.configure(&device, &surface_config);
 
+        // wgpu::Device / Queue are cheaply Clone-able (internally Arc'd);
+        // hand the canonical pair to `Engine::new` and keep clones for
+        // post-init surface reconfiguration.
+        let surface_device = device.clone();
         let engine = iced_wgpu::Engine::new(
             &adapter,
-            &device,
-            &queue,
+            device,
+            queue,
             surface_format,
             Some(iced_graphics::Antialiasing::MSAAx4),
+            iced_graphics::Shell::headless(),
         );
 
         let default_font = if let Some((family, data)) = self.font {
@@ -401,32 +425,27 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         } else {
             iced::Font::DEFAULT
         };
-        let mut renderer =
-            iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
+        let renderer = iced_wgpu::Renderer::new(engine, default_font, iced::Pixels(14.0));
 
-        let viewport = iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale);
-        let mut debug = iced_runtime::Debug::new();
+        // Scale is a display DPI factor (typically 1.0..=3.0); the
+        // narrowing here is a documented host convention loss, not a
+        // numeric overflow.
+        #[allow(clippy::cast_possible_truncation)]
+        let viewport =
+            iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale as f32);
         let theme = program.plugin.theme();
-
-        let state = iced_runtime::program::State::new(
-            program,
-            viewport.logical_size(),
-            &mut renderer,
-            &mut debug,
-        );
 
         let bg = crate::theme::truce_dark_theme().palette().background;
 
         self.render = Some(RenderState {
-            device,
-            queue,
+            device: surface_device,
             surface,
             surface_config,
-            engine,
             renderer,
-            state,
+            program,
+            ui_cache: Some(iced_runtime::user_interface::Cache::new()),
+            interaction: iced::mouse::Interaction::default(),
             viewport,
-            debug,
             theme,
             bg_color: bg,
         });
@@ -466,36 +485,75 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             render
                 .surface
                 .configure(&render.device, &render.surface_config);
+            #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
+            let scale_f32 = cur_scale as f32;
             render.viewport =
-                iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), cur_scale);
+                iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale_f32);
             self.last_applied_scale = cur_scale;
         }
 
-        // Queue Tick message to sync params/meters
-        render.state.queue_message(Message::Tick);
-
-        // Queue any pending mouse events
-        for event in self.pending_events.drain(..) {
-            render.state.queue_event(event);
-        }
+        // Process the per-frame "sync params and meters" tick + any
+        // events queued by baseview before we touch iced. Tick first so
+        // the view rebuilt below sees fresh shadow values; events after
+        // are folded into the same UserInterface update pass.
+        render.program.dispatch(Message::Tick);
 
         let cursor = iced::mouse::Cursor::Available(self.cursor_position);
-
+        let logical_size = render.viewport.logical_size();
         let style = iced_runtime::core::renderer::Style {
             text_color: Color::from_rgb(0.90, 0.90, 0.92),
         };
 
-        let _ = render.state.update(
-            render.viewport.logical_size(),
-            cursor,
+        // Build the user interface for this frame from the current
+        // model. The borrow of `render.program` is dropped at
+        // `into_cache()`, after which we can re-enter `dispatch` for
+        // each collected message.
+        let mut messages: Vec<Message<M::Message>> = Vec::new();
+        let cache = render
+            .ui_cache
+            .take()
+            .unwrap_or_else(iced_runtime::user_interface::Cache::new);
+        let view_element = render.program.view();
+        let mut user_interface = iced_runtime::UserInterface::build(
+            view_element,
+            logical_size,
+            cache,
             &mut render.renderer,
-            &render.theme,
-            &style,
-            &mut iced_runtime::core::clipboard::Null,
-            &mut render.debug,
         );
 
-        // Present: get surface texture, render, submit
+        let pending_events = std::mem::take(&mut self.pending_events);
+        let (ui_state, _statuses) = user_interface.update(
+            &pending_events,
+            cursor,
+            &mut render.renderer,
+            &mut iced_runtime::core::clipboard::Null,
+            &mut messages,
+        );
+        // `UserInterface::update` is where the mouse interaction is
+        // reported in iced 0.14 (0.13 returned it from `draw`).
+        // `Outdated` means the widget tree changed and we'd want to
+        // rebuild for accuracy; defer to the next frame and keep the
+        // previous interaction value in the meantime.
+        if let iced_runtime::user_interface::State::Updated {
+            mouse_interaction, ..
+        } = ui_state
+        {
+            render.interaction = mouse_interaction;
+        }
+
+        user_interface.draw(&mut render.renderer, &render.theme, &style, cursor);
+
+        render.ui_cache = Some(user_interface.into_cache());
+
+        // Now we can mutate the program again - drain any messages the
+        // event handlers produced.
+        for message in messages {
+            render.program.dispatch(message);
+        }
+
+        // Present: get surface texture, render, submit. iced 0.14's
+        // `Renderer::present` builds its own encoder + submits to the
+        // queue internally, so we no longer manage either by hand.
         let frame = match render.surface.get_current_texture() {
             Ok(f) => f,
             Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Outdated) => {
@@ -514,33 +572,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = render
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("truce-iced-encoder"),
-            });
-
-        // `Debug::overlay()` allocates a fresh `Vec<String>` from iced's
-        // internal frame metrics every call; that's wasted work in
-        // release where the overlay is invisible anyway.
-        let overlay: Vec<String> = if cfg!(debug_assertions) {
-            render.debug.overlay()
-        } else {
-            Vec::new()
-        };
-        render.renderer.present(
-            &mut render.engine,
-            &render.device,
-            &render.queue,
-            &mut encoder,
+        let _ = render.renderer.present(
             Some(render.bg_color),
             render.surface_config.format,
             &view,
             &render.viewport,
-            &overlay,
         );
 
-        render.engine.submit(&render.queue, encoder);
         frame.present();
     }
 
@@ -601,7 +639,6 @@ fn iced_interaction_to_cursor(interaction: iced::mouse::Interaction) -> baseview
         Interaction::Grabbing => baseview::MouseCursor::HandGrabbing,
         Interaction::Text => baseview::MouseCursor::Text,
         Interaction::Crosshair => baseview::MouseCursor::Crosshair,
-        Interaction::Working => baseview::MouseCursor::Working,
         Interaction::NotAllowed => baseview::MouseCursor::NotAllowed,
         Interaction::ResizingHorizontally => baseview::MouseCursor::EwResize,
         Interaction::ResizingVertically => baseview::MouseCursor::NsResize,
@@ -615,7 +652,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
         if let Some(ref mut runtime) = editor.runtime {
             runtime.tick();
             if let Some(ref render) = runtime.render {
-                let cursor = iced_interaction_to_cursor(render.state.mouse_interaction());
+                let cursor = iced_interaction_to_cursor(render.interaction);
                 if self.last_cursor != Some(cursor) {
                     self.last_cursor = Some(cursor);
                     window.set_mouse_cursor(cursor);
@@ -711,10 +748,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     render
                         .surface
                         .configure(&render.device, &render.surface_config);
-                    render.viewport = iced_graphics::Viewport::with_physical_size(
-                        Size::new(pw, ph),
-                        info.scale(),
-                    );
+                    #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
+                    let scale_f32 = info.scale() as f32;
+                    render.viewport =
+                        iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale_f32);
                 }
                 baseview::EventStatus::Captured
             }
@@ -779,7 +816,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             &parent_wrapper,
             options,
             move |window: &mut baseview::Window| {
-                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                     backends: wgpu::Backends::PRIMARY,
                     ..Default::default()
                 });
@@ -857,8 +894,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                 let scale = self.scale.get();
                 let pw = truce_gui::to_physical_px(width, scale);
                 let ph = truce_gui::to_physical_px(height, scale);
+                #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
+                let scale_f32 = scale as f32;
                 render.viewport =
-                    iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale);
+                    iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale_f32);
                 render.surface_config.width = pw;
                 render.surface_config.height = ph;
                 render

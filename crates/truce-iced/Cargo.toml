@@ -14,9 +14,9 @@ truce-params = { workspace = true }
 truce-gui = { workspace = true }
 
 log = "0.4"
-iced = { version = "0.13", default-features = false, features = ["canvas", "wgpu"] }
-iced_runtime = "0.13"
-iced_graphics = "0.13"
+iced = { version = "0.14", default-features = false, features = ["canvas", "wgpu", "thread-pool"] }
+iced_runtime = "0.14"
+iced_graphics = "0.14"
 raw-window-handle = "0.5"
 
 # baseview + iced_wgpu live behind these on non-iOS hosts. iOS uses

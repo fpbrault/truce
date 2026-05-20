@@ -158,8 +158,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
             position: Point::new(cx, text_y),
             color: Color::from_rgb(0.90, 0.90, 0.92),
             size: iced::Pixels(11.0),
-            horizontal_alignment: alignment::Horizontal::Center,
-            vertical_alignment: alignment::Vertical::Top,
+            align_x: alignment::Horizontal::Center.into(),
+            align_y: alignment::Vertical::Top,
             font: self.font,
             ..Text::default()
         });
@@ -172,8 +172,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                 position: Point::new(cx, label_y),
                 color: theme::TEXT_DIM,
                 size: iced::Pixels(10.0),
-                horizontal_alignment: alignment::Horizontal::Center,
-                vertical_alignment: alignment::Vertical::Top,
+                align_x: alignment::Horizontal::Center.into(),
+                align_y: alignment::Vertical::Top,
                 font: self.font,
                 ..Text::default()
             });
@@ -185,10 +185,10 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
     fn update(
         &self,
         state: &mut Self::State,
-        event: Event,
+        event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> (canvas::event::Status, Option<Message<M>>) {
+    ) -> Option<canvas::Action<Message<M>>> {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor.position_in(bounds) {
@@ -198,9 +198,11 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                         state.dragging = true;
                         state.start_value = self.value;
                         state.start_x = pos.x;
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Message::Param(ParamMessage::BeginEdit(self.id))),
+                        return Some(
+                            canvas::Action::publish(Message::Param(ParamMessage::BeginEdit(
+                                self.id,
+                            )))
+                            .and_capture(),
                         );
                     }
                 }
@@ -211,26 +213,26 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                     let track_width = bounds.width - THUMB_RADIUS * 2.0;
                     let delta = (current_x - state.start_x) / track_width;
                     let new_value = (state.start_value + delta).clamp(0.0, 1.0);
-                    return (
-                        canvas::event::Status::Captured,
-                        Some(Message::Param(ParamMessage::SetNormalized(
+                    return Some(
+                        canvas::Action::publish(Message::Param(ParamMessage::SetNormalized(
                             self.id,
                             f64::from(new_value),
-                        ))),
+                        )))
+                        .and_capture(),
                     );
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.dragging => {
                 state.dragging = false;
-                return (
-                    canvas::event::Status::Captured,
-                    Some(Message::Param(ParamMessage::EndEdit(self.id))),
+                return Some(
+                    canvas::Action::publish(Message::Param(ParamMessage::EndEdit(self.id)))
+                        .and_capture(),
                 );
             }
             _ => {}
         }
 
-        (canvas::event::Status::Ignored, None)
+        None
     }
 
     fn mouse_interaction(

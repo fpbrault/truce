@@ -12,6 +12,7 @@ pub fn truce_dark_theme() -> iced::Theme {
             text: Color::from_rgb(0.90, 0.90, 0.92),
             primary: Color::from_rgb(0.30, 0.60, 0.95),
             success: Color::from_rgb(0.30, 0.80, 0.30),
+            warning: Color::from_rgb(0.95, 0.75, 0.30),
             danger: Color::from_rgb(0.90, 0.30, 0.30),
         },
     )

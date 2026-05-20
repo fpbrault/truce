@@ -139,11 +139,11 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
     fn update(
         &self,
         _state: &mut Self::State,
-        _event: canvas::Event,
+        _event: &canvas::Event,
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
-    ) -> (canvas::event::Status, Option<Message<M>>) {
+    ) -> Option<canvas::Action<Message<M>>> {
         // Display-only, no interaction
-        (canvas::event::Status::Ignored, None)
+        None
     }
 }

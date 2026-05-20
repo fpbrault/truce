@@ -157,8 +157,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                 position: Point::new(s / 2.0, s + 2.0),
                 color: theme::TEXT_DIM,
                 size: iced::Pixels(10.0),
-                horizontal_alignment: iced::alignment::Horizontal::Center,
-                vertical_alignment: iced::alignment::Vertical::Top,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Top,
                 font: self.font,
                 ..Default::default()
             });
@@ -170,10 +170,10 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
     fn update(
         &self,
         state: &mut Self::State,
-        event: Event,
+        event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
-    ) -> (canvas::event::Status, Option<Message<M>>) {
+    ) -> Option<canvas::Action<Message<M>>> {
         let s = self.pad_size;
 
         match event {
@@ -181,12 +181,12 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                 if cursor.position_in(bounds).is_some() =>
             {
                 state.dragging = true;
-                return (
-                    canvas::event::Status::Captured,
-                    Some(Message::Param(ParamMessage::Batch(vec![
+                return Some(
+                    canvas::Action::publish(Message::Param(ParamMessage::Batch(vec![
                         ParamMessage::BeginEdit(self.x_id),
                         ParamMessage::BeginEdit(self.y_id),
-                    ]))),
+                    ])))
+                    .and_capture(),
                 );
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
@@ -198,29 +198,29 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                 if let Some(pos) = cursor.position() {
                     let x_norm = f64::from(((pos.x - bounds.x) / s).clamp(0.0, 1.0));
                     let y_norm = f64::from((1.0 - (pos.y - bounds.y) / s).clamp(0.0, 1.0));
-                    return (
-                        canvas::event::Status::Captured,
-                        Some(Message::Param(ParamMessage::Batch(vec![
+                    return Some(
+                        canvas::Action::publish(Message::Param(ParamMessage::Batch(vec![
                             ParamMessage::SetNormalized(self.x_id, x_norm),
                             ParamMessage::SetNormalized(self.y_id, y_norm),
-                        ]))),
+                        ])))
+                        .and_capture(),
                     );
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.dragging => {
                 state.dragging = false;
-                return (
-                    canvas::event::Status::Captured,
-                    Some(Message::Param(ParamMessage::Batch(vec![
+                return Some(
+                    canvas::Action::publish(Message::Param(ParamMessage::Batch(vec![
                         ParamMessage::EndEdit(self.x_id),
                         ParamMessage::EndEdit(self.y_id),
-                    ]))),
+                    ])))
+                    .and_capture(),
                 );
             }
             _ => {}
         }
 
-        (canvas::event::Status::Ignored, None)
+        None
     }
 
     fn mouse_interaction(
