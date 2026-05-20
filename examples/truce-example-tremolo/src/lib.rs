@@ -9,11 +9,10 @@
 //! ("-") for unknown fields in the readout.
 
 use truce::prelude::*;
-use truce_core::cast::len_u32;
 use truce_core::editor::PluginContext;
 use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
-use truce_egui::widgets::{param_knob, param_selector};
+use truce_egui::widgets::{param_dropdown, param_knob};
 use truce_gui::font;
 
 const WINDOW_W: u32 = 270;
@@ -207,14 +206,8 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
             ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
             ui.horizontal(|ui| {
                 param_knob(ui, state, P::Depth, "Depth");
-                param_selector(ui, state, P::Rate, "Rate", len_u32(Rate::variant_count()));
-                param_selector(
-                    ui,
-                    state,
-                    P::Shape,
-                    "Shape",
-                    len_u32(Shape::variant_count()),
-                );
+                param_dropdown(ui, state, P::Rate, "Rate");
+                param_dropdown(ui, state, P::Shape, "Shape");
             });
 
             // Keep the UI animating so the beat position readout updates

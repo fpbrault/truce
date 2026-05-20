@@ -708,7 +708,7 @@ fn resolve_widget_type<P: Params>(
                 Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => {
                     widgets::WidgetType::Toggle
                 }
-                Some(truce_params::ParamRange::Enum { .. }) => widgets::WidgetType::Selector,
+                Some(truce_params::ParamRange::Enum { .. }) => widgets::WidgetType::Dropdown,
                 _ => widgets::WidgetType::Knob,
             }
         }

@@ -149,7 +149,7 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
         let info = p_wtype.param_infos().iter().find(|i| i.id == id).copied();
         match info.as_ref().map(|i| &i.range) {
             Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => WidgetType::Toggle,
-            Some(truce_params::ParamRange::Enum { .. }) => WidgetType::Selector,
+            Some(truce_params::ParamRange::Enum { .. }) => WidgetType::Dropdown,
             _ => WidgetType::Knob,
         }
     });
