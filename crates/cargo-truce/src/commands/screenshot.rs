@@ -21,11 +21,15 @@
 
 use crate::{Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root};
 use std::path::{Path, PathBuf};
-// `Command` is only used by the iOS / `simctl` paths which are
-// themselves gated on macOS; matching the cfg here keeps non-macOS
-// builds warning-free.
+// `Command`, `Duration`, `Instant`, and `thread::sleep` are only
+// used by the iOS / `simctl` paths which are themselves gated on
+// macOS; matching the cfg here keeps non-macOS builds warning-free.
 #[cfg(target_os = "macos")]
 use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::thread::sleep;
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
 
 /// FFI signature the CLI casts the dlopen'd `__truce_screenshot`
 /// symbol to.
@@ -483,18 +487,27 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
                 "    simctl launch attempt {} failed; retrying after 500ms...",
                 attempt + 1
             );
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            sleep(Duration::from_millis(500));
         }
     }
     if !launched_ok {
         let status = last_status.expect("loop ran at least once");
         return Err(format!("simctl launch exited {status} after 5 attempts").into());
     }
-    // Give the editor + audio pipeline ~1.5s to lay out + paint
-    // its first frame. CADisplayLink runs at 60Hz so a single frame
-    // is enough, but the AUv3 instantiate-then-gui_open path is
-    // dispatched async on the main queue (~100ms typical).
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    // Wait for the editor to actually paint before snapping the
+    // screenshot. The editor writes `_truce_editor_frame.json` into
+    // its Documents container on first layout, which is a
+    // deterministic signal that gui_open + the first paint pass
+    // have run. Polling for that file is robust across cold CI
+    // runners where a fixed `sleep(1500)` sometimes catches the
+    // launch transition's white frame before the app's UI lands.
+    wait_for_editor_frame_json(&bundle_id);
+    // Small grace pause once the JSON appears: the file lands at
+    // the end of `BuiltinEditor::open`'s first paint, but a host
+    // sometimes drives one more frame for animated content. Cheap
+    // insurance against per-DAW jitter; doesn't change the happy-
+    // path latency materially.
+    sleep(Duration::from_millis(250));
     let resolved_out = if out_path.is_absolute() {
         out_path.clone()
     } else {
@@ -692,6 +705,46 @@ struct EditorFrame {
     /// so the frame coords (which are in the rendered UI's space)
     /// line up. `None` for older containers that didn't write it.
     orientation: Option<String>,
+}
+
+/// Poll the simulator's app data container for the editor's
+/// `_truce_editor_frame.json` and return once it appears (or a
+/// generous timeout elapses). The file is written at the end of
+/// `BuiltinEditor::open`'s first paint pass on iOS, so its
+/// presence is a deterministic "the editor has actually drawn at
+/// least once" signal — much more reliable than a fixed sleep on
+/// cold CI runners where launch transitions can take a few
+/// seconds. Best-effort: never returns an error, the caller's
+/// subsequent crop step will surface a clear diagnostic if the
+/// editor never came up.
+#[cfg(target_os = "macos")]
+fn wait_for_editor_frame_json(bundle_id: &str) {
+    const TIMEOUT: Duration = Duration::from_secs(10);
+    const POLL_INTERVAL: Duration = Duration::from_millis(150);
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        // Resolve the container fresh each iteration: `installd`
+        // sometimes returns the path slightly before the Documents
+        // directory is populated, and a stale path from the
+        // previous install would lead us astray.
+        if let Ok(out) = Command::new("xcrun")
+            .args(["simctl", "get_app_container", "booted", bundle_id, "data"])
+            .output()
+            && out.status.success()
+        {
+            let container = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !container.is_empty() {
+                let frame_path = Path::new(&container).join("Documents/_truce_editor_frame.json");
+                if frame_path.exists() {
+                    return;
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        sleep(POLL_INTERVAL);
+    }
 }
 
 #[cfg(target_os = "macos")]
