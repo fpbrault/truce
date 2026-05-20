@@ -1,6 +1,7 @@
 //! Rotary knob control bound to a truce parameter.
 
 use truce_core::editor::{PluginContext, PluginContextReadF32};
+use truce_params::Params;
 
 const KNOB_SIZE: f32 = 60.0;
 const KNOB_TOTAL_H: f32 = 82.0;
@@ -15,7 +16,14 @@ const SWEEP: f32 = std::f32::consts::FRAC_PI_2 * 3.0; // 270° = 1.5π
 ///
 /// Drag vertically to adjust the value. The knob displays a 270-degree
 /// arc with a value indicator and the parameter's formatted value text.
-pub fn param_knob<P: ?Sized>(
+///
+/// Discrete-ranged params (`Discrete` / `Enum`) snap to their nearest
+/// step on each frame. Snapping uses a per-drag accumulator stored in
+/// egui memory so sub-step pointer movement isn't swallowed by the
+/// host's snap-on-write round-trip - without it, dragging a discrete
+/// knob feels stuck because each frame writes a sub-step delta that
+/// the host rounds back to the same value.
+pub fn param_knob<P: Params + ?Sized>(
     ui: &mut egui::Ui,
     state: &PluginContext<P>,
     id: impl Into<u32>,
@@ -27,17 +35,49 @@ pub fn param_knob<P: ?Sized>(
 
     let mut value = state.get_param(id);
 
-    // Handle vertical drag
+    // Number of transitions between adjacent discrete values for this
+    // param, or `None` for continuous params. Cast bound from
+    // `step_count`'s `NonZeroU32` (`<= u32::MAX`) into the typical
+    // single-digit count range an enum / discrete param sees in
+    // practice - the precision-loss `as f32` cast is exact for the
+    // values we care about.
+    let step_count = state
+        .params()
+        .param_infos()
+        .iter()
+        .find(|i| i.id == id)
+        .and_then(|info| info.range.step_count());
+
+    let acc_id = ui.make_persistent_id(("truce-egui:param_knob:acc", id));
+
     if response.drag_started() {
         state.begin_edit(id);
+        // Seed the accumulator at the host's current snapped value so
+        // the first drag frame starts from where the user clicked.
+        ui.memory_mut(|m| m.data.insert_temp(acc_id, value));
     }
     if response.dragged() {
         let delta = -response.drag_delta().y / 150.0;
-        value = (value + delta).clamp(0.0, 1.0);
-        state.set_param(id, f64::from(value));
+        let prev_unrounded: f32 = ui
+            .memory(|m| m.data.get_temp::<f32>(acc_id))
+            .unwrap_or(value);
+        let unrounded = (prev_unrounded + delta).clamp(0.0, 1.0);
+        ui.memory_mut(|m| m.data.insert_temp(acc_id, unrounded));
+        let snapped = if let Some(steps) = step_count {
+            #[allow(clippy::cast_precision_loss)] // step counts fit in f32 mantissa
+            let n = steps.get() as f32;
+            (unrounded * n).round() / n
+        } else {
+            unrounded
+        };
+        if (snapped - value).abs() > 1e-5 {
+            value = snapped;
+            state.set_param(id, f64::from(value));
+        }
     }
     if response.drag_stopped() {
         state.end_edit(id);
+        ui.memory_mut(|m| m.data.remove_temp::<f32>(acc_id));
     }
 
     // Paint

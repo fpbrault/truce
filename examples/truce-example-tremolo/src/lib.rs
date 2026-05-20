@@ -25,13 +25,21 @@ use std::sync::Arc;
 
 /// LFO-cycle length as a note value. Maps directly to beats per cycle
 /// (`Quarter == 1.0`, `Eighth == 0.5`, ...).
+///
+/// Display labels use word forms down to Quarter, fractions below
+/// (`1/8`, `1/16`, `1/32`) - common producer-facing notation in the
+/// short rhythmic range where the fraction reads faster than the
+/// spelled-out word.
 #[derive(ParamEnum)]
 pub enum Rate {
     Whole,
     Half,
     Quarter,
+    #[name = "1/8"]
     Eighth,
+    #[name = "1/16"]
     Sixteenth,
+    #[name = "1/32"]
     ThirtySecond,
 }
 
@@ -206,8 +214,8 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
             ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
             ui.horizontal(|ui| {
                 param_knob(ui, state, P::Depth, "Depth");
-                param_dropdown(ui, state, P::Rate, "Rate");
-                param_dropdown(ui, state, P::Shape, "Shape");
+                param_knob(ui, state, P::Rate, "Rate");
+                param_dropdown(ui, state, P::Shape, "Shape", 1);
             });
 
             // Keep the UI animating so the beat position readout updates
@@ -217,7 +225,7 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
 }
 
 /// Read the editor's transport closure and render a compact readout
-/// like `▶ 128.0 BPM • 4/4 • ♩ 12.25` (or `■ - BPM` when stopped).
+/// like `▶ 128.0 BPM 4/4 ♩ 12.25` (or `■ - BPM` when stopped).
 fn draw_transport_readout(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
     let transport = state.transport();
     let line = format_transport(transport.as_ref());
@@ -252,7 +260,7 @@ fn format_transport(info: Option<&TransportInfo>) -> String {
     } else {
         "\u{2669} -".into()
     };
-    format!("{state}  {tempo}  \u{2022}  {sig}  \u{2022}  {beat}")
+    format!("{state} {tempo} {sig} {beat}")
 }
 
 truce::plugin! {
