@@ -372,6 +372,18 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
+    unsafe extern "system" {
+        fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
+    }
+    // SAFETY: `GetModuleHandleW(NULL)` is documented to return the running
+    // EXE's HMODULE without acquiring a refcount; no threading or aliasing
+    // concerns. Returns 0 only in pathological cases (kernel32 missing).
+    let hmodule = unsafe { GetModuleHandleW(std::ptr::null()) };
+    std::num::NonZeroIsize::new(hmodule)
+}
+
 /// Bridge a baseview raw-window-handle 0.5 to a wgpu-compatible
 /// `SurfaceTargetUnsafe` using rwh 0.6 types.
 ///
@@ -408,9 +420,16 @@ pub unsafe fn create_wgpu_surface(
                 if hwnd.is_null() {
                     return None;
                 }
-                let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(
-                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd as isize)?),
-                );
+                let mut win32 =
+                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd as isize)?);
+                // wgpu's Vulkan backend requires `hinstance` to be set
+                // (`vkCreateWin32SurfaceKHR` rejects a null HINSTANCE).
+                // baseview leaves the rwh 0.5 `hinstance` field at null,
+                // so populate it here with the running module's HMODULE.
+                // DX12 didn't require this, which is why the egui 0.34
+                // migration's switch from DX12 to Vulkan exposed it.
+                win32.hinstance = current_module_hinstance();
+                let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(win32);
                 let rwh6_display =
                     wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
                 wgpu::SurfaceTargetUnsafe::RawHandle {

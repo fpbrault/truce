@@ -135,8 +135,6 @@ toml = "1"
 # `vulkan`, `gles`) are added via target-conditional deps in
 # `truce-gpu/Cargo.toml`, then unified across the workspace.
 wgpu = { version = "29", default-features = false, features = ["wgsl"] }
-egui-wgpu = "0.34"
-iced_wgpu = "0.14"
 
 # The truce-audio fork carries the AAX / Pro Tools close-path fix
 # (responder / tracking-area / layer-contents cleanup). GUI crates

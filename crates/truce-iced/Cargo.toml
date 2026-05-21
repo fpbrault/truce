@@ -24,7 +24,7 @@ raw-window-handle = "0.5"
 # iOS needs the same CAMetalLayer plumbing the slint/egui backends
 # also defer. Plugin code stays portable through `IcedEditor`.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
-iced_wgpu = { workspace = true }
+iced_wgpu = "0.14"
 pollster = "0.4"
 baseview = { workspace = true }
 
