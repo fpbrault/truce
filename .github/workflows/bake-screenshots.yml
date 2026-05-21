@@ -276,6 +276,9 @@ jobs:
       - name: Bake iOS screenshots
         run: |
           set -euo pipefail
+          # Restart the simulator between plugins (see ci-ios.yml for
+          # rationale — accumulated AUExt / componentd / Metal state
+          # otherwise wedges later plugins' first paint).
           for crate in $EXAMPLE_CRATES; do
             if [ "$crate" = "truce-example-gain-iced" ]; then
               continue
@@ -285,6 +288,9 @@ jobs:
             default_out="examples/${crate}/screenshots/${short}_default_ios.png"
             container_out="examples/${crate}/screenshots/${short}_container_ios.png"
             echo "::group::Baking $default_out + $container_out"
+            xcrun simctl shutdown truce-bake 2>/dev/null || true
+            xcrun simctl boot truce-bake
+            xcrun simctl bootstatus truce-bake
             ./target/release/cargo-truce screenshot --ios \
               --out "$default_out" --container-out "$container_out" \
               -p "$crate"
