@@ -15,6 +15,18 @@ use raw_window_handle::HasRawWindowHandle;
 
 pub use truce_gui::platform::{ParentWindow, note_linux_scale_factor, query_backing_scale};
 
+#[cfg(target_os = "windows")]
+fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
+    unsafe extern "system" {
+        fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
+    }
+    // SAFETY: `GetModuleHandleW(NULL)` is documented to return the running
+    // EXE's HMODULE without acquiring a refcount; no threading or aliasing
+    // concerns. Returns 0 only in pathological cases (kernel32 missing).
+    let hmodule = unsafe { GetModuleHandleW(std::ptr::null()) };
+    std::num::NonZeroIsize::new(hmodule)
+}
+
 /// Bridge a baseview raw-window-handle 0.5 to the wgpu-0.19
 /// `SurfaceTargetUnsafe` type that `iced_wgpu` 0.13 expects.
 ///
@@ -42,14 +54,21 @@ pub unsafe fn create_wgpu_surface(
                 }
             }
             #[cfg(target_os = "windows")]
-            raw_window_handle::RawWindowHandle::Win32(h) => wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: wgpu::rwh::RawDisplayHandle::Windows(
-                    wgpu::rwh::WindowsDisplayHandle::new(),
-                ),
-                raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(
-                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(h.hwnd as isize)?),
-                ),
-            },
+            raw_window_handle::RawWindowHandle::Win32(h) => {
+                let mut win32 =
+                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(h.hwnd as isize)?);
+                // wgpu's Vulkan backend requires `hinstance` to be set
+                // (`vkCreateWin32SurfaceKHR` rejects a null HINSTANCE).
+                // See `truce-gui::platform::create_wgpu_surface` for the
+                // matching fix in the egui/gui/slint shared path.
+                win32.hinstance = current_module_hinstance();
+                wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: wgpu::rwh::RawDisplayHandle::Windows(
+                        wgpu::rwh::WindowsDisplayHandle::new(),
+                    ),
+                    raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(win32),
+                }
+            }
             #[cfg(target_os = "linux")]
             raw_window_handle::RawWindowHandle::Xlib(h) => {
                 use raw_window_handle::HasRawDisplayHandle;

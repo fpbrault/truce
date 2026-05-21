@@ -545,7 +545,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 
     // VST2 binary smoke (no industry validator; this is ours)
     if run_vst2 {
-        eprintln!("VST2 binary smoke\n");
+        eprintln!("\nVST2 binary smoke\n");
         #[cfg(target_os = "macos")]
         {
             failures += validate_vst2_macos(&plugins);

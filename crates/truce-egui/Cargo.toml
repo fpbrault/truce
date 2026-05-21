@@ -13,7 +13,9 @@ truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
 egui = "0.34"
-egui-wgpu = { workspace = true }
+# default-features off so wgpu/default doesn't re-enable every backend;
+# truce-gpu gates them per target_os.
+egui-wgpu = { version = "0.34", default-features = false }
 wgpu = { workspace = true }
 pollster = "0.4"
 raw-window-handle = "0.5"

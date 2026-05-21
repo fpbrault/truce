@@ -254,17 +254,25 @@ pub fn list_input_devices() -> (Option<String>, Vec<String>) {
 fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
     let host = cpal::default_host();
     let default_name = if output {
-        host.default_output_device().and_then(|d| d.name().ok())
+        host.default_output_device()
+            .and_then(|d| d.description().map(|desc| desc.name().to_string()).ok())
     } else {
-        host.default_input_device().and_then(|d| d.name().ok())
+        host.default_input_device()
+            .and_then(|d| d.description().map(|desc| desc.name().to_string()).ok())
     };
     let names = if output {
         host.output_devices()
-            .map(|it| it.filter_map(|d| d.name().ok()).collect())
+            .map(|it| {
+                it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
+                    .collect()
+            })
             .unwrap_or_default()
     } else {
         host.input_devices()
-            .map(|it| it.filter_map(|d| d.name().ok()).collect())
+            .map(|it| {
+                it.filter_map(|d| d.description().map(|desc| desc.name().to_string()).ok())
+                    .collect()
+            })
             .unwrap_or_default()
     };
     (default_name, names)
@@ -308,7 +316,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
 
     let config: cpal::StreamConfig = resolve_config(&initial_output, &default_config, opts);
     let sample_format = default_config.sample_format();
-    let sample_rate = f64::from(config.sample_rate.0);
+    let sample_rate = f64::from(config.sample_rate);
     let channels = config.channels as usize;
     let is_effect = P::info().category == PluginCategory::Effect;
 
@@ -351,7 +359,10 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
 
     // Initial output device name (may differ from the resolver's
     // requested name if it matched by substring).
-    let initial_output_name = initial_output.name().ok();
+    let initial_output_name = initial_output
+        .description()
+        .map(|d| d.name().to_string())
+        .ok();
     let output_current_name = Arc::new(Mutex::new(initial_output_name.clone()));
     let (output_cmd_tx, output_cmd_rx) = mpsc::channel::<OutputCmd>();
     let (open_result_tx, open_result_rx) = mpsc::channel::<Result<(), String>>();
@@ -501,7 +512,7 @@ fn setup_input_pipeline(
             Some(name) => find_device(audio_host, name, false),
             None => audio_host.default_input_device(),
         };
-        let name = device.and_then(|d| d.name().ok());
+        let name = device.and_then(|d| d.description().map(|desc| desc.name().to_string()).ok());
         if name.is_none() {
             eprintln!("Note: no input device found - input-enable will be a no-op.");
         }
@@ -681,7 +692,7 @@ fn open_output_stream<P: PluginExport>(
             .default_output_device()
             .ok_or_else(|| "no default audio output device".to_string())?,
     };
-    let resolved_name = device.name().ok();
+    let resolved_name = device.description().map(|d| d.name().to_string()).ok();
 
     let plugin_a = Arc::clone(&res.plugin);
     let pending_a = Arc::clone(&res.pending);
@@ -861,7 +872,7 @@ fn apply_input_state(
             None => host.default_input_device(),
         };
         if let Some(dev) = device {
-            let resolved = dev.name().ok();
+            let resolved = dev.description().map(|d| d.name().to_string()).ok();
             match build_and_play_input_stream(&dev, channels, sample_rate, Arc::clone(ring)) {
                 Ok(s) => {
                     *stream = Some(s);
@@ -902,7 +913,7 @@ fn build_and_play_input_stream(
     #[allow(clippy::cast_possible_truncation)]
     let input_config = cpal::StreamConfig {
         channels: channels as u16,
-        sample_rate: cpal::SampleRate(sample_rate_u32(sample_rate)),
+        sample_rate: sample_rate_u32(sample_rate),
         buffer_size: cpal::BufferSize::Default,
     };
     let stream = device
@@ -935,8 +946,8 @@ fn find_device(host: &cpal::Host, name: &str, output: bool) -> Option<cpal::Devi
         host.input_devices().ok()?
     };
     devices.into_iter().find(|d| {
-        d.name()
-            .is_ok_and(|n| n.to_lowercase().contains(&name.to_lowercase()))
+        d.description()
+            .is_ok_and(|desc| desc.name().to_lowercase().contains(&name.to_lowercase()))
     })
 }
 
@@ -956,7 +967,7 @@ fn resolve_config(
         // Verify the requested rate is in the supported set; fall
         // back silently if not.
         if let Ok(mut ranges) = device.supported_output_configs() {
-            let desired = cpal::SampleRate(sr);
+            let desired = sr;
             let supported =
                 ranges.any(|r| r.min_sample_rate() <= desired && r.max_sample_rate() >= desired);
             if supported {
@@ -965,7 +976,7 @@ fn resolve_config(
                 eprintln!(
                     "sample rate {sr} Hz not supported; \
                      using device default {}",
-                    default.sample_rate().0
+                    default.sample_rate()
                 );
             }
         }
