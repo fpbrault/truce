@@ -99,6 +99,12 @@ struct Scaffold {
     args: Vec<String>,
     /// Where the generated project lands after `run()`.
     generated: PathBuf,
+    /// Per-test snapshot of the staged `bundles/` directory. After
+    /// each `truce_subcommand` call, the shared target's `bundles/`
+    /// is renamed here while still under `build_lock`, then
+    /// assertions read from this path. Decouples test reads from
+    /// concurrent tests' wipes of the shared `bundles/`.
+    bundles_snapshot: PathBuf,
 }
 
 impl Scaffold {
@@ -106,11 +112,13 @@ impl Scaffold {
     fn new(label: &str, name: &str) -> Self {
         let run_dir = fresh_tempdir(label);
         let generated = run_dir.join(name);
+        let bundles_snapshot = run_dir.join("bundles-out");
         Self {
             label: label.into(),
             run_dir,
             args: vec!["new".into(), name.into()],
             generated,
+            bundles_snapshot,
         }
     }
 
@@ -119,6 +127,7 @@ impl Scaffold {
     fn new_workspace(label: &str, ws: &str, plugins: &[&str]) -> Self {
         let run_dir = fresh_tempdir(label);
         let generated = run_dir.join(ws);
+        let bundles_snapshot = run_dir.join("bundles-out");
         let mut args = vec!["new".into(), ws.into(), "--workspace".into()];
         args.extend(plugins.iter().map(std::string::ToString::to_string));
         Self {
@@ -126,6 +135,7 @@ impl Scaffold {
             run_dir,
             args,
             generated,
+            bundles_snapshot,
         }
     }
 
@@ -363,6 +373,24 @@ impl Scaffold {
                 diagnostics.join("\n"),
             ));
         }
+        // Snapshot the staged bundles to a per-test path before
+        // releasing `build_lock`. Stops a concurrent test's wipe of
+        // `<shared-target>/bundles` from racing this test's
+        // assertions: by the time the lock is released, our copy
+        // lives at `self.bundles_snapshot` and no other test touches
+        // it. Rename is atomic on the same volume (temp dir).
+        let _ = std::fs::remove_dir_all(&self.bundles_snapshot);
+        let staged = shared_target().join("bundles");
+        if staged.is_dir() {
+            std::fs::rename(&staged, &self.bundles_snapshot).map_err(|e| {
+                format!(
+                    "[{}] snapshot bundles {} -> {}: {e}",
+                    self.label,
+                    staged.display(),
+                    self.bundles_snapshot.display()
+                )
+            })?;
+        }
         // Echo cargo-truce output via eprintln so cargo test captures
         // it for the panic dump if a downstream assertion fails. No
         // output unless the test ultimately fails.
@@ -373,20 +401,21 @@ impl Scaffold {
         Ok(())
     }
 
-    /// Assert that `<shared-target>/bundles/` holds exactly `expected`
-    /// entries whose name ends with `ext` (e.g. `.clap`, `.vst3`).
-    /// Stronger end-to-end check than "cargo-truce exited 0" -
-    /// catches silent staging regressions (e.g. format-flag honored at
-    /// build time but bundle never materialized).
+    /// Assert that the per-test bundles snapshot holds exactly
+    /// `expected` entries whose name ends with `ext` (e.g. `.clap`,
+    /// `.vst3`). Stronger end-to-end check than "cargo-truce exited
+    /// 0" - catches silent staging regressions (e.g. format-flag
+    /// honored at build time but bundle never materialized).
     ///
-    /// Reads from the shared target dir because `truce_subcommand`
-    /// runs with `CARGO_TARGET_DIR` pointed there.
+    /// Reads from `self.bundles_snapshot`, populated by
+    /// `truce_subcommand` while holding `build_lock`. The shared
+    /// `<target>/bundles` would race with concurrent tests' wipes.
     fn assert_bundle_count_by_ext(&self, ext: &str, expected: usize) {
-        let bundles = shared_target().join("bundles");
-        let names: Vec<String> = std::fs::read_dir(&bundles)
+        let bundles = &self.bundles_snapshot;
+        let names: Vec<String> = std::fs::read_dir(bundles)
             .unwrap_or_else(|e| {
                 panic!(
-                    "[{}] target/bundles missing at {}: {e}\n{}",
+                    "[{}] bundles snapshot missing at {}: {e}\n{}",
                     self.label,
                     bundles.display(),
                     diagnose_target_layout(),
