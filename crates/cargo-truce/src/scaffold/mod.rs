@@ -45,18 +45,22 @@ pub use spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
 /// one place).
 pub struct Scaffolder {
     renderer: Renderer,
-    /// `v`-prefixed git tag (e.g. `v0.48.7`). Used by the default
-    /// `DepForm::GitTag` form and by both templates' commented
-    /// opt-in hints when `use_registry` is false.
+    /// `v`-prefixed git tag (e.g. `v0.48.7`). Used by the
+    /// `DepForm::GitTag` form (opt-in via `--github`) and by both
+    /// templates' commented opt-in hints when `use_registry` is
+    /// false.
     tag: String,
-    /// Plain semver (e.g. `0.48.7`). Used by `DepForm::Registry`
-    /// and the templates' registry-form branches.
+    /// Major-minor semver pin (e.g. `0.48`). Used by the default
+    /// `DepForm::Registry` form and the templates' registry-form
+    /// branches. Cargo's caret resolver expands this to
+    /// `>=0.48.0, <0.49.0`.
     version: String,
-    /// Toggled by `--no-github` on `cargo truce new`. Default
-    /// `false` preserves the historical git+tag pin; flipping to
-    /// `true` emits the crates.io registry pin instead. This is a
-    /// transitional flag — once the registry path is the long-term
-    /// happy path, the flag (and the `GitTag` form) can be removed.
+    /// Default `true` — scaffold emits the crates.io registry
+    /// pin. `--github` on `cargo truce new` flips this to `false`,
+    /// reverting to the pre-crates.io git+tag form. Both branches
+    /// stay supported during the migration; the flag (and the
+    /// `GitTag` arm of `DepForm`) can be removed once the
+    /// registry path is the only one in use.
     use_registry: bool,
 }
 
@@ -65,15 +69,29 @@ impl Scaffolder {
     /// derived from cargo-truce's own `CARGO_PKG_VERSION` — when
     /// the workspace version bumps, scaffolds automatically follow.
     ///
-    /// `use_registry` picks between the historical git+tag form
-    /// (false; the default) and the crates.io registry form (true,
-    /// opt-in via `--no-github`).
+    /// `use_registry` picks between the crates.io registry form
+    /// (true; the default) and the historical git+tag form
+    /// (false, opt-in via `--github`).
+    ///
+    /// The two pins use different precisions:
+    /// - `tag` keeps the full patch (`v0.48.7`). Git tags are
+    ///   immutable, so dropping the patch would either point at
+    ///   the wrong commit or require maintaining a moving tag.
+    /// - `version` drops the patch (`0.48`). Cargo's caret
+    ///   resolver expands `"0.48"` to `>=0.48.0, <0.49.0`, so
+    ///   scaffolded plugins pick up `0.48.x` bugfix releases
+    ///   automatically without re-scaffolding.
     #[must_use]
     pub fn new(use_registry: bool) -> Self {
+        let full = env!("CARGO_PKG_VERSION");
+        // Major.minor only — `splitn(3, '.')` makes the third
+        // element the rest of the string (including any
+        // `-prerelease` suffix), which we discard.
+        let major_minor: String = full.splitn(3, '.').take(2).collect::<Vec<_>>().join(".");
         Self {
             renderer: Renderer::new(),
-            tag: format!("v{}", env!("CARGO_PKG_VERSION")),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            tag: format!("v{full}"),
+            version: major_minor,
             use_registry,
         }
     }

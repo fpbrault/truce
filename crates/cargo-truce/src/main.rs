@@ -296,10 +296,10 @@ Options:
   --vendor-id <id>        Vendor reverse-DNS id (default: placeholder).
   --type:<plugin>=<kind>  Per-plugin kind override (workspace only).
                           <kind> is `effect`, `instrument`, or `midi`.
-  --no-github             Pin truce-* deps to crates.io (version =
-                          X.Y.Z) instead of the default git+tag pin.
-                          Transitional flag for the migration to the
-                          registry-published workspace.
+  --github                Pin truce-* deps to the truce git repo at
+                          tag vX.Y.Z instead of the default crates.io
+                          version pin. Use this if you're scaffolding
+                          against an unreleased truce checkout.
   -h, --help              Show this message."
     );
 }
@@ -338,11 +338,13 @@ struct NewArgs {
     type_overrides: Vec<(String, PluginKind)>,
     with_standalone: bool,
     workspace_mode: bool,
-    /// Opt out of the default `git+tag` dep pin and emit the
-    /// crates.io `version = "X.Y.Z"` form instead. Set by
-    /// `--no-github`. Transitional flag — once the registry path
-    /// is the long-term default, this (and the git-tag branch)
-    /// can be removed.
+    /// Default `true` — scaffolds pin truce-* deps to crates.io
+    /// (`version = "X.Y"`). Setting `--github` flips this to
+    /// `false`, falling back to the pre-crates.io form
+    /// (`git = "...", tag = "vX.Y.Z"`). Both branches are
+    /// supported during the migration; the git branch and this
+    /// flag can be removed once the registry path is the only
+    /// one in use.
     use_registry: bool,
 }
 
@@ -355,7 +357,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
     let mut type_overrides: Vec<(String, PluginKind)> = Vec::new();
     let mut with_standalone = true;
     let mut workspace_mode = false;
-    let mut use_registry = false;
+    let mut use_registry = true;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -364,7 +366,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
             "--instrument" => default_kind = PluginKind::Instrument,
             "--midi" => default_kind = PluginKind::Midi,
             "--no-standalone" => with_standalone = false,
-            "--no-github" => use_registry = true,
+            "--github" => use_registry = false,
             "--vendor" => {
                 vendor_name = Some(iter.next().ok_or("--vendor requires a value")?.clone());
             }

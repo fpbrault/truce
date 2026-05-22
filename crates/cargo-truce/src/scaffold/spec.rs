@@ -11,26 +11,25 @@ pub struct PluginSpec {
 }
 
 /// How `[dependencies]` lines are written. Single-mode picks
-/// between a git+tag pin and a crates.io version pin based on the
-/// `--no-github` CLI flag; workspace-mode plugins inherit from the
-/// workspace root via `workspace = true`.
+/// between a crates.io version pin (default) and a git+tag pin
+/// (opt-in via `--github`); workspace-mode plugins inherit from
+/// the workspace root via `workspace = true`.
 #[derive(Clone, Copy, PartialEq)]
 pub enum DepForm {
-    /// `truce-* = { git = "...", tag = "vX.Y.Z" }`. **Default** for
-    /// single-mode scaffolds. Pins the plugin to the truce repo at
-    /// the cargo-truce CLI's build-time version. Used while truce
-    /// is git-source-only or as a stable fallback even after the
-    /// crates.io publish.
-    GitTag,
-    /// `truce-* = { version = "X.Y.Z" }`. Opt-in via `--no-github`
-    /// on `cargo truce new`. Resolves against crates.io; caret
+    /// `truce-* = { version = "X.Y" }`. **Default** for
+    /// single-mode scaffolds. Resolves against crates.io; caret
     /// semver lets the plugin pick up patch releases without
     /// re-scaffolding.
     Registry,
+    /// `truce-* = { git = "...", tag = "vX.Y.Z" }`. Opt-in via
+    /// `--github` on `cargo truce new`. Use when scaffolding
+    /// against an unreleased truce checkout or otherwise reaching
+    /// for the pre-crates.io path.
+    GitTag,
     /// `truce-* = { workspace = true }`. Used by plugin crates
     /// inside a `cargo truce new --workspace` scaffold; the
-    /// workspace root carries the actual pin (git+tag or registry,
-    /// chosen by the same `--no-github` flag).
+    /// workspace root carries the actual pin (registry or git+tag,
+    /// chosen by the same `--github` flag).
     Workspace,
 }
 
