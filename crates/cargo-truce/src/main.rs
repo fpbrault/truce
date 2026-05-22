@@ -296,6 +296,10 @@ Options:
   --vendor-id <id>        Vendor reverse-DNS id (default: placeholder).
   --type:<plugin>=<kind>  Per-plugin kind override (workspace only).
                           <kind> is `effect`, `instrument`, or `midi`.
+  --no-github             Pin truce-* deps to crates.io (version =
+                          X.Y.Z) instead of the default git+tag pin.
+                          Transitional flag for the migration to the
+                          registry-published workspace.
   -h, --help              Show this message."
     );
 }
@@ -310,7 +314,7 @@ fn cmd_new(args: &[String]) -> Res {
         return Err(format!("Directory '{}' already exists", parsed.name).into());
     }
 
-    let scaffolder = Scaffolder::new();
+    let scaffolder = Scaffolder::new(parsed.use_registry);
     let features = FeatureSet {
         standalone: parsed.with_standalone,
     };
@@ -334,6 +338,12 @@ struct NewArgs {
     type_overrides: Vec<(String, PluginKind)>,
     with_standalone: bool,
     workspace_mode: bool,
+    /// Opt out of the default `git+tag` dep pin and emit the
+    /// crates.io `version = "X.Y.Z"` form instead. Set by
+    /// `--no-github`. Transitional flag — once the registry path
+    /// is the long-term default, this (and the git-tag branch)
+    /// can be removed.
+    use_registry: bool,
 }
 
 fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
@@ -345,6 +355,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
     let mut type_overrides: Vec<(String, PluginKind)> = Vec::new();
     let mut with_standalone = true;
     let mut workspace_mode = false;
+    let mut use_registry = false;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -353,6 +364,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
             "--instrument" => default_kind = PluginKind::Instrument,
             "--midi" => default_kind = PluginKind::Midi,
             "--no-standalone" => with_standalone = false,
+            "--no-github" => use_registry = true,
             "--vendor" => {
                 vendor_name = Some(iter.next().ok_or("--vendor requires a value")?.clone());
             }
@@ -399,6 +411,7 @@ fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
         type_overrides,
         with_standalone,
         workspace_mode,
+        use_registry,
     })
 }
 

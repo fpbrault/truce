@@ -45,23 +45,36 @@ pub use spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
 /// one place).
 pub struct Scaffolder {
     renderer: Renderer,
+    /// `v`-prefixed git tag (e.g. `v0.48.7`). Used by the default
+    /// `DepForm::GitTag` form and by both templates' commented
+    /// opt-in hints when `use_registry` is false.
+    tag: String,
+    /// Plain semver (e.g. `0.48.7`). Used by `DepForm::Registry`
+    /// and the templates' registry-form branches.
     version: String,
+    /// Toggled by `--no-github` on `cargo truce new`. Default
+    /// `false` preserves the historical git+tag pin; flipping to
+    /// `true` emits the crates.io registry pin instead. This is a
+    /// transitional flag — once the registry path is the long-term
+    /// happy path, the flag (and the `GitTag` form) can be removed.
+    use_registry: bool,
 }
 
 impl Scaffolder {
-    /// Build a fresh scaffolder. The pinned crates.io version is
-    /// derived from cargo-truce's own version (`CARGO_PKG_VERSION`) -
-    /// when the workspace version bumps, scaffolds automatically
-    /// follow.
-    // No `Default` impl: the workspace never constructs a
-    // `Scaffolder` through `Default::default`, so the trait would be
-    // dead code.
-    #[allow(clippy::new_without_default)]
+    /// Build a fresh scaffolder. The pinned tag / version are
+    /// derived from cargo-truce's own `CARGO_PKG_VERSION` — when
+    /// the workspace version bumps, scaffolds automatically follow.
+    ///
+    /// `use_registry` picks between the historical git+tag form
+    /// (false; the default) and the crates.io registry form (true,
+    /// opt-in via `--no-github`).
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(use_registry: bool) -> Self {
         Self {
             renderer: Renderer::new(),
+            tag: format!("v{}", env!("CARGO_PKG_VERSION")),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            use_registry,
         }
     }
 
@@ -80,13 +93,12 @@ impl Scaffolder {
         vendor: &VendorInfo,
     ) -> Res {
         let layout = ProjectLayout::single(root);
-        self.write_plugin_files(
-            &layout,
-            &plugin.name,
-            plugin.kind,
-            DepForm::Registry,
-            features,
-        )?;
+        let dep_form = if self.use_registry {
+            DepForm::Registry
+        } else {
+            DepForm::GitTag
+        };
+        self.write_plugin_files(&layout, &plugin.name, plugin.kind, dep_form, features)?;
 
         let plugins = std::slice::from_ref(plugin);
         let fourcc_map = resolve_fourccs(plugins)?;
@@ -121,7 +133,13 @@ impl Scaffolder {
         // Workspace root: Cargo.toml, truce.toml, .gitignore, .cargo/config.toml.
         fs::create_dir_all(ws_layout.cargo_dir())?;
 
-        let ws_ctx = WorkspaceContext::new(plugins, features, &self.version);
+        let ws_ctx = WorkspaceContext::new(
+            plugins,
+            features,
+            &self.tag,
+            &self.version,
+            self.use_registry,
+        );
         write(
             &ws_layout.cargo_toml(),
             self.renderer.render(tpl::WORKSPACE_CARGO_TOML, &ws_ctx),
@@ -166,8 +184,15 @@ impl Scaffolder {
         fs::create_dir_all(layout.src_dir())?;
         fs::create_dir_all(layout.cargo_dir())?;
 
-        let ctx =
-            PluginScaffoldingContext::new(crate_name, kind, dep_form, features, &self.version);
+        let ctx = PluginScaffoldingContext::new(
+            crate_name,
+            kind,
+            dep_form,
+            features,
+            &self.tag,
+            &self.version,
+            self.use_registry,
+        );
 
         write(
             &layout.cargo_toml(),
@@ -185,9 +210,10 @@ impl Scaffolder {
         }
         // Single-mode plugins own their own .gitignore + .cargo;
         // workspace-mode plugins inherit those from the workspace
-        // root (caller handles), so skip when `dep_form` is
-        // `Workspace`.
-        if dep_form == DepForm::Registry {
+        // root (caller handles), so skip only when `dep_form` is
+        // `Workspace`. Both single-mode variants (GitTag, Registry)
+        // emit them.
+        if dep_form != DepForm::Workspace {
             write(
                 &layout.gitignore(),
                 self.renderer.render(tpl::PLUGIN_GITIGNORE, &ctx),
