@@ -32,4 +32,4 @@ impl<P: Params> EditorUi<P> for MyUi {
 }
 ```
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

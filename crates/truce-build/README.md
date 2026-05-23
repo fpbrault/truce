@@ -16,4 +16,4 @@ Plugin crates do not need a `build.rs` - `truce::plugin_info!()` reads
   `[build].target-dir` in `.cargo/config.toml`. Used by runtime callers
   (cargo-truce, truce-test) that need to anchor artifact paths.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

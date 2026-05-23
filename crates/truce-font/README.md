@@ -22,3 +22,5 @@ Open Font License, Version 1.1**. The full license text is at
 `fonts/OFL.txt`. Downstream redistribution must keep the OFL with
 the font and preserve its embedded copyright notice
 ("Copyright 2020 The JetBrains Mono Project Authors").
+
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

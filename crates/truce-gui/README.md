@@ -55,4 +55,4 @@ fn editor() -> Option<Box<dyn Editor>> {
 }
 ```
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

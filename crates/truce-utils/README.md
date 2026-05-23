@@ -36,4 +36,4 @@ removed in favour of the `Float` trait methods (`to_f32`,
 same NaN-debug-asserted f64 ↔ f32 narrowing; consolidating to the
 trait method removed one named-function call per cast site.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

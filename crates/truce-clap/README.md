@@ -29,4 +29,4 @@ truce build --clap` / `install --clap` selects it at the CLI.
 
 - **`export_clap!`** -- generates the CLAP entry point for a `PluginExport` type
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

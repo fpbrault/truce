@@ -48,4 +48,4 @@ So this crate exists to be the single, published, version-pinnable
 source of the header bytes. Same shape of rationale as `truce-font`
 (a data-only crate with multiple consumers needing identical bytes).
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).
