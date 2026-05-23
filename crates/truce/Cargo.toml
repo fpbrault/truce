@@ -18,11 +18,6 @@ truce-loader = { workspace = true }
 truce-derive = { workspace = true }
 
 [features]
-# CLAP is the only default format. VST3, VST2, AU, AAX are all opt-in.
-# VST2 in particular is a legacy format - the Steinberg VST2 SDK was
-# deprecated in 2018 and VST2 plugin distribution may require agreement
-# with Steinberg's licensing terms. Enable only if you understand the
-# implications.
 default = ["clap"]
 clap = ["dep:truce-clap"]
 vst3 = ["dep:truce-vst3"]
