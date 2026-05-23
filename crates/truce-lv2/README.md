@@ -33,4 +33,4 @@ truce build --lv2` / `install --lv2` selects it at the CLI.
 
 - **`export_lv2!`** -- generates the LV2 entry point for a `PluginExport` type
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

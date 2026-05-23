@@ -36,4 +36,4 @@ an `au` Cargo feature.
 AU type codes (`aufx` / `aumu` / `aumi`) are derived from the plugin's
 `category` in `truce.toml` by `truce::plugin_info!()` at compile time.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

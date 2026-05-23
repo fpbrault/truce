@@ -29,4 +29,4 @@ The C++ shim (compiled via `cc`) owns the COM objects and forwards every call
 to Rust through a C FFI boundary. This avoids reimplementing COM vtables in
 Rust while keeping all plugin logic in safe Rust code.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

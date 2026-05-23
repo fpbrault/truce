@@ -44,4 +44,4 @@ impl PluginLogic for MyPlugin {
 
 Zero `<Sample>` mentions in user code.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

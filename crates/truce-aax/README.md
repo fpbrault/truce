@@ -30,4 +30,4 @@ loads the Rust dylib at runtime. The Rust side only knows about the C bridge
 types defined in `truce_aax_bridge.h`, keeping the build free of proprietary
 SDK dependencies.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

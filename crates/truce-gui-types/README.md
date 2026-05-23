@@ -53,4 +53,4 @@ reaches into `truce-gui::BuiltinEditor`.
 - **`layout!`** - declarative DSL for `PluginLayout`
 - **`grid!`** - declarative DSL for `GridLayout`
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

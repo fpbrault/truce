@@ -29,4 +29,4 @@ A unit test parses `BRIDGE_HEADER` and asserts the embedded
 `#define TRUCE_AAX_ABI_VERSION` matches the Rust constant, so
 drift between the two sources of truth becomes a build failure.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

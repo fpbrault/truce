@@ -34,4 +34,4 @@ format wrappers or GUI backends.
 - `db_to_linear` / `linear_to_db` -- gain conversion helpers (re-exported from `truce-params::sample::Float`)
 - `midi_note_to_freq` -- MIDI note number to frequency in Hz
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

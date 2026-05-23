@@ -735,10 +735,7 @@ pub(crate) fn run_codesign(args: &[&OsStr], use_sudo: bool) -> crate::Res {
         if !captured_stderr.is_empty() {
             eprintln!("{captured_stderr}");
         }
-        eprintln!(
-            "  {} failed to {verb_present} {target_label}",
-            tag_fail()
-        );
+        eprintln!("  {} failed to {verb_present} {target_label}", tag_fail());
         Err(crate::CargoTruceError::Codesign(format!(
             "failed to {verb_present} {target_label}"
         )))

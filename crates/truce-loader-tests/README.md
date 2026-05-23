@@ -18,4 +18,4 @@ Holding the tests in this separate crate breaks the loop: the
 edges run `truce-loader-tests -> truce-loader` and
 `truce-loader-tests -> truce`, with no back-edge into either.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

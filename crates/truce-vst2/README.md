@@ -24,4 +24,4 @@ The C shim (compiled via `cc`) implements the `AEffect` dispatcher and
 forwards opcodes to Rust through a C FFI boundary. No Steinberg SDK code is
 linked or referenced.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

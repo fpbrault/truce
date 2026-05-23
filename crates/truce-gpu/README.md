@@ -23,13 +23,15 @@ editor. Every in-tree example plugin uses this path.
 
 ```toml
 [dependencies]
-truce     = { git = "https://github.com/truce-audio/truce", tag = "vX.Y.Z", features = ["clap"] }
-truce-gpu = { git = "https://github.com/truce-audio/truce", tag = "vX.Y.Z" }
+truce     = { version = "0.48", features = ["clap"] }
+truce-gpu = { version = "0.48" }
 ```
 
-(Replace `vX.Y.Z` with the latest release tag from
-[the releases page](https://github.com/truce-audio/truce/releases),
-or run `cargo truce new` and let the scaffolder pin for you.)
+(Cargo's caret resolver expands `"0.48"` to `>=0.48.0, <0.49.0`,
+so you'll pick up every `0.48.x` patch release without re-editing.
+To track an unreleased checkout, swap the lines for
+`git = "https://github.com/truce-audio/truce", branch = "main"`.
+Or just run `cargo truce new` and let the scaffolder pin for you.)
 
 ```rust
 fn editor() -> Option<Box<dyn Editor>> {
@@ -37,4 +39,4 @@ fn editor() -> Option<Box<dyn Editor>> {
 }
 ```
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

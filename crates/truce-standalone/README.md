@@ -43,4 +43,4 @@ my-plugin-standalone --input-file in.wav --output-file out.wav
 my-plugin-standalone --no-playback --input-file in.wav --output-file out.wav
 ```
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

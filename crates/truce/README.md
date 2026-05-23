@@ -92,4 +92,4 @@ impl PluginLogic for MyPlugin {
 truce::plugin! { logic: MyPlugin, params: MyParams }
 ```
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

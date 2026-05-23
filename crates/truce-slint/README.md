@@ -43,7 +43,7 @@ Add the build-script helper as a build-dependency:
 
 ```toml
 [build-dependencies]
-truce-slint-build = "0.34"
+truce-slint-build = "0.48"
 ```
 
 `build.rs`:
@@ -62,4 +62,4 @@ doesn't need a local truce checkout.
 See [truce.audio](https://truce.audio/) for the full plugin
 walkthrough.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).

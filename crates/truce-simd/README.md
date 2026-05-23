@@ -33,4 +33,4 @@ audio-thread allocation. They're the inner-loop complement to a
 [block-gain example](https://github.com/truce-audio/truce/tree/main/examples/truce-example-block-gain)
 for the canonical fast-path / slow-path shape.
 
-Part of [truce](https://github.com/truce-audio/truce).
+Part of [truce](https://github.com/truce-audio/truce). [Docs](https://truce.audio/docs/).
