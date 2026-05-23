@@ -196,53 +196,72 @@ impl PluginLogic for Eq {
         let sr = self.sample_rate;
         let num_ch = buffer.channels();
         let stereo = num_ch >= 2;
-        let n = buffer.num_samples().min(MAX_BLOCK);
+        let total = buffer.num_samples();
 
-        // Block-read every smoothed shape param in one atomic-pair
-        // each (10 pairs total) instead of one pair per param per
-        // sample (10 * n pairs). Coefficient updates still happen
-        // per sample so a fast knob sweep stays click-free; only
-        // the smoother traffic moves out of the inner loop.
-        let low_freq = self.params.low_freq.read_block::<MAX_BLOCK>();
-        let low_gain = self.params.low_gain.read_block::<MAX_BLOCK>();
-        let low_q = self.params.low_q.read_block::<MAX_BLOCK>();
-        let mid_freq = self.params.mid_freq.read_block::<MAX_BLOCK>();
-        let mid_gain = self.params.mid_gain.read_block::<MAX_BLOCK>();
-        let mid_q = self.params.mid_q.read_block::<MAX_BLOCK>();
-        let high_freq = self.params.high_freq.read_block::<MAX_BLOCK>();
-        let high_gain = self.params.high_gain.read_block::<MAX_BLOCK>();
-        let high_q = self.params.high_q.read_block::<MAX_BLOCK>();
-        let output = self.params.output.read_block::<MAX_BLOCK>();
+        // Walk the buffer in `MAX_BLOCK`-sized chunks. Hosts can hand
+        // us blocks larger than `MAX_BLOCK` (1024 / 2048 are common
+        // DAW buffer sizes), so a single `read_block::<MAX_BLOCK>()`
+        // would only cover the head of the buffer and leave the tail
+        // pass-through / stale.
+        let mut offset = 0;
+        while offset < total {
+            let n = (total - offset).min(MAX_BLOCK);
 
-        for i in 0..n {
-            // Per-sample coefficient updates because every shape
-            // param is smoothed; one coefficient set serves both
-            // channels.
-            self.bands[0].update_coefficients(low_shelf(low_freq[i], low_gain[i], low_q[i], sr));
-            self.bands[1].update_coefficients(peaking(mid_freq[i], mid_gain[i], mid_q[i], sr));
-            self.bands[2].update_coefficients(high_shelf(
-                high_freq[i],
-                high_gain[i],
-                high_q[i],
-                sr,
-            ));
+            // Block-read every smoothed shape param in one atomic-pair
+            // each (10 pairs total) instead of one pair per param per
+            // sample. Coefficient updates still happen per sample so a
+            // fast knob sweep stays click-free; only the smoother
+            // traffic moves out of the inner loop.
+            let low_freq = self.params.low_freq.read_block::<MAX_BLOCK>();
+            let low_gain = self.params.low_gain.read_block::<MAX_BLOCK>();
+            let low_q = self.params.low_q.read_block::<MAX_BLOCK>();
+            let mid_freq = self.params.mid_freq.read_block::<MAX_BLOCK>();
+            let mid_gain = self.params.mid_gain.read_block::<MAX_BLOCK>();
+            let mid_q = self.params.mid_q.read_block::<MAX_BLOCK>();
+            let high_freq = self.params.high_freq.read_block::<MAX_BLOCK>();
+            let high_gain = self.params.high_gain.read_block::<MAX_BLOCK>();
+            let high_q = self.params.high_q.read_block::<MAX_BLOCK>();
+            let output = self.params.output.read_block::<MAX_BLOCK>();
 
-            // Read both channels (or duplicate the mono channel
-            // into the second lane) before advancing any filter,
-            // so the L and R lanes step in lockstep.
-            let in_l = buffer.io(0).0[i];
-            let in_r = if stereo { buffer.io(1).0[i] } else { in_l };
+            for i in 0..n {
+                let idx = offset + i;
 
-            let mut sample = StereoSample::from_lr(in_l, in_r);
-            for band in &mut self.bands {
-                sample = band.run(sample);
+                // Per-sample coefficient updates because every shape
+                // param is smoothed; one coefficient set serves both
+                // channels.
+                self.bands[0].update_coefficients(low_shelf(
+                    low_freq[i],
+                    low_gain[i],
+                    low_q[i],
+                    sr,
+                ));
+                self.bands[1].update_coefficients(peaking(mid_freq[i], mid_gain[i], mid_q[i], sr));
+                self.bands[2].update_coefficients(high_shelf(
+                    high_freq[i],
+                    high_gain[i],
+                    high_q[i],
+                    sr,
+                ));
+
+                // Read both channels (or duplicate the mono channel
+                // into the second lane) before advancing any filter,
+                // so the L and R lanes step in lockstep.
+                let in_l = buffer.io(0).0[idx];
+                let in_r = if stereo { buffer.io(1).0[idx] } else { in_l };
+
+                let mut sample = StereoSample::from_lr(in_l, in_r);
+                for band in &mut self.bands {
+                    sample = band.run(sample);
+                }
+                let (l, r) = sample.to_lr();
+                let out_gain = db_to_linear(output[i]);
+                buffer.io(0).1[idx] = l * out_gain;
+                if stereo {
+                    buffer.io(1).1[idx] = r * out_gain;
+                }
             }
-            let (l, r) = sample.to_lr();
-            let out_gain = db_to_linear(output[i]);
-            buffer.io(0).1[i] = l * out_gain;
-            if stereo {
-                buffer.io(1).1[i] = r * out_gain;
-            }
+
+            offset += n;
         }
 
         ProcessStatus::Normal
@@ -320,6 +339,30 @@ mod tests {
             .map(|s| s.abs())
             .fold(0.0f32, f32::max);
         assert!(max > 0.4, "Flat EQ should pass audio near unity, got {max}");
+    }
+
+    #[test]
+    fn large_block_fills_whole_output() {
+        use std::time::Duration;
+        use truce_test::{InputSource, driver};
+        // Hosts can hand us blocks larger than the plugin's internal
+        // `MAX_BLOCK`; `process` must walk the whole buffer. A 2048
+        // block (common DAW setting) used to leave samples 512..2048
+        // pass-through stale, producing periodic noise.
+        let result = driver!(Plugin)
+            .block_size(2048)
+            .duration(Duration::from_millis(100))
+            .input(InputSource::Constant(0.5))
+            .run();
+        let min = result.output[0]
+            .iter()
+            .map(|s| s.abs())
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            min > 0.4,
+            "Every sample of a flat-EQ pass-through should be near unity; \
+             min was {min} (tail of large block was dropped on the floor)"
+        );
     }
 
     #[test]
