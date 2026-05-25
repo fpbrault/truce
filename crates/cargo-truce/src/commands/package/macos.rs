@@ -156,7 +156,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     fs::create_dir_all(&staging)?;
 
     for fmt in o.formats {
-        eprint!("  Staging {}... ", fmt.label());
+        eprintln!("  Staging {}...", fmt.label());
         // macOS package staging reads from `target/release/` after lipo
         // has produced a universal Mach-O at the canonical path; pass
         // None so `release_lib_for_target` resolves there.
@@ -178,9 +178,9 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
             PkgFormat::Standalone => stage_standalone(root, p, o.config, &staging),
         };
         match result {
-            Ok(()) => eprintln!("ok"),
+            Ok(()) => eprintln!("    ok"),
             Err(e) => {
-                eprintln!("FAILED: {e}");
+                eprintln!("    FAILED: {e}");
                 return Err(e);
             }
         }
@@ -765,7 +765,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
 
     // Step 2: Stage signed bundles
     for fmt in o.formats {
-        eprint!("  Staging {}... ", fmt.label());
+        eprintln!("  Staging {}...", fmt.label());
         // macOS package staging reads from `target/release/` after lipo
         // has produced a universal Mach-O at the canonical path; pass
         // None so `release_lib_for_target` resolves there.
@@ -787,9 +787,9 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             PkgFormat::Standalone => stage_standalone(root, p, o.config, &staging),
         };
         match result {
-            Ok(()) => eprintln!("ok"),
+            Ok(()) => eprintln!("    ok"),
             Err(e) => {
-                eprintln!("FAILED: {e}");
+                eprintln!("    FAILED: {e}");
                 return Err(e);
             }
         }
