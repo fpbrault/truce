@@ -68,6 +68,7 @@ is_published_on_crates_io() {
     # crates.io. Uses the public HTTP API (no cargo dependency).
     local crate="$1" version="$2"
     curl -sf -o /dev/null \
+        -H "User-Agent: truce-release-script/1.0 (https://github.com/truce-audio/truce)" \
         "https://crates.io/api/v1/crates/$crate/$version" \
         2>/dev/null
 }
@@ -78,6 +79,7 @@ crate_exists_on_crates_io() {
     # first publish).
     local crate="$1"
     curl -sf -o /dev/null \
+        -H "User-Agent: truce-release-script/1.0 (https://github.com/truce-audio/truce)" \
         "https://crates.io/api/v1/crates/$crate" \
         2>/dev/null
 }

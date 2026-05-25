@@ -180,12 +180,14 @@ static bool GetBundlePath(char* out, size_t outLen) {
     if (dladdr((void*)&GetBundlePath, &info)) {
         char path[2048];
         strncpy(path, info.dli_fname, sizeof(path));
+        path[sizeof(path) - 1] = 0;
         // Go up: Plugin → MacOS → Contents → Plugin.aaxplugin
         for (int i = 0; i < 3; i++) {
             char* last = strrchr(path, '/');
             if (last) *last = 0;
         }
         strncpy(out, path, outLen);
+        if (outLen > 0) out[outLen - 1] = 0;
         return true;
     }
     return false;

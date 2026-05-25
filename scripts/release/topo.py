@@ -61,27 +61,26 @@ if remaining:
     sys.exit(f"cycle: unresolved={remaining}")
 
 # Force the ordering of user-selectable crates
+forced_order = [
+    "truce-simd",
+    "truce-vst2",
+    "truce-lv2",
+    "truce-aax",
+    "truce-au",
+    "truce-standalone",
+    "truce-clap",
+    "truce-vst3",
+    "truce",
+    "cargo-truce",
+]
 
-order.remove("truce-simd")
-order.remove("truce-vst2")
-order.remove("truce-lv2")
-order.remove("truce-aax")
-order.remove("truce-au")
-order.remove("truce-standalone")
-order.remove("truce-clap")
-order.remove("truce-vst3")
-order.remove("truce")
-order.remove("cargo-truce")
+missing_forced = [name for name in forced_order if name not in order]
+if missing_forced:
+    sys.exit(
+        "forced ordering crates missing from publish order: "
+        + ", ".join(missing_forced)
+    )
 
-order.append("truce-simd")
-order.append("truce-vst2")
-order.append("truce-lv2")
-order.append("truce-aax")
-order.append("truce-au")
-order.append("truce-standalone")
-order.append("truce-clap")
-order.append("truce-vst3")
-order.append("truce")
-order.append("cargo-truce")
+order = [name for name in order if name not in forced_order] + forced_order
 
 print("\n".join(order))

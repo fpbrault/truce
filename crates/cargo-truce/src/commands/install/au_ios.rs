@@ -1262,14 +1262,16 @@ fn render_entitlements_plist(
 /// `description`. Keeps the About pane non-empty so App Store review
 /// doesn't flag the app as a stub.
 fn default_description(p: &PluginDef) -> String {
-    let kind = match p.category.as_str() {
-        "instrument" => "instrument",
-        "midi" | "note_effect" => "MIDI processor",
-        "analyzer" => "audio analyzer",
-        _ => "audio effect",
+    // MIDI is pronounced "middy", so it takes "a" not "an"; the other
+    // three kinds all start with a vowel sound.
+    let (article, kind) = match p.category.as_str() {
+        "instrument" => ("an", "instrument"),
+        "midi" | "note_effect" => ("a", "MIDI processor"),
+        "analyzer" => ("an", "audio analyzer"),
+        _ => ("an", "audio effect"),
     };
     format!(
-        "{} is an {kind} for AUv3-compatible hosts like GarageBand, \
+        "{} is {article} {kind} for AUv3-compatible hosts like GarageBand, \
          AUM, Cubasis, and Logic Pro for iPad.",
         p.name
     )
