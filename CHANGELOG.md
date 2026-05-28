@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 0.49.11 (2026-05-28)
+
+- **Standalone: fixed the macOS device menu** — the Input/Output Device
+  submenus were grayed out and unopenable.
+- **Standalone: added input/output channel selection** (mono channel or
+  stereo pair) via the macOS/Windows menus or `--input-channels` /
+  `--output-channels` (the CLI is the picker on Linux).
+
 ## 0.49.10 (2026-05-27)
 
 - **Fixed a use-after-free crash when a host closes the editor without
