@@ -1,7 +1,7 @@
 //! Windows native menu bar for the standalone host.
 //!
-//! Builds a Win32 `HMENU` with one top-level "Audio" popup
-//! containing:
+//! Builds a Win32 `HMENU` with one top-level "Settings" popup
+//! carrying both the audio and MIDI controls:
 //!
 //! - **Mic Input** (checkable, `Ctrl+I` shown as the accelerator hint;
 //!   effect plugins only)
@@ -9,6 +9,10 @@
 //! - **Input Device** submenu - repopulated from cpal on each open
 //!   (effect plugins only)
 //! - **Output Device** submenu - same for outputs
+//! - **Input / Output Channels** submenus - channel routing (when the
+//!   device exposes >= 2 channels)
+//! - **MIDI Input** submenu - lists MIDI ports (repopulated on open)
+//! - **MIDI Channel** submenu - Omni / channel 1-16 filter
 //!
 //! Attached to the baseview window via `SetMenu`. Routes clicks
 //! back to `InputController` / `OutputController` through a
@@ -25,7 +29,7 @@
 //!   keeps the size it asked for.
 //! - There's no auto-populated "App" menu like Cocoa's. The
 //!   window's `[X]` close button covers Quit; we ship just the
-//!   Audio menu.
+//!   Settings menu.
 //! - Cocoa's `Cmd+I` accelerator is wired by the menu item itself.
 //!   Win32 needs a separate `HACCEL` table + `TranslateAccelerator`
 //!   in the message loop, which baseview doesn't expose. The menu
@@ -235,40 +239,38 @@ pub fn install(
             (std::ptr::null_mut(), std::ptr::null_mut())
         };
 
-        // Attach the Audio popup to the menu bar.
-        let plugin_label = wide("Audio");
+        // MIDI section, appended into the same Settings popup behind a
+        // separator: input device + channel filter. Submenus are empty
+        // here; repopulated on open. Built for every plugin (any can
+        // receive MIDI).
+        let midi_input_menu = CreatePopupMenu();
+        let midi_channel_menu = CreatePopupMenu();
+        if !midi_input_menu.is_null() && !midi_channel_menu.is_null() {
+            AppendMenuW(plugin_menu, MF_SEPARATOR, 0, std::ptr::null());
+            let in_label = wide("MIDI Input");
+            AppendMenuW(
+                plugin_menu,
+                MF_POPUP,
+                midi_input_menu as usize,
+                in_label.as_ptr(),
+            );
+            let ch_label = wide("MIDI Channel");
+            AppendMenuW(
+                plugin_menu,
+                MF_POPUP,
+                midi_channel_menu as usize,
+                ch_label.as_ptr(),
+            );
+        }
+
+        // Attach the Settings popup (audio + MIDI) to the menu bar.
+        let plugin_label = wide("Settings");
         AppendMenuW(
             menu_bar,
             MF_POPUP,
             plugin_menu as usize,
             plugin_label.as_ptr(),
         );
-
-        // Separate "MIDI" top-level popup: input device + channel
-        // filter. Submenus are empty here; repopulated on open. Built
-        // for every plugin (any can receive MIDI).
-        let midi_menu = CreatePopupMenu();
-        let midi_input_menu = CreatePopupMenu();
-        let midi_channel_menu = CreatePopupMenu();
-        if !midi_menu.is_null() && !midi_input_menu.is_null() && !midi_channel_menu.is_null() {
-            let in_label = wide("MIDI Input");
-            AppendMenuW(
-                midi_menu,
-                MF_POPUP,
-                midi_input_menu as usize,
-                in_label.as_ptr(),
-            );
-            AppendMenuW(midi_menu, MF_SEPARATOR, 0, std::ptr::null());
-            let ch_label = wide("MIDI Channel");
-            AppendMenuW(
-                midi_menu,
-                MF_POPUP,
-                midi_channel_menu as usize,
-                ch_label.as_ptr(),
-            );
-            let midi_label = wide("MIDI");
-            AppendMenuW(menu_bar, MF_POPUP, midi_menu as usize, midi_label.as_ptr());
-        }
 
         SetMenu(hwnd, menu_bar);
         DrawMenuBar(hwnd);

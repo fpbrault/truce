@@ -1,12 +1,17 @@
 //! macOS native menu bar for the standalone host.
 //!
 //! Builds an `NSMenu` with two top-level items: an autopopulated
-//! App menu (Quit / Hide / About) and a Plugin menu carrying:
+//! App menu (Quit / Hide / About) and a single "Settings" menu
+//! carrying both the audio and MIDI controls:
 //!
 //! - **Mic Input** (toggle, ⌘I, checkmark when on; effect plugins only)
 //! - **Audio Output** (toggle, ⌘O, checkmark when unmuted)
 //! - **Input Device** submenu - lists cpal-visible inputs (effects only)
 //! - **Output Device** submenu - same for outputs
+//! - **Input / Output Channels** submenus - channel routing (when the
+//!   device exposes >= 2 channels)
+//! - **MIDI Input** submenu - lists MIDI ports (repopulated on open)
+//! - **MIDI Channel** submenu - Omni / channel 1-16 filter
 //!
 //! Installed via `NSApp.setMainMenu(...)`.
 //!
@@ -89,9 +94,9 @@ pub fn install(
         add_app_menu_items(app_menu, app_name);
         let _: () = msg_send![app_menu_item, setSubmenu: app_menu];
 
-        // Audio menu and its action target.
-        let plugin_menu_item = make_menu_item("Audio");
-        let plugin_menu = make_menu("Audio");
+        // Settings menu (audio + MIDI) and its action target.
+        let plugin_menu_item = make_menu_item("Settings");
+        let plugin_menu = make_menu("Settings");
         let target = make_menu_target(input.clone(), output.clone(), midi.clone());
 
         // Mic toggle (⌘I) - only meaningful for effects.
@@ -182,31 +187,27 @@ pub fn install(
             let _: () = msg_send![plugin_menu, addItem: out_ch_item];
         }
 
-        // Separate "MIDI" top-level menu: input-device picker +
-        // channel filter. Built for every plugin (any can receive MIDI
-        // CC; instruments need note input). The input submenu is
-        // repopulated on open; the channel submenu is static and its
-        // checkmark is moved by the select action.
-        let midi_menu_item = make_menu_item("MIDI");
-        let midi_menu = make_menu("MIDI");
+        // MIDI section, appended into the same Settings menu: an
+        // input-device picker + channel filter, fronted by a separator
+        // dividing it from the audio controls above. Built for every
+        // plugin (any can receive MIDI CC; instruments need note
+        // input). The input submenu is repopulated on open; the channel
+        // submenu is static and its checkmark is moved by the action.
+        let midi_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![plugin_menu, addItem: midi_sep];
 
         let midi_input_item = make_menu_item("MIDI Input");
         let _: () = msg_send![midi_input_item, setTarget: target];
         let midi_input_menu = make_menu("MIDI Input");
         let _: () = msg_send![midi_input_item, setSubmenu: midi_input_menu];
-        let _: () = msg_send![midi_menu, addItem: midi_input_item];
-
-        let midi_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
-        let _: () = msg_send![midi_menu, addItem: midi_sep];
+        let _: () = msg_send![plugin_menu, addItem: midi_input_item];
 
         let midi_chan_item = make_menu_item("MIDI Channel");
         let _: () = msg_send![midi_chan_item, setTarget: target];
         let midi_chan_menu = make_menu("MIDI Channel");
         populate_midi_channel_menu(midi_chan_menu, target, midi.channel());
         let _: () = msg_send![midi_chan_item, setSubmenu: midi_chan_menu];
-        let _: () = msg_send![midi_menu, addItem: midi_chan_item];
-
-        let _: () = msg_send![midi_menu_item, setSubmenu: midi_menu];
+        let _: () = msg_send![plugin_menu, addItem: midi_chan_item];
 
         // Stash pointers in MenuState so menu-open delegates can
         // address the right submenu.
@@ -220,7 +221,7 @@ pub fn install(
             target,
         );
 
-        // Wire menuWillOpen on the Plugin menu (toggle checkmarks)
+        // Wire menuWillOpen on the Settings menu (toggle checkmarks)
         // and both device submenus (repopulate + checkmark). Input
         // submenu may be null for instruments - only delegate if
         // we actually built it.
@@ -238,7 +239,6 @@ pub fn install(
         let main_menu = make_menu("");
         let _: () = msg_send![main_menu, addItem: app_menu_item];
         let _: () = msg_send![main_menu, addItem: plugin_menu_item];
-        let _: () = msg_send![main_menu, addItem: midi_menu_item];
         let _: () = msg_send![app, setMainMenu: main_menu];
     }
 }
@@ -825,7 +825,7 @@ fn ensure_class() -> &'static Class {
                     return;
                 }
 
-                // Plugin menu (any other we delegate) - refresh the
+                // Settings menu (any other we delegate) - refresh the
                 // toggle checkmarks.
                 if !state.mic_item.is_null() {
                     let on = state.input.is_enabled();
