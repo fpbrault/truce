@@ -2,13 +2,18 @@
 
 Notable changes per release.
 
-## 0.49.14 (2026-05-28)
+## 0.49.15
+
+- **`truce-gui`: fixed a dropdown popup positioning bug.** The popup
+  no longer mis-anchors relative to its trigger widget.
+
+## 0.49.14
 
 - **Standalone: added MIDI device + channel selection** via a unified
   Settings menu on macOS/Windows, or `--midi-input` / `--midi-channel`
   (`omni` or `1`-`16`) on Linux.
 
-## 0.49.13 (2026-05-28)
+## 0.49.13
 
 - **VST2/AAX: extended the 0.49.9 `set_state` fix.** The same path that
   dropped GUI-edited custom state in CLAP/VST3/AU was present in VST2
@@ -16,14 +21,14 @@ Notable changes per release.
   (LV2 is unaffected: its UI is out-of-process and never touches
   `set_state` directly.)
 
-## 0.49.12 (2026-05-28)
+## 0.49.12
 
 - **`truce-slint`: fixed a panic on HiDPI displays after a resize event.**
   The render buffer kept the pre-resize physical extents while slint's
   window adopted the new ones, so the next frame tripped slint's
   buffer-too-small check.
 
-## 0.49.11 (2026-05-28)
+## 0.49.11
 
 - **Standalone: fixed the macOS device menu** — the Input/Output Device
   submenus were grayed out and unopenable.
@@ -31,7 +36,7 @@ Notable changes per release.
   stereo pair) via the macOS/Windows menus or `--input-channels` /
   `--output-channels` (the CLI is the picker on Linux).
 
-## 0.49.10 (2026-05-27)
+## 0.49.10
 
 - **Fixed a use-after-free crash when a host closes the editor without
   calling `close()`** (seen in Ableton with several plugins loaded). The
@@ -42,25 +47,25 @@ Notable changes per release.
   frozen until an unrelated repaint (e.g. dragging a knob) fired; the
   editor now repaints when a meter value moves.
 
-## 0.49.9 (2026-05-27)
+## 0.49.9
 
 - **Fixed `#[derive(State)]` custom state not persisting when edited
   from the GUI.** The CLAP, VST3, and AU editor `set_state` paths
   silently dropped GUI edits; they now reach `load_state` correctly.
 
-## 0.49.6 (2026-05-27)
+## 0.49.6
 
 - **`truce-standalone`: the `gui` feature no longer pulls `truce-gpu`.**
   Standalone builds compile the GPU backend only when the plugin opts in
   via `truce-gui = { …, features = ["gpu"] }`.
 
-## 0.49.4 (2026-05-27)
+## 0.49.4
 
 - **Fixed a macOS stack-overflow crash in the built-in (CPU) GUI /
   standalone path.** Moving the cursor over a freshly-opened editor
   window aborted the process. Fixed in `baseview-truce 0.1.1-truce.4`.
 
-## 0.49.2 (2026-05-25)
+## 0.49.2
 
 - Housekeeping: minor README updates and safety fixes.
 - Standalone: Disable window resizing on Windows for now (mirrors
@@ -68,7 +73,7 @@ Notable changes per release.
 - Standalone: Wire `windows_icon` through to the window's
   `WM_SETICON` so the title bar and taskbar show the app icon.
 
-## 0.49.0 (2026-05-24)
+## 0.49.0
 
 - **Breaking (`PluginLogic`): the GUI surface collapses to a single
   `editor()` method.** The old `layout()`, `custom_editor()`,
@@ -165,14 +170,14 @@ backends supply their own renderer, so they don't need `truce-gui`'s
 `cpu` / `gpu` features — a plugin using one of them can drop the
 `truce-gui` dependency entirely.
 
-## 0.48.11 (2026-05-24)
+## 0.48.11
 
 - `cargo-truce`: Fix various install-path bugs on Windows. VST3 now
   installs to system scope by default — Ableton doesn't scan the
   per-user VST3 directory.
 - `truce-gui` & `truce-gpu`: Minor built-in GUI rendering improvements.
 
-## 0.48.10 (2026-05-23)
+## 0.48.10
 
 - Minor housekeeping.
 - `cargo-truce`: Replace non-Latin status glyphs in `cargo truce
@@ -180,7 +185,7 @@ backends supply their own renderer, so they don't need `truce-gui`'s
   used by `cargo truce doctor`. The Unicode `✓` / `✗` characters
   broke rendering in Windows 10 WSL terminals.
 
-## 0.48.9 (2026-05-23)
+## 0.48.9
 
 - Examples: Fix blocksize bug in EQ example.
 - AAX: Set `UNSAFE_OBJC2_ALLOW_CLASS_OVERRIDE` when building AAX
@@ -195,7 +200,7 @@ backends supply their own renderer, so they don't need `truce-gui`'s
   `target/dist/<crate>-<version>-ios.ipa` next to the macOS
   `.pkg` / Windows `.exe` / Linux `.tar.gz`.
 
-## 0.48.8 (2026-05-22)
+## 0.48.8
 
 - **truce now fully published to crates.io.** `cargo truce new` scaffolds
   with a `truce = { version = "0.48" }` registry pin by default;
@@ -240,12 +245,12 @@ Cargo's caret resolver expands `"0.48"` to `>=0.48.0, <0.49.0`,
 so you'll pick up any future `0.48.x` patch release without
 re-editing.
 
-## 0.48.4 (2026-05-21)
+## 0.48.4
 
 - Standalone: Fix default device selection on Linux (broke after
   cpal 0.17 update in 0.48.x).
 
-## 0.48.3 (2026-05-21)
+## 0.48.3
 
 - `cargo-truce`: Improve iOS screenshot reliability, clear any
   stale `_truce_editor_frame.json` before launch, extend the
@@ -253,7 +258,7 @@ re-editing.
   with a diagnostic when the editor never renders (instead of
   silently proceeding to a misleading "screenshot size mismatch").
 
-## 0.48.2 (2026-05-21)
+## 0.48.2
 
 - `truce-egui`: Migrate to egui 0.34 (bumps `wgpu` to 29 transitively).
 - **Breaking (`truce-egui`):** `EditorUi::ui` and the `EguiEditor::new`
@@ -265,12 +270,12 @@ re-editing.
 
 (0.48.0 and 0.48.1 were yanked, install 0.48.2.)
 
-## 0.47.0 (2026-05-20)
+## 0.47.0
 
 - `truce-egui`: Migrate to egui 0.33 (bumps `wgpu` to 27 transitively).
 - `truce-gpu`: Declare wgpu graphics backends per-OS (fixes Linux).
 
-## 0.46.0 (2026-05-20)
+## 0.46.0
 
 - `truce-iced`: Migrate to iced 0.14.
 - `truce-egui`: Add `param_dropdown` widget (stock click-to-open
@@ -280,14 +285,14 @@ re-editing.
 - Examples: Tremolo refreshed (compact transport line, fractional
   rate labels, dropdown polish).
 
-## 0.45.4 (2026-05-20)
+## 0.45.4
 
 - LV2: Fix install path on Windows.
 - LV2: Fix param defaults (mirror other formats).
 - Standalone: Disable window resizing on Linux (mirror other OSes).
 - Examples: Fix `fourcc` collision between two example plugins.
 
-## 0.45.3 (2026-05-19)
+## 0.45.3
 
 - `cargo-truce`: Fix plugin-name to path sanitization mismatch
   between `build` / `install` and `package` (display names with
@@ -296,7 +301,7 @@ re-editing.
   referenced the raw name while the on-disk `.pkg` files used the
   sanitized name).
 
-## 0.45.2 (2026-05-19)
+## 0.45.2
 
 - AAX: Fix ABI mismatch bug (broken since 0.43.0).
 - AAX / `cargo-truce`: Add Pro Tools `pluginrunner` to
@@ -310,7 +315,7 @@ re-editing.
   purpose); use `validate` for that.
 - Stylistic sweep.
 
-## 0.45.0 (2026-05-18)
+## 0.45.0
 
 - New CI gate exercises every prior release's example crates
   against the current `truce` HEAD, catching backwards-incompatible
@@ -333,7 +338,7 @@ re-editing.
   boundary, so the on-disk bundle lands at `Truce Dry-Wet.aaxplugin`
   while DAWs still display the raw name from the plist.
 
-## 0.44.0 (2026-05-18)
+## 0.44.0
 
 - **VST3 + CLAP on macOS now link as `MH_BUNDLE` instead of
   `MH_DYLIB`.** Fixes load under hosts that take the strict
@@ -359,12 +364,12 @@ re-editing.
   single-instrument, and mixed-workspace shapes.
 - Doc sweep across the in-tree comments and rustdoc.
 
-## 0.43.0 (2026-05-17)
+## 0.43.0
 
 - **SysEx + UMP support (work in progress).** Initial plumbing
   for System Exclusive messages and MIDI 2.0 UMPs
 
-## 0.42.1 (2026-05-17)
+## 0.42.1
 
 - Params: `IntParam` value displays no longer pick up the
   `FloatParam` `{:.1}` / `{:.2}` formatters, so transpose's
@@ -375,7 +380,7 @@ re-editing.
   `Depth` knob on tremolo now declare `unit = "%"`, so they render
   as `25%` / `0%` instead of `0.25` / `0.00`.
 
-## 0.42.0 (2026-05-16)
+## 0.42.0
 
 - **iOS support.** AU v3 plug-ins now build, install, and run on
   both the iOS Simulator (`cargo truce install --ios`) and tethered
@@ -394,7 +399,7 @@ re-editing.
   the simulator's actual rendered output (the only path that sees
   iOS-specific compositing); `--check` gates baselines in CI.
 
-## 0.41.0 (2026-05-15)
+## 0.41.0
 
 - AAX: Fix knobs sync bug on log-ranged parameters. The C++
   shim defaulted to a linear taper for every param's normalize /
@@ -409,7 +414,7 @@ re-editing.
   `homepage` metadata added to every crate's Cargo.toml for
   crates.io publishing readiness.
 
-## 0.40.2 (2026-05-14)
+## 0.40.2
 
 - Move example READMEs out to truce-website (no code impact).
 - Wrap VST3 / VST2 / AU / AAX state-save and state-load callbacks
@@ -419,14 +424,14 @@ re-editing.
   now pre-zero the host's out pointers so a panic mid-write leaves
   the host seeing an empty blob rather than a stale buffer.
 
-## 0.40.1 (2026-05-14)
+## 0.40.1
 
 - AU v3: Wire `macos_icon` through the bundle template. When set
   in `truce.toml`, the per-plugin `.icns` is copied into the
   `.app`'s `Contents/Resources/` and `CFBundleIconFile` is added
   to the outer Info.plist, matching the standalone-host behavior.
 
-## 0.40.0 (2026-05-13)
+## 0.40.0
 
 - CLAP: Use the macOS bundle layout (`Contents/MacOS` +
   `Info.plist`). Fixes load in Bitwig
@@ -442,23 +447,23 @@ re-editing.
 - Follow stable Rust toolchain (unpin from 1.90).
 - Dead-code removal, stylistic fixes.
 
-## 0.39.3 (2026-05-13)
+## 0.39.3
 
 - New example integrating with fundsp; added small helpers.
 - AU v2: Fix registration bug causing GUI init issues.
 - LV2: Fix URI mismatch between manifest and runtime.
 
-## 0.39.2 (2026-05-13)
+## 0.39.2
 
 - Consistent naming scheme for package installers across macOS,
   Windows, and Linux.
 
-## 0.39.1 (2026-05-13)
+## 0.39.1
 
 - Standalone on macOS: Fix audio input after install, was
   missing the audio-input entitlement.
 
-## 0.39.0 (2026-05-13)
+## 0.39.0
 
 - LV2: Add packaging support.
 - Enable notarization for example plugins.
@@ -468,7 +473,7 @@ re-editing.
 - Installer / packaging bug fixes.
 - Bump MSRV to 1.90.
 
-## 0.38.0 (2026-05-12)
+## 0.38.0
 
 - LV2: Fix MIDI effect categorization.
 - Improved precision ergonomics using fundsp-style preludes.
