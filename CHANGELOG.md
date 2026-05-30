@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 0.49.17
+
+- **`truce-gui`: fixed dropdown menu dirty-tracking bugs.** Scroll
+  wheel, touch-drag scroll, and per-option hover highlights mutated
+  popup state without flagging the repaint gate, so on the CPU
+  renderer they only became visible when an unrelated event tripped
+  a repaint. (GPU renderer was unaffected: it re-renders every frame.)
+
 ## 0.49.16
 
 - **macOS packaging: CLAP/VST3/VST2 bundles are now ~half the size.**
