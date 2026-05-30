@@ -2,6 +2,12 @@
 
 Notable changes per release.
 
+## 0.49.18
+
+- **`#[param(default = ...)]` now accepts `std::f64::consts::*`.**
+  Also `core::f64::consts::*` and bare `f64::consts::*`. Lets plugins
+  write `default = std::f64::consts::SQRT_2` instead of a literal.
+
 ## 0.49.17
 
 - **`truce-gui`: fixed dropdown menu dirty-tracking bugs.** Scroll
