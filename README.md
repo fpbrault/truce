@@ -86,16 +86,21 @@ directories are system-wide).
 
 ## Examples
 
-[**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
-a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins:
-
-<img src="examples/screenshots/analyzer_diff.png" width="600">
-
 Smaller example plugins ship in-tree to cover the basics — gain,
 EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
 showing the egui / iced / Slint backends. See
 [truce.audio/docs/examples](https://truce.audio/docs/examples/) for the full
 table with screenshots.
+
+[**reiss-mcpherson-effects**](https://github.com/truce-audio/reiss-mcpherson-effects/),
+a companion repo porting the audio-effect implementations from Reiss
+& McPherson's *Audio Effects: Theory, Implementation and Application*
+to truce.
+
+[**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
+a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins:
+
+<img src="examples/screenshots/analyzer_diff.png" width="600">
 
 ## Minimal Example
 
