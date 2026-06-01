@@ -1,0 +1,174 @@
+//! Bitcrusher example showcasing `dasp_sample::Sample` bit-depth
+//! conversion. For depths dasp ships as a concrete sample type
+//! (`i8` / `i16`), the quantization round-trips through the dasp
+//! `Sample` trait so the format-spec rounding rules are exact. Other
+//! depths fall back to the equivalent floor-quantize formula.
+
+use dasp_sample::Sample as DaspSample;
+use std::sync::Arc;
+
+use truce::prelude::*;
+use truce_gui::IntoLayoutEditor;
+use truce_gui_types::layout::{GridLayout, knob, widgets};
+
+use BitcrusherParamsParamId as P;
+
+#[derive(Params)]
+pub struct BitcrusherParams {
+    #[param(name = "Bits", range = "discrete(2, 16)", default = 16)]
+    pub bits: IntParam,
+    #[param(name = "Hold", range = "discrete(1, 32)", default = 1)]
+    pub hold: IntParam,
+    #[param(name = "Mix", range = "linear(0, 1)", default = 1.0, unit = "%")]
+    pub mix: FloatParam,
+}
+
+pub struct Bitcrusher {
+    params: Arc<BitcrusherParams>,
+    /// Sample-and-hold buffer per channel (max 2 channels supported).
+    held: [f32; 2],
+    /// Frame counter for the hold ratio.
+    hold_counter: usize,
+}
+
+impl Bitcrusher {
+    #[must_use]
+    pub fn new(params: Arc<BitcrusherParams>) -> Self {
+        Self {
+            params,
+            held: [0.0; 2],
+            hold_counter: 0,
+        }
+    }
+}
+
+/// Quantize a `[-1.0, 1.0]` sample to `bits` bits of resolution. Routes
+/// through `dasp_sample::Sample` for the two depths dasp ships as
+/// concrete integer types; falls back to the equivalent quantize
+/// formula for other depths.
+fn quantize(s: f32, bits: u8) -> f32 {
+    match bits {
+        8 => s.to_sample::<i8>().to_sample::<f32>(),
+        16 => s.to_sample::<i16>().to_sample::<f32>(),
+        _ => {
+            // `bits` is in [2, 16]; the step count fits in f32.
+            let steps = 2.0_f32.powi(i32::from(bits) - 1);
+            (s * steps).round() / steps
+        }
+    }
+}
+
+impl PluginLogic for Bitcrusher {
+    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+        self.params.set_sample_rate(sample_rate);
+        self.params.snap_smoothers();
+        self.held = [0.0; 2];
+        self.hold_counter = 0;
+    }
+
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        _events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {
+        // `bits` ∈ [2, 16], stored as i64 by `IntParam`; the cast is exact.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let bits = self.params.bits.value() as u8;
+        let hold = self.params.hold.value_usize().max(1);
+        let mix = self.params.mix.read();
+
+        let channels = buffer.channels().min(2);
+        for i in 0..buffer.num_samples() {
+            let refresh = self.hold_counter.is_multiple_of(hold);
+            for ch in 0..channels {
+                let (inp, out) = buffer.io(ch);
+                let dry = inp[i];
+                if refresh {
+                    self.held[ch] = dry;
+                }
+                let crushed = quantize(self.held[ch], bits);
+                out[i] = dry * (1.0 - mix) + crushed * mix;
+            }
+            self.hold_counter = self.hold_counter.wrapping_add(1);
+        }
+
+        ProcessStatus::Normal
+    }
+
+    fn editor(&self) -> Box<dyn Editor> {
+        GridLayout::build(vec![widgets(vec![
+            knob(P::Bits, "Bits"),
+            knob(P::Hold, "Hold"),
+            knob(P::Mix, "Mix"),
+        ])])
+        .with_title("BITCRUSHER")
+        .into_editor(&self.params)
+    }
+}
+
+truce::plugin! {
+    logic: Bitcrusher,
+    params: BitcrusherParams,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn info_is_valid() {
+        truce_test::assert_valid_info::<Plugin>();
+    }
+
+    #[test]
+    fn has_editor() {
+        truce_test::assert_has_editor::<Plugin>();
+    }
+
+    #[test]
+    fn state_round_trips() {
+        truce_test::assert_state_round_trip::<Plugin>();
+    }
+
+    #[test]
+    fn editor_lifecycle() {
+        truce_test::assert_editor_lifecycle::<Plugin>();
+    }
+
+    #[test]
+    fn passthrough_at_defaults() {
+        // 16-bit + hold=1 + mix=1 should be near-passthrough (round
+        // through i16 is below the noise floor at the default constant).
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(20))
+            .input(InputSource::Constant(0.5))
+            .run();
+        assertions::assert_nonzero(&result);
+        assertions::assert_no_nans(&result);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn gui_screenshot_macos() {
+        truce_test::screenshot!(Plugin, "screenshots/dasp_bitcrusher_default_macos.png").run();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gui_screenshot_linux() {
+        truce_test::screenshot!(Plugin, "screenshots/dasp_bitcrusher_default_linux.png")
+            .pixel_threshold(2)
+            .run();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn gui_screenshot_windows() {
+        truce_test::screenshot!(Plugin, "screenshots/dasp_bitcrusher_default_windows.png")
+            .pixel_threshold(2)
+            .run();
+    }
+}

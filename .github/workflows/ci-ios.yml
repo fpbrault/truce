@@ -203,7 +203,8 @@ jobs:
               truce-example-transpose \
               truce-example-gui-zoo \
               truce-example-gui-zoo-egui \
-              truce-example-gui-zoo-slint; do
+              truce-example-gui-zoo-slint \
+              truce-example-dasp-bitcrusher; do
             short=${crate#truce-example-}
             short_under=${short//-/_}
             echo "=== $crate ==="
@@ -216,7 +217,7 @@ jobs:
               --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
               -p "$crate" || fail=$((fail + 1))
           done
-          echo "container-mode regressions: $fail / 14"
+          echo "container-mode regressions: $fail / 15"
           exit $fail
 
       # `--check` writes each freshly-rendered PNG to
