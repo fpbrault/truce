@@ -54,6 +54,7 @@ members = [
     "examples/truce-example-gui-zoo-egui",
     "examples/truce-example-gui-zoo-iced",
     "examples/truce-example-gui-zoo-slint",
+    "examples/truce-example-dasp-bitcrusher",
 ]
 
 [workspace.package]

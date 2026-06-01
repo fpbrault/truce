@@ -6627,6 +6627,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-dasp-bitcrusher"
+version = "0.49.21"
+dependencies = [
+ "clap-sys",
+ "dasp_sample",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-eq"
 version = "0.49.21"
 dependencies = [
