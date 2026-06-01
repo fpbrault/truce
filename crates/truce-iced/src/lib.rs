@@ -55,7 +55,9 @@ pub use param_message::{Message, ParamMessage};
 pub use truce_core::editor::PluginContext;
 
 // Re-export widget helper functions.
-pub use widgets::{knob, meter, param_selector, param_slider, param_toggle, xy_pad};
+pub use widgets::{
+    knob, meter, param_dropdown, param_selector, param_slider, param_toggle, xy_pad,
+};
 
 use iced::Element;
 use std::fmt::Debug;

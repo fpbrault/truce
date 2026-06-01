@@ -83,6 +83,7 @@ env:
     truce-example-transpose
     truce-example-gui-zoo
     truce-example-gui-zoo-egui
+    truce-example-gui-zoo-iced
 
 jobs:
   linux:
@@ -263,6 +264,7 @@ jobs:
           args=()
           for crate in $EXAMPLE_CRATES; do
             [ "$crate" = "truce-example-gain-iced" ] && continue
+            [ "$crate" = "truce-example-gui-zoo-iced" ] && continue
             args+=("-p" "$crate")
           done
           cargo build "${args[@]}" --target aarch64-apple-ios-sim \
@@ -283,6 +285,9 @@ jobs:
           # otherwise wedges later plugins' first paint).
           for crate in $EXAMPLE_CRATES; do
             if [ "$crate" = "truce-example-gain-iced" ]; then
+              continue
+            fi
+            if [ "$crate" = "truce-example-gui-zoo-iced" ]; then
               continue
             fi
             short="${crate#truce-example-}"

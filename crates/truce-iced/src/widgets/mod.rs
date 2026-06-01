@@ -56,6 +56,14 @@ pub fn param_selector<M: Clone + Debug + 'static>(
     SelectorWidget::new(id.into(), params)
 }
 
+/// Alias for [`param_selector`].
+pub fn param_dropdown<M: Clone + Debug + 'static>(
+    id: impl Into<u32>,
+    params: &ParamCache<impl Params>,
+) -> SelectorWidget<'_, M> {
+    SelectorWidget::new(id.into(), params)
+}
+
 /// Create a level meter display.
 pub fn meter<'a, M: Clone + Debug + 'static>(
     ids: &[impl Into<u32> + Copy],
