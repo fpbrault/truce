@@ -19,7 +19,7 @@ use truce_vizia::{ParamLens, ViziaEditor};
 
 use ZooParamsParamId as P;
 
-const WINDOW_W: u32 = 600;
+const WINDOW_W: u32 = 604;
 const WINDOW_H: u32 = 920;
 
 // Zoo-local layout CSS. Lives in the example because it's

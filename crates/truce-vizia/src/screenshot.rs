@@ -85,6 +85,9 @@ pub(crate) fn render_with_state<P: Params + 'static>(
         let inner = backend.context();
         if let Some(bytes) = font {
             inner.add_font_mem(bytes);
+            // Override vizia's default `font-family` so registered
+            // bytes actually render. See `editor::JETBRAINS_MONO_FAMILY_CSS`.
+            let _ = inner.add_stylesheet(crate::editor::JETBRAINS_MONO_FAMILY_CSS);
         }
         // Match `ViziaEditor::open`: every user-supplied stylesheet
         // goes in, in the order it was added via `with_stylesheet`.

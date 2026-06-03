@@ -20,6 +20,14 @@ use crate::platform::ParentWindow;
 /// widget tree.
 pub type SetupFn<P> = Arc<dyn Fn(&mut Context, ParamLens<P>) + Send + Sync>;
 
+/// Stylesheet applied when a plugin calls `with_font(...)`. Points
+/// the root entity at the registered font's family; vizia inherits
+/// `font-family` from root down to every descendant, so the
+/// universal `*` selector (which forces a restyle on every entity
+/// per tick and caused intermittent partial-paint artefacts) isn't
+/// needed.
+pub(crate) const JETBRAINS_MONO_FAMILY_CSS: &str = ":root { font-family: \"JetBrains Mono\"; }";
+
 pub struct ViziaEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
@@ -123,6 +131,15 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             // builds - vizia caches font shaping per family.
             if let Some(bytes) = font {
                 cx.add_font_mem(bytes);
+                // Vizia registers the font under whatever family name
+                // the TTF advertises but leaves `:root { font-family }`
+                // pointing at the system stack from its default
+                // theme. Override here so plugins that opt into
+                // `with_font(JETBRAINS_MONO)` actually render in
+                // JetBrains Mono. truce-font is the only font crate
+                // we ship and the only one `with_font` is documented
+                // to take, so the family name is fixed.
+                let _ = cx.add_stylesheet(JETBRAINS_MONO_FAMILY_CSS);
             }
             // Stylesheets are applied in the order they were added
             // via `with_stylesheet`. Plugins opt into widget styling

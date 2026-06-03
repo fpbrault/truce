@@ -161,6 +161,50 @@ impl<P: Params + 'static> ParamLens<P> {
             .map(std::num::NonZeroU32::get)
     }
 
+    /// Longest formatted value the param can ever display, in
+    /// characters. For discrete params iterates every step; for
+    /// continuous params samples eleven evenly-spaced normalized
+    /// points (good enough to catch suffix changes like
+    /// "999.0 Hz" -> "1.0 kHz" at scale boundaries).
+    ///
+    /// Widgets that don't want their cell width to jitter as the
+    /// value changes (`widgets::param_knob`) size the value-label
+    /// slot from this so the cell never grows past the floor set
+    /// here.
+    #[must_use]
+    pub fn widest_format_chars(&self, id: impl Into<u32>) -> usize {
+        let id_u32: u32 = id.into();
+        let Some(info) = self
+            .ctx
+            .params()
+            .param_infos()
+            .into_iter()
+            .find(|i| i.id == id_u32)
+        else {
+            return 0;
+        };
+        let sample_at = |normalized: f64| -> usize {
+            let plain = info.range.denormalize(normalized.clamp(0.0, 1.0));
+            self.ctx
+                .params()
+                .format_value(id_u32, plain)
+                .map_or(0, |s| s.chars().count())
+        };
+        if let Some(steps) = info.range.step_count() {
+            #[allow(clippy::cast_precision_loss)]
+            let denom = f64::from(steps.get());
+            (0..=steps.get())
+                .map(|s| sample_at(f64::from(s) / denom))
+                .max()
+                .unwrap_or(0)
+        } else {
+            (0..=10)
+                .map(|i| sample_at(f64::from(i) / 10.0))
+                .max()
+                .unwrap_or(0)
+        }
+    }
+
     /// Formatted display string for an *arbitrary* step on a discrete
     /// range, without mutating the live param. Used by
     /// `widgets::param_selector` / `param_dropdown` to label the

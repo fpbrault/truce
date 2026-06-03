@@ -32,63 +32,7 @@ use crate::param_lens::ParamLens;
 /// Opt in via `ViziaEditor::with_stylesheet(BASE_CSS)`. Without it
 /// the knob renders with its needle outside the round body and the
 /// dropdown popup overflows / shows an arrow.
-pub const BASE_CSS: &str = r"
-.truce-knob .knob-head {
-    width: 44px;
-    height: 44px;
-    border-width: 2px;
-}
-.truce-knob .knob-tick {
-    width: 3px;
-    height: 10px;
-    corner-radius: 1px;
-}
-/* Level meter + XY pad: vizia's default Element has no background,
- * so without these the meter bars and the pad outline are invisible.
- * Colors resolve through vizia CSS variables (`--muted`, `--primary`,
- * `--destructive`, `--border`) so they follow whatever palette is
- * active - the default light theme picks up the standard vizia
- * neutrals; a plugin author who layers their own dark / branded
- * palette over the top inherits the matching variables. */
-.truce-meter {
-    background-color: var(--muted);
-    border-color: var(--border);
-    border-width: 1px;
-}
-/* Track is transparent so the container's `var(--muted)` body + 1px
- * `var(--border)` outline read through, matching the XY pad's frame.
- * The fill is the only opaque thing inside, so an idle meter looks
- * like an empty bordered slot. */
-.truce-meter-bar {
-    background-color: transparent;
-}
-.truce-meter-fill {
-    background-color: var(--primary);
-}
-.truce-meter-fill-clip {
-    background-color: var(--destructive);
-}
-.truce-xy-pad {
-    background-color: var(--muted);
-    border-color: var(--border);
-    border-width: 1px;
-}
-.truce-xy-pad-dot {
-    background-color: var(--primary);
-}
-popup arrow {
-    display: none;
-}
-popup {
-    width: auto;
-    min-width: auto;
-    height: auto;
-    padding: 0px;
-}
-popup button {
-    corner-radius: 0px;
-}
-";
+pub const BASE_CSS: &str = include_str!("base.css");
 
 /// Single labelled knob cell: knob on top, name label below, current
 /// formatted value at the bottom.
@@ -124,6 +68,15 @@ pub fn param_knob<P: Params + 'static>(
         let _ = value_signal.get();
         lens_for_display.format(id_u32)
     });
+    // Lock the value-label slot to fit the *widest* string this
+    // param can ever format to. Without this the cell width tracks
+    // the live value, so a continuous knob shrinks (e.g. "0.0 dB" ->
+    // "-60.0 dB" adds two chars) and pushes every cell to its right.
+    // Estimated in pixels from the char count at the BASE_CSS 11px
+    // monospace size; the small +pad keeps neighbour-touching cells
+    // from kissing when the longest string is rendered.
+    #[allow(clippy::cast_precision_loss)]
+    let value_slot_w = lens.widest_format_chars(id) as f32 * VALUE_CHAR_W_PX + VALUE_PAD_PX;
 
     VStack::new(cx, move |cx| {
         Knob::new(cx, initial, value_signal, false)
@@ -149,14 +102,26 @@ pub fn param_knob<P: Params + 'static>(
                 value_signal.set(snapped);
             });
         Label::new(cx, label_text);
-        Label::new(cx, display);
+        Label::new(cx, display)
+            .width(Pixels(value_slot_w))
+            .class("truce-knob-value");
     })
     .class("truce-knob")
     .width(Auto)
     .height(Auto)
-    .vertical_gap(Pixels(4.0))
+    .vertical_gap(Pixels(2.0))
     .alignment(Alignment::Center);
 }
+
+/// Per-character advance estimate for the [`BASE_CSS`] value-label
+/// font (`JetBrains` Mono / monospace fallback at 11px). 6.6px is
+/// the real advance; we use a hair more so a string that just fits
+/// at the estimate doesn't collide with a one-pixel rounding error
+/// and trigger the cell to grow.
+const VALUE_CHAR_W_PX: f32 = 7.0;
+/// Extra breathing room added on top of the char-count estimate so
+/// neighbouring cells don't visually kiss at the widest value.
+const VALUE_PAD_PX: f32 = 2.0;
 
 /// Single labelled slider cell: label on top, horizontal slider
 /// below, current formatted value underneath. `width` controls the
@@ -203,7 +168,7 @@ pub fn param_slider<P: Params + 'static>(
     .class("truce-slider")
     .width(Pixels(width))
     .height(Auto)
-    .vertical_gap(Pixels(4.0));
+    .vertical_gap(Pixels(2.0));
 }
 
 /// Single labelled toggle: a vizia `Switch` next to a label.
@@ -295,7 +260,7 @@ pub fn param_selector<P: Params + 'static>(
     .class("truce-selector")
     .width(Auto)
     .height(Auto)
-    .vertical_gap(Pixels(4.0));
+    .vertical_gap(Pixels(2.0));
 }
 
 /// Dropdown trigger that shows the current formatted value; popup
@@ -397,7 +362,7 @@ pub fn param_dropdown<P: Params + 'static>(
     .class("truce-dropdown")
     .width(Auto)
     .height(Auto)
-    .vertical_gap(Pixels(4.0));
+    .vertical_gap(Pixels(2.0));
 }
 
 /// Vertical level meter with one bar per supplied meter id.
@@ -546,7 +511,7 @@ pub fn param_xy_pad<P: Params + 'static>(
     .class("truce-xy-pad-cell")
     .width(Auto)
     .height(Auto)
-    .vertical_gap(Pixels(4.0))
+    .vertical_gap(Pixels(2.0))
     .alignment(Alignment::TopCenter);
 }
 

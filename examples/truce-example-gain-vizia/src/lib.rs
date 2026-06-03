@@ -15,8 +15,8 @@ use truce_vizia::{ParamLens, ViziaEditor};
 
 use GainParamsParamId as P;
 
-const WINDOW_W: u32 = 200;
-const WINDOW_H: u32 = 270;
+const WINDOW_W: u32 = 176;
+const WINDOW_H: u32 = 260;
 
 #[derive(Params)]
 pub struct GainParams {
@@ -104,12 +104,25 @@ fn gain_view(cx: &mut Context, lens: ParamLens<GainParams>) {
     HStack::new(cx, move |cx| {
         VStack::new(cx, move |cx| {
             HStack::new(cx, |cx| {
-                param_knob(cx, lens.clone(), P::Gain, "Gain");
-                param_knob(cx, lens.clone(), P::Pan, "Pan");
+                // Wrap each knob in a Stretch-width HStack so the two
+                // cells split the row equally. The row width matches
+                // the Pan / Gain pad below (130px) so the knob row
+                // aligns visually with the pad's left and right edges.
+                HStack::new(cx, |cx| {
+                    param_knob(cx, lens.clone(), P::Gain, "Gain");
+                })
+                .width(Stretch(1.0))
+                .height(Auto)
+                .alignment(Alignment::Center);
+                HStack::new(cx, |cx| {
+                    param_knob(cx, lens.clone(), P::Pan, "Pan");
+                })
+                .width(Stretch(1.0))
+                .height(Auto)
+                .alignment(Alignment::Center);
             })
-            .width(Auto)
-            .height(Auto)
-            .horizontal_gap(Pixels(10.0));
+            .width(Pixels(130.0))
+            .height(Auto);
             param_xy_pad(
                 cx,
                 lens.clone(),
@@ -122,11 +135,10 @@ fn gain_view(cx: &mut Context, lens: ParamLens<GainParams>) {
         })
         .width(Auto)
         .height(Auto)
-        .vertical_gap(Pixels(10.0));
-        // Meter height matches the left column total: knob cell
-        // (~80px) + 10px gap + xy-pad cell label + 4px gap + 130px
-        // pad surface. Sized so the meter's bottom edge lines up
-        // with the bottom of the Pan / Gain pad.
+        // Gap sized so knob cell (~80px) + gap + xy-pad cell (~146px)
+        // sums to the meter's 240px, lining up the pad's bottom edge
+        // with the meter's.
+        .vertical_gap(Pixels(13.0));
         level_meter(
             cx,
             lens_for_meter.clone(),
