@@ -161,7 +161,7 @@ wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 # downstream `truce-vizia` `[patch]`es baseview to this fork) and
 # renamed `[lib].name` to `baseview` (lets the patch link without a
 # wrapper shim).
-baseview = { package = "baseview-truce", version = "0.1.1-truce.5" }
+baseview = { package = "baseview-truce", version = "0.1.1-truce.6" }
 
 # Redirect vizia_baseview's git baseview dep through baseview-truce.
 # vizia_baseview pins `baseview = { git = "https://github.com/vizia/baseview", rev = "..." }`;
@@ -171,7 +171,7 @@ baseview = { package = "baseview-truce", version = "0.1.1-truce.5" }
 # pick up the AAX / Pro Tools teardown fix the same as every other
 # truce GUI backend.
 [patch."https://github.com/vizia/baseview"]
-baseview = { package = "baseview-truce", version = "0.1.1-truce.5" }
+baseview = { package = "baseview-truce", version = "0.1.1-truce.6" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features

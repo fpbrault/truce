@@ -351,9 +351,9 @@ dependencies = [
 
 [[package]]
 name = "baseview-truce"
-version = "0.1.1-truce.5"
+version = "0.1.1-truce.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5dfacaf358f5f964d0f4ce1a3ad1bb6b69d175dc274903b50eea3b4f20f608c"
+checksum = "c313f8aee0cd037d0dad66ecf0672ed3afe25110c59a4148535b1f48e455a69d"
 dependencies = [
  "keyboard-types",
  "nix",
