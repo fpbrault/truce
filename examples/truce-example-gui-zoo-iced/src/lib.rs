@@ -335,7 +335,7 @@ impl PluginLogic for ZooIced {
                 P::M6e,
                 P::M6f,
             ])
-            .with_font("JetBrains Mono", truce_font::JETBRAINS_MONO)
+            .with_font(truce_font::JETBRAINS_MONO)
             .into_editor()
     }
 }

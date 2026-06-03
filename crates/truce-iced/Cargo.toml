@@ -18,6 +18,11 @@ iced = { version = "0.14", default-features = false, features = ["canvas", "wgpu
 iced_runtime = "0.14"
 iced_graphics = "0.14"
 raw-window-handle = "0.5"
+# `ttf-parser` reads the TTF `name` table so `with_font(bytes)` can
+# extract the family name iced needs to refer to the font afterward,
+# matching the egui / vizia `with_font(bytes)` shape. Pinned to the
+# same major iced's cosmic-text uses transitively to share one copy.
+ttf-parser = "0.25"
 
 # baseview + iced_wgpu live behind these on non-iOS hosts. iOS uses
 # the stub editor in `editor_ios.rs`; iced-wgpu surface creation on

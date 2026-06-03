@@ -4880,6 +4880,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-params",
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]

@@ -35,7 +35,7 @@ pub(crate) fn render_to_pixels<P, M>(
     plugin: M,
     size: (u32, u32),
     scale: f64,
-    font: Option<(&'static str, &'static [u8])>,
+    font: Option<&'static [u8]>,
 ) -> Option<(Vec<u8>, u32, u32)>
 where
     P: Params + 'static,
@@ -89,8 +89,8 @@ where
         iced_graphics::Shell::headless(),
     );
 
-    let default_font = if let Some((family, data)) = font {
-        crate::font::apply_font(family, data)
+    let default_font = if let Some(data) = font {
+        crate::font::apply_font(data)
     } else {
         iced::Font::DEFAULT
     };

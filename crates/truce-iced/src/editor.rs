@@ -156,7 +156,7 @@ where
     /// `tick()` reads it and reconfigures the surface/viewport when it
     /// diverges from `last_applied_scale`.
     scale: EditorScale,
-    font: Option<(&'static str, &'static [u8])>,
+    font: Option<&'static [u8]>,
     runtime: Option<IcedRuntime<P, M>>,
     /// Constructor closure for the plugin model. Each constructor
     /// stores a closure that produces an `M` of the correct concrete
@@ -251,15 +251,17 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
         }
     }
 
-    /// Set a custom default font (family name + TrueType data).
+    /// Set a custom default font. The family name is read from the
+    /// TTF `name` table - matches the `with_font(bytes)` shape used
+    /// by `truce-egui::EguiEditor` and `truce-vizia::ViziaEditor`.
     ///
     /// ```ignore
     /// IcedEditor::new(params, (250, 330))
-    ///     .with_font("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)
+    ///     .with_font(truce_font::JETBRAINS_MONO)
     /// ```
     #[must_use]
-    pub fn with_font(mut self, family: &'static str, data: &'static [u8]) -> Self {
-        self.font = Some((family, data));
+    pub fn with_font(mut self, data: &'static [u8]) -> Self {
+        self.font = Some(data);
         self
     }
 
@@ -293,8 +295,9 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     /// `scale.get()` diverges from this, `tick()` reconfigures and
     /// updates this snapshot.
     last_applied_scale: f64,
-    /// Custom font (family name, TrueType data).
-    font: Option<(&'static str, &'static [u8])>,
+    /// Custom font's TrueType bytes. Family name is recovered by
+    /// `crate::font::apply_font` from the TTF `name` table.
+    font: Option<&'static [u8]>,
 }
 
 /// Holds the full wgpu + iced rendering pipeline.
@@ -420,8 +423,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             iced_graphics::Shell::headless(),
         );
 
-        let default_font = if let Some((family, data)) = self.font {
-            crate::font::apply_font(family, data)
+        let default_font = if let Some(data) = self.font {
+            crate::font::apply_font(data)
         } else {
             iced::Font::DEFAULT
         };
@@ -776,11 +779,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         let plugin = (self.make_plugin)(self.params.clone());
 
         let mut param_cache = ParamCache::new(self.params.clone());
-        if let Some((family, _)) = self.font {
-            param_cache.set_font(iced::Font {
-                family: iced::font::Family::Name(family),
-                ..iced::Font::DEFAULT
-            });
+        if let Some(data) = self.font {
+            // `apply_font` is idempotent on the iced font-system side
+            // (load_font is fine to call twice with the same bytes);
+            // the redundant load here is cheap and lets the canvas
+            // widgets reuse the correct family without threading the
+            // already-derived `iced::Font` from the runtime path.
+            param_cache.set_font(crate::font::apply_font(data));
         }
         let typed_ctx = context.with_params(self.params.clone());
         let program = IcedProgram {
