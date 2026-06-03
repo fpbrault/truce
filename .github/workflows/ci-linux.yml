@@ -64,7 +64,8 @@ jobs:
             libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
             libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
-            libgl1-mesa-dri libglx-mesa0 \
+            libgl1-mesa-dri libglx-mesa0 mesa-utils \
+            xserver-xorg-core xserver-xorg-video-dummy x11-xserver-utils \
             libwayland-dev \
             libasound2-dev libjack-jackd2-dev \
             libfontconfig1-dev libfreetype-dev \
@@ -210,23 +211,81 @@ jobs:
           fi
 
       # vizia's editor opens a GLX-backed OpenGL surface through
-      # baseview's X11 GL path - pluginval's "Open editor whilst
-      # processing" probe instantiates the editor for real, so the
-      # default `xvfb-run` (no GLX extension; no GPU underneath)
-      # panics in `baseview::x11::visual_info::FBConfig`. Run Xvfb
-      # with `+extension GLX +iglx` and force Mesa onto llvmpipe via
-      # `LIBGL_ALWAYS_SOFTWARE=1` so the editor gets a software-
-      # rendered GL context instead. truce-slint skips this dance
-      # because its editor renders through CPU-backed Skia and
-      # never asks for a GL context.
+      # baseview's X11 GL path. pluginval's "Open editor whilst
+      # processing" probe instantiates the editor for real, and
+      # `xvfb`'s built-in GLX module on Ubuntu 24.04 can't advertise
+      # any FBConfigs - baseview's `glXChooseFBConfig` returns
+      # `NoValidFBConfig` and the editor probe panics. Spin a real
+      # Xorg server with the `dummy` video driver instead: that
+      # gives us Mesa's full GLX implementation routed to llvmpipe
+      # (software rasteriser) by `LIBGL_ALWAYS_SOFTWARE=1`. truce-slint
+      # skips this dance because its editor renders through CPU-backed
+      # Skia and never asks for a GL context.
+      - name: Start headless Xorg (dummy driver) for vizia validate
+        run: |
+          set -e
+          sudo tee /tmp/xorg-dummy.conf >/dev/null <<'EOF'
+          Section "Monitor"
+            Identifier "dummy"
+            HorizSync   28.0-80.0
+            VertRefresh 48.0-75.0
+          EndSection
+          Section "Device"
+            Identifier "dummy"
+            Driver "dummy"
+            VideoRam 256000
+          EndSection
+          Section "Screen"
+            Identifier "screen"
+            Monitor "dummy"
+            Device "dummy"
+            DefaultDepth 24
+            SubSection "Display"
+              Depth 24
+              Modes "1920x1080"
+              Virtual 1920 1080
+            EndSubSection
+          EndSection
+          EOF
+          # Allow non-console users to start Xorg (the GHA runner
+          # user isn't on a tty). Ubuntu 24.04's Xwrapper defaults
+          # block both predicates - relax both for this job.
+          sudo tee /etc/X11/Xwrapper.config >/dev/null <<'EOF'
+          allowed_users=anybody
+          needs_root_rights=yes
+          EOF
+          # `-noreset` keeps the server up if any client disconnects.
+          # `-logfile` keeps the per-session log out of /var/log
+          # (which the runner user can't write to).
+          sudo Xorg -noreset \
+            +extension GLX +extension RANDR +extension RENDER \
+            -config /tmp/xorg-dummy.conf \
+            -logfile /tmp/xorg-dummy.log \
+            :99 &
+          # Wait for X to be ready - `xdpyinfo` exits 0 once the
+          # server is accepting connections.
+          for _ in $(seq 1 30); do
+            DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && break
+            sleep 0.2
+          done
+          DISPLAY=:99 xdpyinfo >/dev/null
+          # Sanity-check: glxinfo must list at least one FBConfig.
+          # If this fails, the validate step would panic in the same
+          # baseview path with a less actionable error.
+          DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 glxinfo -B | head -10
+
       - name: Install + validate (truce-vizia sub-workspace)
+        env:
+          DISPLAY: ':99'
+          # Force Mesa to llvmpipe (software rasteriser); no real GPU
+          # behind the dummy driver to probe. Scoped to this step so
+          # later non-GL steps don't get an LD_PRELOAD-style surprise.
+          LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
           set -e -o pipefail
           cd crates/truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" install --user --clap --vst3 -p truce-example-gain-vizia
-          LIBGL_ALWAYS_SOFTWARE=1 \
-          xvfb-run -a -s "-screen 0 1920x1080x24 +extension GLX +iglx +extension RANDR" \
-            "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
           if grep -E "SKIP|not found" validate-vizia.log >/dev/null; then
             echo "::error::vizia validate skipped a step — failing"
             exit 1
