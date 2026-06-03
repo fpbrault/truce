@@ -37,13 +37,13 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
     let mut leftover: Vec<&str> = Vec::new();
     while i < args.len() {
         match args[i].as_str() {
-            "" => {}
+            // Empty string: arg-split residue. `--no-sign` /
+            // `--no-pace-sign` / `--no-notarize`: macOS-only flags
+            // accepted silently here so cross-platform CI matrices
+            // can pass the same `--no-sign --no-notarize` to every
+            // OS without per-platform branches.
+            "" | "--no-sign" | "--no-pace-sign" | "--no-notarize" => {}
             "--no-build" => no_build = true,
-            // No-op on Linux (no codesign / notarisation step to
-            // skip) but accepted silently so cross-platform CI
-            // matrices can pass the same `--no-sign --no-notarize`
-            // flags to every OS without per-platform branches.
-            "--no-sign" | "--no-pace-sign" | "--no-notarize" => {}
             "--target" => {
                 i += 1;
                 let v = args.get(i).ok_or("--target requires a value")?;
