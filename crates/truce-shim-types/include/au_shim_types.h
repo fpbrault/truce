@@ -106,6 +106,8 @@ typedef struct {
     void (*state_save)(void *ctx, uint8_t **out_data, uint32_t *out_len);
     void (*state_load)(void *ctx, const uint8_t *data, uint32_t len);
     void (*state_free)(uint8_t *data, uint32_t len);
+    uint32_t (*latency)(void *ctx);
+    uint32_t (*tail)(void *ctx);
     /* Plugin → host MIDI output. The Rust side filters its event
      * queue to events that fit in 3-byte MIDI 1.0 packets so the
      * shim can iterate `0..count` without checking for skipped
@@ -133,6 +135,11 @@ typedef struct {
     void (*gui_get_size)(void *ctx, uint32_t *w, uint32_t *h);
     void (*gui_open)(void *ctx, void *parent);
     void (*gui_close)(void *ctx);
+    uint8_t *(*custom_editor_request)(void *ctx,
+                                      const uint8_t *request,
+                                      uint32_t request_len,
+                                      uint32_t *response_len);
+    void (*custom_editor_response_free)(uint8_t *response, uint32_t response_len);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

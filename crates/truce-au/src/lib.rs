@@ -515,6 +515,22 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
     }
 }
 
+unsafe extern "C" fn cb_latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    let inst = unsafe { &*ctx.cast::<AuInstance<P>>() };
+    inst.latency_cache.load(Ordering::Relaxed)
+}
+
+unsafe extern "C" fn cb_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    let inst = unsafe { &*ctx.cast::<AuInstance<P>>() };
+    inst.tail_cache.load(Ordering::Relaxed)
+}
+
 // ---------------------------------------------------------------------------
 // Output event callbacks (plugin → host MIDI)
 // ---------------------------------------------------------------------------
@@ -712,7 +728,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
+            let params_for_state = params.clone();
             let pending_state_for_set = inst.pending_state.clone();
+            let plugin_id_hash_for_set = inst.plugin_id_hash;
             let transport_slot = inst.transport_slot.clone();
             let ctx_for_begin = ctx_raw;
             let ctx_for_end = ctx_raw;
@@ -785,20 +803,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         plugin.save_state()
                     }),
                     set_state: Box::new(move |bytes| {
-                        // The editor sends RAW custom-state bytes -
-                        // exactly what `save_state()` emits and
-                        // `get_state` above returns - NOT a full
-                        // `serialize_state` envelope. Route them to the
-                        // plugin's `load_state` on the audio thread via
-                        // the same handoff queue the host load path uses
-                        // (the queue is what avoids aliasing
-                        // `process()`'s `&mut plugin`). No params ride
-                        // along: the editor mutates params through
-                        // `set_param`.
-                        let _ = pending_state_for_set.force_push(state::DeserializedState {
-                            params: Vec::new(),
-                            extra: Some(bytes),
-                        });
+                        if let Some(deserialized) =
+                            state::deserialize_state(&bytes, plugin_id_hash_for_set)
+                        {
+                            // Apply params synchronously so the editor
+                            // sees the restore on its own thread.
+                            state::apply_params(&*params_for_state, &deserialized);
+                            let _ = pending_state_for_set.force_push(deserialized);
+                        }
                     }),
                     transport: Box::new(move || transport_slot.read()),
                 },
@@ -833,6 +845,60 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
         // already released the NSView contents and Metal resources;
         // the lightweight Rust struct that survives is reopened
         // in-place by the next `gui_open` call.
+    }
+}
+
+unsafe extern "C" fn cb_custom_editor_request<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    request: *const u8,
+    request_len: u32,
+    response_len: *mut u32,
+) -> *mut u8 {
+    if !response_len.is_null() {
+        unsafe {
+            *response_len = 0;
+        }
+    }
+    if ctx.is_null() || request.is_null() || request_len == 0 || response_len.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    run_extern_callback_with::<P, *mut u8>(
+        "au",
+        "custom_editor_request",
+        std::ptr::null_mut(),
+        || unsafe {
+            let inst = &mut *ctx.cast::<AuInstance<P>>();
+            if inst.editor.is_none() {
+                inst.editor = inst.plugin.editor();
+            }
+            let Some(editor) = inst.editor.as_mut() else {
+                return std::ptr::null_mut();
+            };
+            let request = slice::from_raw_parts(request, request_len as usize);
+            let Some(response) = editor.custom_request(request) else {
+                return std::ptr::null_mut();
+            };
+            if response.is_empty() {
+                return std::ptr::null_mut();
+            }
+
+            let ptr = malloc(response.len()).cast::<u8>();
+            if ptr.is_null() {
+                return std::ptr::null_mut();
+            }
+            std::ptr::copy_nonoverlapping(response.as_ptr(), ptr, response.len());
+            *response_len = len_u32(response.len());
+            ptr
+        },
+    )
+}
+
+unsafe extern "C" fn cb_custom_editor_response_free(response: *mut u8, _response_len: u32) {
+    unsafe {
+        if !response.is_null() {
+            free(response.cast::<std::ffi::c_void>());
+        }
     }
 }
 
@@ -948,6 +1014,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         state_save: cb_state_save::<P>,
         state_load: cb_state_load::<P>,
         state_free: cb_state_free,
+        latency: cb_latency::<P>,
+        tail: cb_tail::<P>,
         output_event_count: cb_output_event_count::<P>,
         output_event_at: cb_output_event_at::<P>,
         output_sysex_count: cb_output_sysex_count::<P>,
@@ -956,6 +1024,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
+        custom_editor_request: cb_custom_editor_request::<P>,
+        custom_editor_response_free: cb_custom_editor_response_free,
     }));
 
     let param_descs = param_descs.leak();

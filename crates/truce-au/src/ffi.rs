@@ -115,6 +115,10 @@ pub struct AuCallbacks {
     /// Free a buffer returned by `state_save`.
     pub state_free: unsafe extern "C" fn(data: *mut u8, len: u32),
 
+    /// Most recently observed processing latency and tail lengths.
+    pub latency: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    pub tail: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+
     /// Number of *encodable* plugin → host MIDI events queued by the
     /// last `process()` call. Unsupported event types (MIDI 2.0,
     /// `ParamChange`, Transport) are filtered out so the shim can
@@ -147,6 +151,13 @@ pub struct AuCallbacks {
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
     pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
+    pub custom_editor_request: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        request: *const u8,
+        request_len: u32,
+        response_len: *mut u32,
+    ) -> *mut u8,
+    pub custom_editor_response_free: unsafe extern "C" fn(response: *mut u8, response_len: u32),
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both
