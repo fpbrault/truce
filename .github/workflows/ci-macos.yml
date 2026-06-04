@@ -234,12 +234,18 @@ jobs:
             exit 1
           fi
 
+      # `--skip-gui-tests` mirrors the Linux + Windows vizia steps:
+      # baseview's macOS path (`baseview/src/macos/window.rs:412`)
+      # creates an `NSOpenGLContext`, and pluginval's "Open editor
+      # whilst processing" test fails with `CreationFailed(())` on
+      # the headless macos-latest runner. slint passes because it
+      # doesn't go through baseview's GL path.
       - name: Install + validate (truce-vizia sub-workspace)
         run: |
           set -e -o pipefail
           cd crates/truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" install --user --clap --vst3 -p truce-example-gain-vizia
-          "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval --skip-gui-tests -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
           if grep -E "SKIP|not found" validate-vizia.log >/dev/null; then
             echo "::error::vizia validate skipped a step — failing"
             exit 1

@@ -36,16 +36,6 @@ jobs:
           key: windows-latest
           cache-bin: false
 
-      # See `sub-workspaces` job for the rationale - both `test` and
-      # `sub-workspaces` build skia-bindings on Windows and trip the
-      # same VS-bundled-clang-19 + arm_neon.h regression. LLVM 17 is
-      # the youngest libclang that parses the header cleanly.
-      - name: Install LLVM 17 (skia-bindings + bindgen compat)
-        shell: pwsh
-        run: |
-          choco install llvm --version=17.0.6 --no-progress -y --force
-          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
-
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -226,22 +216,6 @@ jobs:
           command -v clap-validator
           command -v pluginval
 
-      # `skia-bindings` (transitively pulled by both slint and vizia
-      # sub-workspaces) builds C++ wrappers via bindgen → libclang.
-      # The `windows-latest` image bundles VS 2022's clang 19, whose
-      # `arm_neon.h` references intrinsics LLVM 19 hasn't shipped
-      # yet (`__builtin_neon___a64_vcvtq_low_bf16_f32`,
-      # `__builtin_neon_vcmla_f64`, …). On an x86_64 host the header
-      # gets parsed regardless of target and bindgen panics with
-      # `ClangDiagnostic`. Sidestep by installing LLVM 17 from
-      # chocolatey and pointing `LIBCLANG_PATH` at it for the
-      # subsequent skia-bindings builds.
-      - name: Install LLVM 17 (skia-bindings + bindgen compat)
-        shell: pwsh
-        run: |
-          choco install llvm --version=17.0.6 --no-progress -y --force
-          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
-
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
 
@@ -259,16 +233,17 @@ jobs:
             exit 1
           fi
 
-      # Same `--skip-gui-tests` rationale as the Linux vizia step.
-      # baseview's Windows GL path (`baseview/src/gl/win.rs:194`)
-      # hard-requires `WGL_ACCELERATION_ARB = WGL_FULL_ACCELERATION_ARB`;
+      # Same `--skip-gui-tests` rationale as the Linux + macOS vizia
+      # steps: baseview's Windows GL path
+      # (`baseview/src/gl/win.rs:194`) hard-requires
+      # `WGL_ACCELERATION_ARB = WGL_FULL_ACCELERATION_ARB`;
       # `windows-latest` runners have no GPU and Microsoft's GDI
       # software GL advertises as `WGL_GENERIC_ACCELERATION_ARB`, so
-      # `wglChoosePixelFormatARB` returns zero formats and the
-      # editor probe panics the same way it does under software Mesa
-      # on Linux. macOS escapes the same trap because Apple's
-      # NSOpenGLPixelFormat fallback always advertises a usable
-      # format; that step doesn't pass `--skip-gui-tests`.
+      # `wglChoosePixelFormatARB` returns zero formats and the editor
+      # probe panics, the same way headless software Mesa on Linux
+      # and `NSOpenGLContext` creation on the macos-latest runner
+      # both fail. slint dodges all three because it doesn't go
+      # through baseview's GL backend.
       - name: Install + validate (truce-vizia sub-workspace)
         shell: bash
         run: |
@@ -281,11 +256,23 @@ jobs:
             exit 1
           fi
 
+      # `--host-only` skips the ARM64 slice of the universal build.
+      # The skia-bindings dep (both sub-workspaces pull it) drives a
+      # C++ cross-build under bindgen, and `arm64-windows` is broken
+      # on the `windows-latest` image either way: the bundled VS
+      # clang 19 ships an `arm_neon.h` referencing intrinsics it
+      # hasn't implemented (`__builtin_neon___a64_vcvtq_low_bf16_f32`
+      # etc.) so bindgen panics with `ClangDiagnostic`; substituting
+      # an older libclang lets bindgen run but MSVC's STL headers
+      # then `static_assert` "Unexpected compiler version, expected
+      # Clang 19.0.0 or newer". The host x86_64 slice still exercises
+      # the full package pipeline (signtool, ISCC, etc.), which is
+      # what we want to gate on here.
       - name: Package (truce-slint + truce-vizia sub-workspaces)
         shell: bash
         run: |
           set -e -o pipefail
           cd crates/truce-slint
-          "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" package -p truce-example-gain-slint --formats clap,vst3 --no-sign --no-notarize
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" package -p truce-example-gain-slint --formats clap,vst3 --host-only --no-sign --no-notarize
           cd ../truce-vizia
-          "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" package -p truce-example-gain-vizia --formats clap,vst3 --no-sign --no-notarize
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" package -p truce-example-gain-vizia --formats clap,vst3 --host-only --no-sign --no-notarize
