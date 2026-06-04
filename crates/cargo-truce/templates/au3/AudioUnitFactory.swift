@@ -274,7 +274,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         midiOutputBlock: AUMIDIOutputEventBlock?
     ) -> AUAudioUnitStatus {
         if numIn > 0, let pull = pull {
-            var f = AudioUnitRenderActionFlags()
+            var f: UInt32 = 0
             let s = pull(&f, timestamp, frameCount, 0, outputData)
             if s != noErr { return s }
         }
@@ -353,11 +353,12 @@ class TruceAUAudioUnit: AUAudioUnit {
             }
         }
         if let state = transportState {
-            var flags = AUHostTransportStateFlags(rawValue: 0)
+            var rawFlags = 0
             var samplePos: Double = 0
             var cycleStart: Double = 0
             var cycleEnd: Double = 0
-            if state(&flags, &samplePos, &cycleStart, &cycleEnd) {
+            if state(&rawFlags, &samplePos, &cycleStart, &cycleEnd) {
+                let flags = AUHostTransportStateFlags(rawValue: UInt(rawFlags))
                 transportBuf.pointee.playing =
                     flags.contains(.moving) ? 1 : 0
                 transportBuf.pointee.recording =
@@ -458,7 +459,8 @@ class TruceAUAudioUnit: AUAudioUnit {
         // the worst-case sum of all inner payloads in one block)
         // plus 512 B of framing headroom (2 bytes × up to 256
         // events).
-        let sysexOutScratchCap = Int(TRUCE_SYSEX_POOL_PREALLOC) + 512
+        // Avoid a Swift 6.2 type-checker crash when importing the C arithmetic macro.
+        let sysexOutScratchCap = 128 * 1024 + 512
         let sysexOutScratch =
             UnsafeMutablePointer<UInt8>.allocate(capacity: sysexOutScratchCap)
 
