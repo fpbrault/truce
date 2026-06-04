@@ -127,6 +127,12 @@ pub trait Editor: Send {
     /// custom state stored outside the parameter system.
     fn state_changed(&mut self) {}
 
+    /// Handle an opaque format-specific request without coupling the
+    /// framework to a plugin's GUI protocol.
+    fn custom_request(&mut self, _request: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
     /// Render a headless screenshot of the editor at its natural size.
     ///
     /// `params` is a type-erased default-state instance the caller
