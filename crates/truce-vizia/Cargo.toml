@@ -1,13 +1,13 @@
 # truce-vizia lives in its own Cargo workspace, parallel to
 # truce-slint. The split exists because vizia hard-pins
-# `https://github.com/vizia/baseview.git` at a rev that has no
-# `cfg(target_os = "ios")` `platform` impl, and the workspace-level
-# `[patch]` that should redirect it to `baseview-truce` is silently
-# inert (cargo doesn't apply registry patches whose package name
-# doesn't match the consumer's requested name - vizia asks for
-# `baseview`, our published fork is `baseview-truce`). Isolating
-# vizia here keeps the iOS bake, the parent Cargo.lock, and the
-# parent `[patch]` table from being contaminated by vizia's pin.
+# `https://github.com/vizia/baseview.git` at a specific rev, and the
+# workspace-level `[patch]` that should redirect it to
+# `baseview-truce` is silently inert (cargo doesn't apply registry
+# patches whose package name doesn't match the consumer's requested
+# name - vizia asks for `baseview`, our published fork is
+# `baseview-truce`). Isolating vizia here keeps the parent
+# Cargo.lock and the parent `[patch]` table from being contaminated
+# by vizia's pin.
 #
 # Path deps point back into the parent workspace (`../<crate>`).
 # `cargo publish` strips `path` and embeds the registry `version`,
@@ -41,18 +41,6 @@ pedantic = { level = "warn", priority = -1 }
 # package name matches the consumer's requested name does the
 # substitution land). The branch isn't published to crates.io
 # because that name is taken.
-#
-# Doesn't fix iOS. Neither vizia/baseview nor our fork carry a
-# `cfg(target_os = "ios")` `platform` module, so the
-# `truce-vizia → vizia → vizia_baseview → baseview` chain still
-# fails to link on iOS. truce-egui / truce-iced / truce-slint sidestep
-# this by gating their baseview dep on
-# `cfg(not(target_os = "ios"))` and providing iOS-specific editor
-# stubs that bypass baseview entirely; vizia can't because
-# vizia_baseview is unconditional inside vizia. iOS bake exclusions
-# for vizia stay in place (see `.github/workflows/bake-screenshots.yml`)
-# until either vizia upstream gates vizia_baseview on non-iOS targets
-# or baseview-truce grows a UIKit-backed iOS platform impl.
 [patch."https://github.com/vizia/baseview.git"]
 baseview = { git = "https://github.com/truce-audio/baseview.git", branch = "baseview-truce-vizia" }
 
