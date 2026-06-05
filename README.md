@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://truce.audio/docs/guide/install/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a>
+  <a href="https://truce.audio/docs/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a>
   <a href="https://truce-audio.github.io/truce/"><img src="https://img.shields.io/badge/docs-rustdoc-purple?logo=rust&logoColor=white" alt="Docs"></a>
 </p>
 
