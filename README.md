@@ -85,7 +85,7 @@ directories are system-wide).
 
 ## Examples
 
-Smaller example plugins ship in-tree to cover the basics — gain,
+A suite of example plugins ship in-tree to cover the basics — gain,
 EQ, synth, transpose, arpeggio, tremolo, plus four gain variants
 showing the egui / iced / Slint / Vizia backends. See
 [truce.audio/docs/examples](https://truce.audio/docs/examples/) for the full
@@ -98,8 +98,6 @@ to truce.
 
 [**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
 a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins:
-
-<img src="examples/screenshots/analyzer_diff.png" width="600">
 
 ## Minimal Example
 
