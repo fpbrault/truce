@@ -29,6 +29,23 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
+// Vst3PluginExt - optional MIDI mapping support
+// ---------------------------------------------------------------------------
+
+/// Extension trait for VST3 plugins that want to participate in the host's
+/// MIDI learn / controller assignment workflow via `IMidiMapping`.
+///
+/// When implemented, the VST3 wrapper advertises `IMidiMapping` via COM
+/// and delegates `getMidiControllerAssignment` to this method. The default
+/// returns `None`, which tells the host "no mapping for this CC" and the
+/// host's MIDI learn falls through to any generic mapping UI.
+pub trait Vst3PluginExt: PluginExport {
+    fn midi_mapping_get_param_id(&self, _bus_index: i32, _channel: i16, _cc: i16) -> Option<u32> {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Instance wrapper
 // ---------------------------------------------------------------------------
 
@@ -1103,6 +1120,29 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 }
 
 // ---------------------------------------------------------------------------
+// MIDI mapping callback (Vst3PluginExt)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport + Vst3PluginExt>(
+    ctx: *mut std::ffi::c_void,
+    bus_index: i32,
+    channel: i16,
+    midi_cc: i16,
+    out_param_id: *mut u32,
+) -> i32 {
+    unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        match inst.plugin.midi_mapping_get_param_id(bus_index, channel, midi_cc) {
+            Some(id) => {
+                out_param_id.write(id);
+                1 // kResultOk
+            }
+            None => 0, // kResultFalse
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -1113,7 +1153,7 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     truce_core::info::resolve_name_override(info.vst3_name, info.name)
 }
 
-pub fn register_vst3<P: PluginExport>() {
+pub fn register_vst3<P: PluginExport + Vst3PluginExt>() {
     // Called from the export macro's `extern "C" fn init()` static
     // initializer. Catch any panic so it doesn't cross the FFI
     // boundary and abort the host process.
@@ -1126,7 +1166,7 @@ pub fn register_vst3<P: PluginExport>() {
     });
 }
 
-fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
+fn register_vst3_inner<P: PluginExport + Vst3PluginExt>(num_inputs: u32, num_outputs: u32) {
     let info = P::info();
     // Static metadata path: derive emits a `LazyLock`-cached
     // `Vec<ParamInfo>` so registration skips the
@@ -1248,6 +1288,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_can_resize: cb_gui_can_resize::<P>,
         gui_check_size_constraint: cb_gui_check_size_constraint::<P>,
         gui_set_size: cb_gui_set_size::<P>,
+        midi_mapping_get_param_id: cb_midi_mapping_get_param_id::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

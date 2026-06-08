@@ -176,6 +176,16 @@ pub struct Vst3Callbacks {
     /// the Rust side scales to logical using the cached host
     /// content-scale before handing to the editor.
     pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
+    // -----------------------------------------------------------------------
+    // Cosmo PATCH: IMidiMapping support
+    // -----------------------------------------------------------------------
+    /// Map a VST3 `ParamID` → `MidiCC` for the
+    /// `IMidiMapping::getMidiControllerAssignment` host query.
+    /// Returns `kResultOk` (1) and writes the param id via
+    /// `out_param_id` on success, or `kResultFalse` (0) when the
+    /// given CC / channel has no mapped parameter.
+    pub midi_mapping_get_param_id:
+        unsafe extern "C" fn(ctx: *mut c_void, bus_index: i32, channel: i16, midi_cc: i16, out_param_id: *mut u32) -> i32,
 }
 
 unsafe extern "C" {
