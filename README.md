@@ -288,3 +288,10 @@ end-user-app authors and internal-SDK use are unaffected.
 See [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md) for the precise
 boundary, the exemption criteria, and the request procedure.
 
+## Contact
+
+- General questions, bug reports, and maintainer contact:
+  [mahae@truce.audio](mailto:mahae@truce.audio)
+- Commercial Framework License requests:
+  [framework-licensing@truce.audio](mailto:framework-licensing@truce.audio)
+
