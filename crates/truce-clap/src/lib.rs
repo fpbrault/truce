@@ -85,7 +85,9 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
 use truce_core::cast::{len_u32, size_of_u32};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{
+    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
+};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
@@ -1704,11 +1706,19 @@ fn make_audio_ports_extension<P: PluginExport>() -> clap_plugin_audio_ports {
 
 unsafe extern "C" fn note_ports_count<P: PluginExport>(
     _plugin: *const clap_plugin,
-    _is_input: bool,
+    is_input: bool,
 ) -> u32 {
-    // All plugins declare 1 input + 1 output note port.
-    // Effects that don't use MIDI simply ignore the events.
-    1
+    // Declare a note port only in the directions the plugin actually
+    // uses, from the one `PluginInfo` capability pair (category
+    // default, overridable via `midi_input` / `midi_output`). A plain
+    // audio effect declares neither.
+    let info = P::info();
+    let enabled = if is_input {
+        info.accepts_midi_in
+    } else {
+        info.emits_midi
+    };
+    u32::from(enabled)
 }
 
 unsafe extern "C" fn note_ports_get<P: PluginExport>(
@@ -1724,8 +1734,15 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
 
         let out = &mut *info;
         out.id = u32::from(!is_input);
+        // Notes go out as `CLAP_EVENT_NOTE`, but every other
+        // channel-voice message and SysEx go out as `CLAP_EVENT_MIDI`
+        // (raw MIDI dialect), so advertise both dialects or a
+        // dialect-routing host drops the raw-MIDI events. Keep CLAP
+        // preferred: our own note events are CLAP-dialect, and
+        // preferring MIDI would also pull host input through the
+        // raw-MIDI path.
         out.supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
-        out.preferred_dialect = CLAP_NOTE_DIALECT_MIDI;
+        out.preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
         out.name = [0; CLAP_NAME_SIZE];
         copy_str_to_buf(
             &mut out.name,
@@ -2040,26 +2057,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     let host_ptr = SendPtr::new(data.host);
                     let host_scale_for_resize = data.host_scale;
                     move |lw, lh| {
-                        // Host expects physical points; editor speaks
-                        // logical. Same scale-up the wrappers use for
-                        // `gui_get_size`.
-                        let (pw, ph) = scale_logical_to_physical(lw, lh, host_scale_for_resize);
-                        let host = host_ptr.as_ptr();
-                        if host.is_null() {
-                            return false;
-                        }
-                        let Some(get_ext) = (*host).get_extension else {
-                            return false;
-                        };
-                        let host_gui_ptr =
-                            get_ext(host, CLAP_EXT_GUI.as_ptr()).cast::<clap_host_gui>();
-                        if host_gui_ptr.is_null() {
-                            return false;
-                        }
-                        let Some(req) = (*host_gui_ptr).request_resize else {
-                            return false;
-                        };
-                        req(host, pw, ph)
+                        request_host_resize(host_ptr.as_ptr(), host_scale_for_resize, lw, lh)
                     }
                 }),
                 get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
@@ -2257,6 +2255,30 @@ unsafe extern "C" fn gui_suggest_title<P: PluginExport>(
 ) {
 }
 
+/// Ask the host to resize its window to a logical size via
+/// `clap_host_gui.request_resize`. Returns false when the host
+/// doesn't expose the gui extension. Logical-to-physical scaling
+/// matches `gui_get_size`.
+unsafe fn request_host_resize(host: *const clap_host, host_scale: f64, lw: u32, lh: u32) -> bool {
+    unsafe {
+        if host.is_null() {
+            return false;
+        }
+        let Some(get_ext) = (*host).get_extension else {
+            return false;
+        };
+        let host_gui_ptr = get_ext(host, CLAP_EXT_GUI.as_ptr()).cast::<clap_host_gui>();
+        if host_gui_ptr.is_null() {
+            return false;
+        }
+        let Some(req) = (*host_gui_ptr).request_resize else {
+            return false;
+        };
+        let (pw, ph) = scale_logical_to_physical(lw, lh, host_scale);
+        req(host, pw, ph)
+    }
+}
+
 /// Host commits a new size. When the editor opts into resizing,
 /// delegate to `Editor::set_size`; otherwise accept only the
 /// editor's current fixed size (Bitwig probe-quirk - see
@@ -2273,16 +2295,25 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
         };
         if editor.can_resize() {
             // Host passes physical points; truce works in logical.
-            // Divide by the host-applied scale before handing to
-            // the editor so `set_size` receives the same units
-            // `size()` returns. Also clamp against the editor's
-            // min/max/aspect - some hosts (Reaper) skip the
-            // pre-flight `gui_adjust_size` and call `gui_set_size`
-            // with raw drag dimensions, which leaves the editor
-            // surface below `min_size` and clips content.
+            // Divide by the host-applied scale before handing to the
+            // editor so `set_size` receives the same units `size()`
+            // returns. Fit the largest on-ratio box *inside* the request:
+            // a pure function of the request (no `current` dependence), so
+            // it can't oscillate when a host re-asserts a pinned axis every
+            // frame (Reaper caps the editor height at its FX-window content
+            // height and reverts any grow past it).
             let req = scale_physical_to_logical(width, height, data.host_scale);
-            let (lw, lh) = clamp_logical_size(req.0, req.1, editor.as_ref());
-            editor.set_size(lw, lh)
+            let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
+            let accepted = editor.set_size(lw, lh);
+            // The fit is `<=` the request, so this only ever asks the host to
+            // shrink its window onto the on-ratio size (which hosts honour) -
+            // never to grow past a pinned axis. Idempotent, so the host's
+            // echoed `set_size` agrees and the exchange settles.
+            let adopted = editor.size();
+            if accepted && adopted != req {
+                request_host_resize(data.host, data.host_scale, adopted.0, adopted.1);
+            }
+            accepted
         } else {
             let mut current_w: u32 = 0;
             let mut current_h: u32 = 0;
@@ -2310,7 +2341,7 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
         };
         if editor.can_resize() {
             let req = scale_physical_to_logical(*width, *height, data.host_scale);
-            let (lw, lh) = clamp_logical_size(req.0, req.1, editor.as_ref());
+            let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
             // Convert clamped logical back to physical for the host.
             let (pw, ph) = scale_logical_to_physical(lw, lh, data.host_scale);
             *width = pw;
@@ -2327,46 +2358,6 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
             true
         }
     }
-}
-
-/// Apply `min_size` / `max_size` and the optional `aspect_ratio`
-/// to a requested logical size. JUCE's pattern: derive the other
-/// axis from one, fall back to the other axis if that violates
-/// bounds. `u64` arithmetic for the multiplication so a hypothetical
-/// `(u32::MAX, 1)` aspect doesn't overflow before the clamp lands.
-fn clamp_logical_size(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -> (u32, u32) {
-    let (min_w, min_h) = editor.min_size();
-    let (max_w, max_h) = editor.max_size();
-    let mut w = w.clamp(min_w.max(1), max_w);
-    let mut h = h.clamp(min_h.max(1), max_h);
-    if let Some((num, denom)) = editor.aspect_ratio()
-        && num > 0
-        && denom > 0
-    {
-        let num64 = u64::from(num);
-        let denom64 = u64::from(denom);
-        // Derive height from width: h_implied = w * denom / num.
-        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-        #[allow(clippy::cast_possible_truncation)]
-        let h_implied_u32 = h_implied as u32;
-        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
-            h = h_implied_u32;
-        } else {
-            // Width-from-height fallback.
-            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
-            #[allow(clippy::cast_possible_truncation)]
-            let w_implied_u32 = w_implied as u32;
-            w = w_implied_u32.clamp(min_w.max(1), max_w);
-            // Re-derive height from the clamped width to preserve
-            // aspect after the secondary clamp.
-            let h_final = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                h = (h_final as u32).clamp(min_h.max(1), max_h);
-            }
-        }
-    }
-    (w, h)
 }
 
 /// Convert physical points (what the host passes in resize APIs)

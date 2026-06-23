@@ -118,6 +118,12 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         "tool" => quote! { ::truce::core::PluginCategory::Tool },
         _ => quote! { ::truce::core::PluginCategory::Effect },
     };
+    // MIDI capability flags. Default from category; the optional
+    // `midi_input` / `midi_output` truce.toml keys override. Baked onto
+    // `PluginInfo` so every format wrapper gates its MIDI input / output
+    // declaration on one value instead of re-deriving from the category.
+    let (accepts_midi_in, emits_midi) =
+        truce_build::midi_capabilities(&plugin.category, plugin.midi_input, plugin.midi_output);
     // NoteEffect plugins map to `aumi` (Apple's MIDI Processor type).
     // Pairs with empty `bus_layouts` at the plugin level: aumi
     // plugins must not expose audio I/O. Logic routes `aumi` to the
@@ -125,12 +131,16 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // note-shapers belong. A mismatch with the AU-type computed at
     // install / package time causes auval to report "Class Data
     // fields ... do not match component description".
+    // An audio effect that accepts MIDI input is an `aumf` MusicEffect,
+    // not a plain `aufx`: AU routes MIDI to a plugin by its component
+    // type, so an `aufx` would never be handed the events.
     let au_type = plugin
         .au_type
         .as_deref()
         .unwrap_or(match plugin.category.as_str() {
             "instrument" => "aumu",
             "midi" | "note_effect" => "aumi",
+            _ if accepts_midi_in => "aumf",
             _ => "aufx",
         });
 
@@ -196,6 +206,8 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 url: #url,
                 version: #version,
                 category: #category,
+                accepts_midi_in: #accepts_midi_in,
+                emits_midi: #emits_midi,
                 bundle_id: #bundle_id,
                 vst3_id: #plugin_id,
                 clap_id: #plugin_id,
@@ -281,6 +293,12 @@ pub(crate) struct NestedField {
     /// `Params::param_infos_static` for the registration-time
     /// "no temp plugin" path.
     pub(crate) ty: syn::Type,
+    /// Explicit base from `#[nested(base = N)]`, the global id of this
+    /// group's local id 0. `None` auto-assigns the base by packing the
+    /// group right after the preceding params (own params, then each
+    /// earlier nested group's span). Pin it for wire stability the same
+    /// way you pin a param `id`.
+    pub(crate) base: Option<u32>,
 }
 
 /// A meter slot field.
@@ -522,6 +540,24 @@ fn has_nested_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("nested"))
 }
 
+/// Parse the optional `base = N` from `#[nested(base = N)]`. Returns
+/// `None` when the attribute is bare (`#[nested]`), which auto-assigns
+/// the base.
+fn nested_base(field: &syn::Field) -> Option<u32> {
+    let attr = field.attrs.iter().find(|a| a.path().is_ident("nested"))?;
+    let mut base = None;
+    // A bare `#[nested]` has no parens to parse; ignore the error so it
+    // falls through to the auto-assigned base.
+    let _ = attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("base") {
+            let lit: syn::LitInt = meta.value()?.parse()?;
+            base = lit.base10_parse::<u32>().ok();
+        }
+        Ok(())
+    });
+    base
+}
+
 /// Check if a field has `#[meter]` attribute.
 fn has_meter_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("meter"))
@@ -637,6 +673,7 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
             nested.push(NestedField {
                 ident,
                 ty: f.ty.clone(),
+                base: nested_base(f),
             });
             continue;
         }
@@ -666,6 +703,38 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
 }
 
 /// Parse a range string like "linear(-60, 24)" into tokens.
+/// Emit an `f64` as a decimal literal (`60.0`, `-60.0`) rather than the
+/// suffixed-integer form `quote! { #f64 }` produces for whole numbers
+/// (`60f64`). rustc accepts `60f64`, but rust-analyzer's proc-macro
+/// expansion (reported on 1.96) rejects it with "expected Expr". The
+/// decimal form round-trips cleanly and matches the hand-written
+/// `0.0` / `1.0` literals the range-less default path emits.
+fn f64_lit(v: f64) -> proc_macro2::TokenStream {
+    if v < 0.0 {
+        let abs = proc_macro2::Literal::f64_unsuffixed(-v);
+        quote! { -#abs }
+    } else {
+        let lit = proc_macro2::Literal::f64_unsuffixed(v);
+        quote! { #lit }
+    }
+}
+
+/// Like [`f64_lit`] for `i64` - emits `12` / `-12`, not `12i64`.
+fn i64_lit(v: i64) -> proc_macro2::TokenStream {
+    let abs = proc_macro2::Literal::u64_unsuffixed(v.unsigned_abs());
+    if v < 0 {
+        quote! { -#abs }
+    } else {
+        quote! { #abs }
+    }
+}
+
+/// Like [`f64_lit`] for `usize` - emits `2`, not `2usize`.
+fn usize_lit(v: usize) -> proc_macro2::TokenStream {
+    let lit = proc_macro2::Literal::usize_unsuffixed(v);
+    quote! { #lit }
+}
+
 fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
     let bad = |msg: String| quote! { compile_error!(#msg) };
 
@@ -690,6 +759,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "linear range needs min < max, got `linear({min}, {max})`"
             ));
         }
+        let (min, max) = (f64_lit(min), f64_lit(max));
         return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
     }
     if let Some(inner) = range.strip_prefix("log(").and_then(|s| s.strip_suffix(')')) {
@@ -715,6 +785,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "log range needs min < max, got `log({min}, {max})`"
             ));
         }
+        let (min, max) = (f64_lit(min), f64_lit(max));
         return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
     }
     if let Some(inner) = range
@@ -744,6 +815,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "discrete range needs min < max, got `discrete({min}, {max})`"
             ));
         }
+        let (min, max) = (i64_lit(min), i64_lit(max));
         return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
     }
     if let Some(inner) = range
@@ -761,6 +833,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "enum range needs at least 2 variants, got `enum({count})`"
             ));
         }
+        let count = usize_lit(count);
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
     bad(format!(
@@ -871,10 +944,7 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             path_tokens: Some(t),
             ..
         }) => t.clone(),
-        Some(DefaultExpr { value, .. }) => {
-            let v = *value;
-            quote! { #v }
-        }
+        Some(DefaultExpr { value, .. }) => f64_lit(*value),
         None => quote! { 0.0 },
     };
 
@@ -1144,9 +1214,9 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // walks the sidecar tree to aggregate. Failures here are silent -
     // they surface at TTL-emit time when the aggregator can't find
     // the data it needs.
-    let nested_for_sidecar: Vec<(syn::Ident, syn::Type)> = nested_fields
+    let nested_for_sidecar: Vec<(syn::Ident, syn::Type, Option<u32>)> = nested_fields
         .iter()
-        .map(|n| (n.ident.clone(), n.ty.clone()))
+        .map(|n| (n.ident.clone(), n.ty.clone(), n.base))
         .collect();
     lv2_emit::write_struct_sidecar(
         struct_name,
@@ -1156,7 +1226,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     );
 
     // --- Always generate new() ---
-    let generate_new = !param_fields.is_empty() || !meter_fields.is_empty();
+    // Nested structs need `new()` too: it constructs each child and
+    // rebases its ids by the group's base, so reusing one Params type in
+    // two `#[nested]` slots yields disjoint id ranges instead of a clash.
+    let generate_new =
+        !param_fields.is_empty() || !meter_fields.is_empty() || !nested_fields.is_empty();
 
     // --- Count ---
     let own_count = param_fields.len();
@@ -1219,10 +1293,34 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .collect();
     let nested_static_calls: Vec<proc_macro2::TokenStream> = nested_fields
         .iter()
-        .map(|n| {
+        .enumerate()
+        .map(|(i, n)| {
             let ty = &n.ty;
+            // Base = explicit `#[nested(base=N)]`, or auto-packed right
+            // after the own params and every earlier nested group's span.
+            // Counts come from each group's own static metadata, so the
+            // no-instance path produces the same ids the constructor does.
+            let base_expr = if let Some(b) = n.base {
+                quote! { #b }
+            } else {
+                let prev = nested_fields[..i].iter().map(|p| &p.ty);
+                quote! {
+                    (#own_count as u32)
+                    #(+ <#prev as ::truce::params::Params>::param_infos_static().len() as u32)*
+                }
+            };
             quote! {
-                infos.extend(<#ty as ::truce::params::Params>::param_infos_static());
+                {
+                    let __base: u32 = #base_expr;
+                    infos.extend(
+                        <#ty as ::truce::params::Params>::param_infos_static()
+                            .into_iter()
+                            .map(|mut __info| {
+                                __info.id += __base;
+                                __info
+                            }),
+                    );
+                }
             }
         })
         .collect();
@@ -1515,6 +1613,14 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             })
             .collect();
 
+        let nested_inits: Vec<_> = nested_fields
+            .iter()
+            .map(|f| {
+                let ident = &f.ident;
+                quote! { #ident: ::core::default::Default::default() }
+            })
+            .collect();
+
         let meter_inits: Vec<_> = meter_fields
             .iter()
             .map(|m| {
@@ -1524,19 +1630,45 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             })
             .collect();
 
+        // Rebase each nested group by its base, after construction (the
+        // child built itself at its own local ids). The base is explicit
+        // or auto-packed after the own params and each earlier group.
+        let offset_stmts: Vec<_> = nested_fields
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let ident = &n.ident;
+                let base_expr = if let Some(b) = n.base {
+                    quote! { #b }
+                } else {
+                    let prev = nested_fields[..i].iter().map(|p| &p.ident);
+                    quote! {
+                        (#own_count as u32)
+                        #(+ ::truce::params::Params::count(&me.#prev) as u32)*
+                    }
+                };
+                quote! { me.#ident.offset_ids(#base_expr); }
+            })
+            .collect();
+        let me_binding = if nested_fields.is_empty() {
+            quote! { let me }
+        } else {
+            quote! { let mut me }
+        };
+
         quote! {
             impl #struct_name {
                 pub fn new() -> Self {
-                    let me = Self {
+                    #me_binding = Self {
                         #(#param_inits,)*
+                        #(#nested_inits,)*
                         #(#meter_inits,)*
                     };
-                    // The compile-time ID-collision check only sees
-                    // the IDs declared in *this* struct; a parent ID
-                    // matching a nested-struct ID compiles cleanly
-                    // and would silently corrupt state round-trip.
-                    // Surface the bug as a panic at construction
-                    // instead.
+                    #(#offset_stmts)*
+                    // The per-struct compile-time ID check can't see
+                    // across nested types; a parent id matching a
+                    // (rebased) nested id would silently corrupt state
+                    // round-trip. Surface it as a construction panic.
                     <Self as ::truce::params::Params>::assert_no_id_collisions(&me);
                     me
                 }
@@ -1550,6 +1682,22 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     } else {
         quote! {}
+    };
+
+    // Shift every parameter id in this subtree by `id_base`: own params
+    // directly, nested groups by recursing with the same base (their own
+    // local spans were already applied at construction). Meters keep
+    // their dedicated id range and aren't shifted. Always emitted so a
+    // parent can rebase any nested child, leaf or not.
+    let own_param_idents: Vec<_> = param_fields.iter().map(|f| &f.ident).collect();
+    let offset_ids_impl = quote! {
+        impl #struct_name {
+            #[doc(hidden)]
+            pub fn offset_ids(&mut self, id_base: u32) {
+                #(self.#own_param_idents.info.id += id_base;)*
+                #(self.#nested_idents.offset_ids(id_base);)*
+            }
+        }
     };
 
     // --- Generate ParamId enum (includes both params and meters) ---
@@ -1638,6 +1786,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         #(#attr_errors)*
 
         #new_impl
+
+        #offset_ids_impl
 
         #param_id_enum
 

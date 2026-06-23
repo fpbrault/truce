@@ -67,12 +67,14 @@ env:
     truce-example-block-gain
     truce-example-synth
     truce-example-eq
+    truce-example-stereo-utility
     truce-example-block-saturate
     truce-example-block-drywet
     truce-example-block-gate
     truce-example-block-widen
     truce-example-block-surround-meter
     truce-example-gain-egui
+    truce-example-gain-egui-aspect
     truce-example-arpeggio
     truce-example-gain-iced
     truce-example-tremolo
@@ -84,6 +86,11 @@ env:
     truce-example-gui-zoo-egui
     truce-example-gui-zoo-iced
     truce-example-dasp-bitcrusher
+    truce-example-envelope
+    truce-example-chord
+    truce-example-cc-filter
+    truce-example-mpe-spreader
+    truce-example-sysex-echo
   # Slint + vizia examples live in their own Cargo sub-workspaces
   # under `crates/<name>/` (skia-bindings `links` collision for slint;
   # vizia's hard-pinned baseview rev for vizia - see the respective

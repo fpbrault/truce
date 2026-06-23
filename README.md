@@ -94,8 +94,6 @@ CLAP preset-discovery, the AU factory list in Logic, `.vstpreset`, LV2
 cargo truce preset list                   # every preset across factory / user / pack scopes
 cargo truce preset pull                    # harvest presets you saved in your DAW into the library
 cargo truce preset convert in.aupreset out.vstpreset   # re-envelope between any two formats
-cargo truce preset import pack.zip         # a native preset file or a pack zip into your library
-cargo truce preset export pack.zip         # your library out as a shareable per-format pack
 cargo truce preset init                    # stamp uuids into hand-authored .preset files
 ```
 
@@ -226,7 +224,7 @@ platform contract; every other format is unviable there.
 - **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
 - **Cross-platform** — macOS, Windows, Linux, plus iOS via AU v3 with the same Rust DSP, params, and editor
 - **Presets** — factory presets from a directory of TOML files, shipped to every format's native preset system at install; `cargo truce preset` converts between formats and pulls presets saved in your DAW back into the library
-- **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, vizia (desktop only, no Windows ARM64), or raw window handle
+- **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, vizia, or raw window handle
 - **Resizable editors** — `.resizable(true).min_size(_).max_size(_)` on any backend, round-tripped through CLAP `gui_set_size`, VST3 `IPlugView::onSize`, AU view-frame change, and LV2 `ui:resize`
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units, sample-accurate automation by default
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
@@ -289,4 +287,11 @@ end-user-app authors and internal-SDK use are unaffected.
 
 See [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md) for the precise
 boundary, the exemption criteria, and the request procedure.
+
+## Contact
+
+- General questions, bug reports, and maintainer contact:
+  [mahae@truce.audio](mailto:mahae@truce.audio)
+- Commercial Framework License requests:
+  [framework-licensing@truce.audio](mailto:framework-licensing@truce.audio)
 

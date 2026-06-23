@@ -2,6 +2,42 @@
 
 Notable changes per release.
 
+## 0.62.0
+
+- **AU v3 and standalone are one macOS app.** A plugin with a standalone bin ships a single `{name}.app` that is both the AU v3 container and the playable standalone host; the separate Standalone format collapses into it and the installer choice reads "AU3 + Standalone". Plugins without a standalone bin still ship the appex, in an informational stub app.
+- **Fixed macOS standalone resize leaving a white margin around the editor;** non-resizable editor windows are now pinned so they can't be zoomed open.
+- **`package --suite <name>` matches a suite by bundle id or display name** and errors on an unknown name instead of silently skipping the suite.
+
+## 0.61.0
+
+- **Reusable `#[nested]` param groups.** A nested `Params` struct's ids are rebased by a per-group base (auto-packed, or pinned with `#[nested(base = N)]`), so the same group type can be nested more than once without id clashes and nested groups need no per-param ids.
+- **Nested meters are caught at construction.** Two `#[nested]` groups that each declare a meter would have aliased on one id; the derive now panics at construction instead of corrupting state silently.
+- **Nested params construct through the generated `new()`.** A `Params` struct that mixes its own params with `#[nested]` groups now default-initializes the nested fields in `new()`. ([#137](https://github.com/truce-audio/truce/pull/137), by [@jedStevens](https://github.com/jedStevens))
+
+## 0.60.1
+
+- **`#[derive(Params)]` no longer trips a rust-analyzer error.** Parameters with a `range` (or numeric `default`) emitted suffixed literals like `60f64`, which rust-analyzer 1.96 rejected with "expected Expr" even though the code compiled; the derive now emits plain decimal literals. ([#135](https://github.com/truce-audio/truce/issues/135))
+
+## 0.60.0
+
+- **`midi_input` / `midi_output` capability flags.** New `[[plugin]]` truce.toml keys let an instrument or audio effect opt into MIDI input/output (or opt out), overriding the category default, consistently across every format.
+- **AU MusicEffect for MIDI-driven effects.** An audio effect with `midi_input = true` now registers as an `aumf` MusicEffect, so AU hosts route MIDI to it instead of an `aufx`.
+- **VST2 MIDI output fixed on 64-bit.** The outbound `VstEvents` block placed its pointer array at the wrong offset, so hosts read a garbage event pointer; plugins now emit MIDI correctly. ([#131](https://github.com/truce-audio/truce/issues/131))
+- **VST3 emits non-note MIDI output.** Control change, pitch bend, aftertouch, channel pressure, and program change reach the host now, not just note on/off. ([#123](https://github.com/truce-audio/truce/issues/123))
+- **CLAP advertises the MIDI note dialect.** Raw-MIDI output events (CC, pitch bend, SysEx) are no longer dropped by dialect-routing hosts.
+- **SysEx payloads under sample-accurate chunking.** The chunking layer handed `process()` a timing-rebased event list whose SysEx pool was empty, so a plugin reading a SysEx payload would index out of bounds; the rebased list now carries its own copy of the payload.
+
+## 0.59.0
+
+- **Honor cargo's real target directory.** `cargo truce` now reads cargo's `target_directory` via `cargo metadata` instead of assuming `<plugin>/target`, fixing installs when the plugin crate is a member of a larger workspace (artifacts land in the workspace-root `target/`). ([#124](https://github.com/truce-audio/truce/issues/124))
+
+## 0.58.4
+
+- **Aspect-ratio editor resize fixes.** Aspect-locked editors stay on-ratio inside the host window without clipping or juddering across CLAP, VST3, AU, and LV2; corner drags track the ratio smoothly and LV2 honors the aspect ratio and `max_size`.
+- **Skip rendering while the editor is occluded or detached (macOS).** A minimized or fully-covered window can't present, so every rendered frame queued a GPU drawable that never drained. Editors now bail before rendering when the host window is occluded or has no window attached, across every GUI backend (built-in CPU / GPU, egui, iced, slint). ([#126](https://github.com/truce-audio/truce/pull/126), by [@tothepoweroftom](https://github.com/tothepoweroftom))
+- **`TRUCE_AZURE_ENDPOINT` for Windows code signing.** The Azure Trusted Signing endpoint was hardcoded to East US; set this to sign through another region's endpoint. Defaults to the previous value. ([#128](https://github.com/truce-audio/truce/pull/128), by [@tothepoweroftom](https://github.com/tothepoweroftom))
+- **iced enum selector option count.** Fixed an off-by-one that left the iced enum selector (pick-list) with the wrong number of options. ([#129](https://github.com/truce-audio/truce/pull/129), by [@jedStevens](https://github.com/jedStevens))
+
 ## 0.58.3
 
 - **Installers now ship your factory presets.** `cargo truce package` now carries presets for every format that has them, in both the per-plugin and suite installers, on macOS, Linux, and Windows: CLAP / AU / LV2 ride inside the bundle (sealed under the code signature), and VST3 presets are placed into the OS preset folder — merged in, so a user's own saved presets there are never wiped.

@@ -12,7 +12,10 @@ use std::slice;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{
+    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, clamp_logical_size,
+    fit_logical_size,
+};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -908,10 +911,16 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
         };
         let host_scale = inst.host_scale;
         if editor.can_resize() {
-            // Physical -> logical, clamp, logical -> physical.
+            // Physical -> logical, fit, logical -> physical. Fit the largest
+            // on-ratio box *inside* the requested cursor box (never larger on
+            // either axis). VST3 hosts drive the drag from the raw cursor and
+            // re-assert it every frame, so any size we return that exceeds the
+            // cursor (a single-edge "grow the other axis") is honoured for one
+            // frame then bounced - the window judders. A size <= the cursor
+            // is a fixed point the host converges on.
             let (lw, lh) = phys_to_logical(*w, *h, host_scale);
-            let (lw, lh) = clamp_logical_to_editor(lw, lh, editor.as_ref());
-            let (pw, ph) = logical_to_phys(lw, lh, host_scale);
+            let (fw, fh) = fit_logical_size(lw, lh, editor.as_ref());
+            let (pw, ph) = logical_to_phys(fw, fh, host_scale);
             *w = pw;
             *h = ph;
         } else {
@@ -925,11 +934,15 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
     }
 }
 
-/// `IPlugView::onSize` callback. Host committed a new size;
-/// delegate to `Editor::set_size` after scaling physical -> logical
-/// and clamping against the editor's min/max/aspect (some hosts
-/// skip the pre-flight `checkSizeConstraint` round-trip and call
-/// `onSize` with raw drag values).
+/// `IPlugView::onSize` callback. Host committed a new size; delegate
+/// to `Editor::set_size` after scaling physical -> logical. The editor
+/// *fills* the committed window (min/max clamp only) rather than
+/// re-fitting onto the aspect ratio - that shaping happened earlier in
+/// `checkSizeConstraint`, the host's drag-negotiation point, and
+/// flooring it again here would leave a 1px letterbox line at the
+/// bottom. `onSize` must not request a resize: VST3 forbids
+/// `IPlugFrame::resizeView` from inside `onSize`, and a reentrant call
+/// judders the drag.
 unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void, w: u32, h: u32) {
     unsafe {
         if ctx.is_null() || w == 0 || h == 0 {
@@ -941,8 +954,8 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
             && editor.can_resize()
         {
             let (lw, lh) = phys_to_logical(w, h, host_scale);
-            let (lw, lh) = clamp_logical_to_editor(lw, lh, editor.as_ref());
-            editor.set_size(lw, lh);
+            let (cw, ch) = clamp_logical_size(lw, lh, editor.as_ref());
+            editor.set_size(cw, ch);
         }
     }
 }
@@ -971,41 +984,6 @@ fn logical_to_phys(lw: u32, lh: u32, host_scale: f64) -> (u32, u32) {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let ph = (f64::from(lh) * host_scale).round() as u32;
     (pw.max(1), ph.max(1))
-}
-
-/// Apply `min_size` / `max_size` and `aspect_ratio` to a
-/// requested logical size. Mirrors the CLAP wrapper's
-/// `clamp_logical_size` so the two wrappers respect editor
-/// constraints identically.
-fn clamp_logical_to_editor(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -> (u32, u32) {
-    let (min_w, min_h) = editor.min_size();
-    let (max_w, max_h) = editor.max_size();
-    let mut w = w.clamp(min_w.max(1), max_w);
-    let mut h = h.clamp(min_h.max(1), max_h);
-    if let Some((num, denom)) = editor.aspect_ratio()
-        && num > 0
-        && denom > 0
-    {
-        let num64 = u64::from(num);
-        let denom64 = u64::from(denom);
-        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-        #[allow(clippy::cast_possible_truncation)]
-        let h_implied_u32 = h_implied as u32;
-        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
-            h = h_implied_u32;
-        } else {
-            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
-            #[allow(clippy::cast_possible_truncation)]
-            let w_implied_u32 = w_implied as u32;
-            w = w_implied_u32.clamp(min_w.max(1), max_w);
-            let h_final = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                h = (h_final as u32).clamp(min_h.max(1), max_h);
-            }
-        }
-    }
-    (w, h)
 }
 
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
@@ -1239,11 +1217,12 @@ fn register_vst3_inner<P: PluginExport + Vst3PluginExt>(num_inputs: u32, num_out
     };
     let subcategories = CString::new(subcategory_str).unwrap_or_default();
 
-    // NoteEffect plugins (arpeggiators, chord generators) emit MIDI
-    // back to the host. Instruments could in principle, but it's rare
-    // enough that we'd rather make them opt in than advertise a
-    // phantom event-output bus on every synth.
-    let has_midi_output = i32::from(matches!(info.category, PluginCategory::NoteEffect));
+    // MIDI capability is decided once on `PluginInfo` (category
+    // default, overridable via `midi_input` / `midi_output` in
+    // truce.toml), so an instrument or audio effect can opt into a
+    // MIDI output bus rather than only note effects.
+    let has_midi_output = i32::from(info.emits_midi);
+    let accepts_midi_in = i32::from(info.accepts_midi_in);
 
     let descriptor = Box::leak(Box::new(Vst3PluginDescriptor {
         name: name.into_raw(),
@@ -1257,6 +1236,7 @@ fn register_vst3_inner<P: PluginExport + Vst3PluginExt>(num_inputs: u32, num_out
         num_inputs,
         num_outputs,
         has_midi_output,
+        accepts_midi_in,
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {

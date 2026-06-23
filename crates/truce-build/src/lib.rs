@@ -32,6 +32,27 @@ pub fn plugin_id(vendor_id: &str, plugin_name: &str) -> String {
     )
 }
 
+/// Resolve a plugin's `(accepts_midi_in, emits_midi)` capability pair
+/// from its category and the optional `midi_input` / `midi_output`
+/// truce.toml overrides. Shared by `truce-derive` (bakes the result
+/// onto `PluginInfo`, which every Rust wrapper reads) and the LV2 TTL
+/// emitter, so the host-facing port declarations all agree.
+///
+/// Defaults: instruments and note effects accept MIDI input; only note
+/// effects emit MIDI. `Some(_)` overrides the derived value.
+#[must_use]
+pub fn midi_capabilities(
+    category: &str,
+    midi_input: Option<bool>,
+    midi_output: Option<bool>,
+) -> (bool, bool) {
+    let is_note_effect = matches!(category, "midi" | "note_effect");
+    let is_instrument = category == "instrument";
+    let accepts_midi_in = midi_input.unwrap_or(is_instrument || is_note_effect);
+    let emits_midi = midi_output.unwrap_or(is_note_effect);
+    (accepts_midi_in, emits_midi)
+}
+
 /// Derive-time view of `truce.toml`.
 ///
 /// `truce-derive` (proc macros) reads this to expand
@@ -163,6 +184,19 @@ pub struct PluginDef {
     /// hosts ignore this flag; they own their own output graph.
     #[serde(default)]
     pub mute_preview_output: bool,
+    /// Override the category-derived "accepts MIDI input" capability.
+    /// `None` (the default) keeps the derived value: `true` for
+    /// instruments and note effects. Set `midi_input = true` on an
+    /// audio effect that reacts to MIDI, or `false` to suppress an
+    /// unwanted MIDI input port.
+    #[serde(default)]
+    pub midi_input: Option<bool>,
+    /// Override the category-derived "emits MIDI output" capability.
+    /// `None` (the default) keeps the derived value: `true` for note
+    /// effects only. Set `midi_output = true` on an instrument or
+    /// effect that also emits MIDI to the host.
+    #[serde(default)]
+    pub midi_output: Option<bool>,
     /// Optional `[plugin.presets]` table - factory-preset opt-in.
     /// When absent, the install pipeline still picks up a `presets/`
     /// directory next to the plugin crate if one exists.
@@ -195,18 +229,28 @@ fn default_presets_dir() -> String {
 
 /// Resolve cargo's effective target directory for a given workspace root.
 ///
-/// Honoured in priority order:
-/// 1. `CARGO_TARGET_DIR` env var (cargo's documented override; absolute
-///    paths used as-is, relative paths anchored at `root`).
-/// 2. `[build].target-dir` in `<root>/.cargo/config.toml` (the
-///    per-workspace equivalent of the env var; same anchoring rule).
-/// 3. Fall back to `<root>/target`.
+/// Asks cargo via `cargo metadata`, which is the only source that knows
+/// whether `root` is a standalone crate or a member of a larger
+/// workspace (whose target dir sits at the workspace root, not under
+/// `root`). It already folds in `CARGO_TARGET_DIR` and every
+/// `.cargo/config.toml` merged from `root` up to the home dir, so its
+/// answer is authoritative.
 ///
-/// Used by runtime callers (cargo-truce, truce-test) to anchor
-/// artifact paths against cargo's actual target dir instead of a
-/// hardcoded `target/`.
+/// When cargo can't be run (no cargo on `PATH`, offline tooling), falls
+/// back to the overrides we can read ourselves and then `<root>/target`:
+/// 1. `CARGO_TARGET_DIR` env var (absolute used as-is, relative anchored
+///    at `root`).
+/// 2. `[build].target-dir` in `<root>/.cargo/config.toml` (same rule).
+/// 3. `<root>/target`.
+///
+/// Used by runtime callers (cargo-truce, truce-test) to anchor artifact
+/// paths against cargo's actual target dir instead of a hardcoded
+/// `target/`.
 #[must_use]
 pub fn target_dir(root: &Path) -> PathBuf {
+    if let Some(dir) = cargo_metadata_target_dir(root) {
+        return dir;
+    }
     if let Ok(d) = std::env::var("CARGO_TARGET_DIR")
         && !d.is_empty()
     {
@@ -221,6 +265,60 @@ pub fn target_dir(root: &Path) -> PathBuf {
         };
     }
     root.join("target")
+}
+
+/// Cargo's authoritative `target_directory` for the workspace `root`
+/// belongs to. `None` when cargo can't be invoked or the manifest is
+/// missing, so the caller can fall back to its own heuristics.
+fn cargo_metadata_target_dir(root: &Path) -> Option<PathBuf> {
+    let manifest = root.join("Cargo.toml");
+    if !manifest.exists() {
+        return None;
+    }
+    // Use the `CARGO` cargo exports for subcommands so we hit the same
+    // toolchain it chose (rustup proxies, the Windows toolchain under
+    // WSL). Falls back to bare `cargo` for direct invocations.
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let out = std::process::Command::new(cargo)
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version=1",
+            "--manifest-path",
+        ])
+        .arg(&manifest)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    extract_json_string(&text, "target_directory").map(PathBuf::from)
+}
+
+/// Pull a top-level JSON string field out of `cargo metadata` output
+/// without pulling in a JSON dependency (the workspace deliberately
+/// avoids one in this tier). `target_directory` is emitted once at the
+/// top level, so the first match is the right one. Unescapes the string
+/// body so Windows paths - whose backslashes arrive doubled as `\\` -
+/// round-trip correctly.
+fn extract_json_string(json: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\":\"");
+    let start = json.find(&needle)? + needle.len();
+    let mut out = String::new();
+    let mut chars = json[start..].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                escaped => out.push(escaped),
+            },
+            _ => out.push(c),
+        }
+    }
+    None
 }
 
 /// Look for `[build].target-dir = "..."` in `<root>/.cargo/config.toml`.
@@ -286,4 +384,62 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     toml::from_str(&content).map_err(|e| format!("Failed to parse {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_json_string, midi_capabilities};
+
+    #[test]
+    fn midi_caps_category_defaults() {
+        // (accepts_midi_in, emits_midi)
+        assert_eq!(midi_capabilities("note_effect", None, None), (true, true));
+        assert_eq!(midi_capabilities("midi", None, None), (true, true));
+        assert_eq!(midi_capabilities("instrument", None, None), (true, false));
+        assert_eq!(midi_capabilities("effect", None, None), (false, false));
+        assert_eq!(midi_capabilities("analyzer", None, None), (false, false));
+    }
+
+    #[test]
+    fn midi_caps_overrides() {
+        // Effect opting into MIDI output (the issue-123 instrument/effect case).
+        assert_eq!(midi_capabilities("effect", None, Some(true)), (false, true));
+        // Instrument opting into MIDI input override off.
+        assert_eq!(
+            midi_capabilities("instrument", Some(false), None),
+            (false, false)
+        );
+        // Both forced on an effect.
+        assert_eq!(
+            midi_capabilities("effect", Some(true), Some(true)),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn extracts_unix_target_directory() {
+        let json = r#"{"packages":[],"target_directory":"/work/ws/target","version":1}"#;
+        assert_eq!(
+            extract_json_string(json, "target_directory").as_deref(),
+            Some("/work/ws/target")
+        );
+    }
+
+    #[test]
+    fn unescapes_windows_backslashes() {
+        // cargo emits Windows paths with doubled backslashes.
+        let json = r#"{"target_directory":"C:\\work\\ws\\target","version":1}"#;
+        assert_eq!(
+            extract_json_string(json, "target_directory").as_deref(),
+            Some(r"C:\work\ws\target")
+        );
+    }
+
+    #[test]
+    fn missing_field_is_none() {
+        assert_eq!(
+            extract_json_string(r#"{"version":1}"#, "target_directory"),
+            None
+        );
+    }
 }
