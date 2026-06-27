@@ -1369,19 +1369,19 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         });
     }
 
-    // PATCH (cosmo): register MIDI CC proxy param descriptors so the
-    // VST3 host sees them in `getParameterCount` / `getParameterInfo`.
-    // Proxy params have no Truce-side state — they're pure transport
-    // tokens decoded to `EventBody::ControlChange` in `cb_process`.
-    if vst3_midi_cc_proxy::is_enabled(&info) {
-        assert!(
-            !param_infos
-                .iter()
-                .any(|p| vst3_midi_cc_proxy::is_proxy_id(p.id)),
-            "real VST3 param id collides with MIDI CC proxy range"
-        );
-        param_descs.extend(vst3_midi_cc_proxy::descriptors());
-    }
+    // PATCH (cosmo): verify no real param collides with hidden MIDI CC proxy range.
+    // Proxy IDs are transport-only (not registered as VST3 parameters) — the host
+    // discovers them through IMidiMapping and delivers them as inputParamChanges.
+    assert!(
+        !param_infos
+            .iter()
+            .any(|p| vst3_midi_cc_proxy::is_proxy_id(p.id)),
+        "real VST3 param id {} collides with hidden MIDI CC proxy range",
+        param_infos
+            .iter()
+            .find(|p| vst3_midi_cc_proxy::is_proxy_id(p.id))
+            .map_or(0, |p| p.id),
+    );
 
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
