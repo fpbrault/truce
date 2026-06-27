@@ -364,7 +364,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                                 group: 0,
                                 channel,
                                 cc,
-                                value: vst3_midi_cc_proxy::normalized_to_cc(pc.value),
+                                value: vst3_midi_cc_proxy::plain_to_cc(pc.value),
                             },
                         });
                     }
@@ -518,7 +518,7 @@ unsafe extern "C" fn cb_param_normalize<P: PluginExport>(
     plain: f64,
 ) -> f64 {
     if vst3_midi_cc_proxy::is_proxy_id(id) {
-        return plain.clamp(0.0, 1.0);
+        return vst3_midi_cc_proxy::plain_to_normalized(plain);
     }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
@@ -535,7 +535,7 @@ unsafe extern "C" fn cb_param_denormalize<P: PluginExport>(
     normalized: f64,
 ) -> f64 {
     if vst3_midi_cc_proxy::is_proxy_id(id) {
-        return normalized.clamp(0.0, 1.0);
+        return vst3_midi_cc_proxy::normalized_to_plain(normalized);
     }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
@@ -562,7 +562,7 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
     }
     if vst3_midi_cc_proxy::is_proxy_id(id) {
         unsafe {
-            let text = format!("{}", vst3_midi_cc_proxy::normalized_to_cc(value));
+            let text = format!("{}", vst3_midi_cc_proxy::plain_to_cc(value));
             let bytes = text.as_bytes();
             let len = bytes.len().min((out_len as usize) - 1);
             std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
@@ -1154,7 +1154,7 @@ unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport>(
                 && matches!(channel, 0..=15)
                 && matches!(controller, 0..=127)
             {
-                if let Some(id) = vst3_midi_cc_proxy::to_param_id(channel as u8, controller as u8) {
+                if let Some(id) = vst3_midi_cc_proxy::to_param_id(channel, controller as u8) {
                     unsafe { out_param_id.write(id) };
                     return 1;
                 }
@@ -1336,7 +1336,21 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // impl.
     let param_infos = P::param_infos_static();
 
-    let mut param_descs: Vec<Vst3ParamDescriptor> = Vec::with_capacity(param_infos.len());
+    // PATCH (cosmo): MIDI CC proxy param descriptors. These are synthetic
+    // VST3 parameters that give CCs without a declared `#[param(midi_cc = ...)]`
+    // mapping a visible param ID for the host's parameter infrastructure.
+    // The host discovers proxy IDs through IMidiMapping and delivers values
+    // as inputParameterChanges, which we decode back to EventBody::ControlChange
+    // in cb_process. Proxy params have no Truce-side state.
+    let proxy_count = if vst3_midi_cc_proxy::is_enabled(&info) {
+        vst3_midi_cc_proxy::COUNT as usize
+    } else {
+        0
+    };
+
+    let mut param_descs: Vec<Vst3ParamDescriptor> =
+        Vec::with_capacity(param_infos.len() + proxy_count);
+
     for pi in &param_infos {
         let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
 
@@ -1369,19 +1383,24 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         });
     }
 
-    // PATCH (cosmo): verify no real param collides with hidden MIDI CC proxy range.
-    // Proxy IDs are transport-only (not registered as VST3 parameters) — the host
-    // discovers them through IMidiMapping and delivers them as inputParamChanges.
+    // PATCH (cosmo): verify no real param collides with MIDI CC proxy range,
+    // then append proxy param descriptors.
     assert!(
         !param_infos
             .iter()
             .any(|p| vst3_midi_cc_proxy::is_proxy_id(p.id)),
-        "real VST3 param id {} collides with hidden MIDI CC proxy range",
+        "real VST3 param id {} collides with MIDI CC proxy range 0x{:.8x}..0x{:.8x}",
         param_infos
             .iter()
             .find(|p| vst3_midi_cc_proxy::is_proxy_id(p.id))
             .map_or(0, |p| p.id),
+        vst3_midi_cc_proxy::PROXY_BASE,
+        vst3_midi_cc_proxy::PROXY_BASE + vst3_midi_cc_proxy::COUNT,
     );
+
+    if proxy_count > 0 {
+        param_descs.extend(vst3_midi_cc_proxy::descriptors());
+    }
 
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
