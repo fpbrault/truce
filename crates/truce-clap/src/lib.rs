@@ -1751,7 +1751,7 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
         // PATCH (cosmo): Prefer MIDI dialect so Cosmo's MIDI learn
         // can capture CCs from dialect-routing hosts.
         out.supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
-        out.preferred_dialect = CLAP_NOTE_DIALECT_MIDI;
+        out.preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
         out.name = [0; CLAP_NAME_SIZE];
         copy_str_to_buf(
             &mut out.name,
