@@ -5,6 +5,7 @@
 //! Rust via C FFI callbacks.
 
 pub mod ffi;
+mod vst3_midi_cc_proxy;
 
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -350,6 +351,25 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 // offsets are non-negative and bounded by block size.
                 #[allow(clippy::cast_sign_loss)]
                 let sample_offset = pc.sample_offset as u32;
+                // PATCH (cosmo): proxy param IDs → EventBody::ControlChange.
+                // These are synthetic params the MIDI CC proxy layer created
+                // for CCs that have no declared `#[param(midi_cc = ...)]`
+                // mapping. Decode them back into raw MIDI CC events that
+                // Cosmo's MIDI learn can capture.
+                if vst3_midi_cc_proxy::is_proxy_id(pc.id) {
+                    if let Some((channel, cc)) = vst3_midi_cc_proxy::from_param_id(pc.id) {
+                        inst.event_list.push(Event {
+                            sample_offset,
+                            body: EventBody::ControlChange {
+                                group: 0,
+                                channel,
+                                cc,
+                                value: vst3_midi_cc_proxy::normalized_to_cc(pc.value),
+                            },
+                        });
+                    }
+                    continue;
+                }
                 // MIDI-mapped controllers (pitch bend, CC, pressure,
                 // program) arrive here as parameter changes because
                 // VST3 has no native input event for them. Bridge them
@@ -469,6 +489,9 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
 ) -> f64 {
+    if vst3_midi_cc_proxy::is_proxy_id(id) {
+        return 0.0;
+    }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         inst.params_arc.get_plain(id).unwrap_or(0.0)
@@ -480,6 +503,9 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     id: u32,
     value: f64,
 ) {
+    if vst3_midi_cc_proxy::is_proxy_id(id) {
+        return;
+    }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         inst.params_arc.set_plain(id, value);
@@ -491,6 +517,9 @@ unsafe extern "C" fn cb_param_normalize<P: PluginExport>(
     id: u32,
     plain: f64,
 ) -> f64 {
+    if vst3_midi_cc_proxy::is_proxy_id(id) {
+        return plain.clamp(0.0, 1.0);
+    }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         match inst.param_ranges.binary_search_by_key(&id, |(i, _)| *i) {
@@ -505,6 +534,9 @@ unsafe extern "C" fn cb_param_denormalize<P: PluginExport>(
     id: u32,
     normalized: f64,
 ) -> f64 {
+    if vst3_midi_cc_proxy::is_proxy_id(id) {
+        return normalized.clamp(0.0, 1.0);
+    }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         match inst.param_ranges.binary_search_by_key(&id, |(i, _)| *i) {
@@ -1100,7 +1132,25 @@ unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport>(
             unsafe { out_param_id.write(id) };
             1
         }
-        None => 0,
+        None => {
+            // PATCH (cosmo): proxy fallback. When a CC has no declared
+            // `#[param(midi_cc = ...)]` mapping, return a synthetic
+            // proxy ParamID so the host delivers it as a parameter
+            // change that we decode back into EventBody::ControlChange.
+            // This lets Cosmo's MIDI learn capture CCs bound to
+            // non-exported targets.
+            if vst3_midi_cc_proxy::is_enabled(&P::info())
+                && _bus_index == 0
+                && matches!(channel, 0..=15)
+                && matches!(controller, 0..=127)
+            {
+                if let Some(id) = vst3_midi_cc_proxy::to_param_id(channel as u8, controller as u8) {
+                    unsafe { out_param_id.write(id) };
+                    return 1;
+                }
+            }
+            0
+        }
     }
 }
 
@@ -1307,6 +1357,20 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             flags,
             group: cs.group.into_raw(),
         });
+    }
+
+    // PATCH (cosmo): register MIDI CC proxy param descriptors so the
+    // VST3 host sees them in `getParameterCount` / `getParameterInfo`.
+    // Proxy params have no Truce-side state — they're pure transport
+    // tokens decoded to `EventBody::ControlChange` in `cb_process`.
+    if vst3_midi_cc_proxy::is_enabled(&info) {
+        assert!(
+            !param_infos
+                .iter()
+                .any(|p| vst3_midi_cc_proxy::is_proxy_id(p.id)),
+            "real VST3 param id collides with MIDI CC proxy range"
+        );
+        param_descs.extend(vst3_midi_cc_proxy::descriptors());
     }
 
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
