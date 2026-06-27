@@ -63,6 +63,18 @@ typedef struct {
     AuMidiEvent midiBuffer[256];
     uint32_t midiCount;
 
+    // Pending parameter-event queue for host automation. Filled by
+    // au_v2_set_parameter / au_v2_schedule_parameters and drained in
+    // au_v2_render via g_callbacks->process(...). This lets AUv2 host
+    // automation enter Rust cb_process as EventBody::ParamChange rows,
+    // matching the VST3/AUv3 automation-UI synchronization path.
+    AuParamEvent paramEvents[512];
+    uint32_t paramEventCount;
+    // Set to true while delivering an editor-originated parameter change
+    // to the host via AudioUnitSetParameter, so the re-entrant call to
+    // au_v2_set_parameter does not re-queue the change as a host event.
+    Boolean suppressHostParamQueue;
+
     // Plugin → host MIDI output callback (set via
     // kAudioUnitProperty_MIDIOutputCallback). Hosts that want to
     // receive MIDI from instruments register the callback once after
@@ -170,6 +182,36 @@ static void fill_param_event(AudioUnitEvent *event, AudioUnit unit,
     event->mArgument.mParameter.mElement = 0;
 }
 
+/* Enqueue a parameter event for the next render block. These are
+ * drained in au_v2_render and passed as AuParamEvent rows to Rust
+ * cb_process, where they become EventBody::ParamChange entries that
+ * trigger UI updates. When the 512-slot queue is full, overwrite the
+ * most recent event for the same param (latest-value-wins) rather
+ * than dropping — this keeps automation UI responsive even when the
+ * host sends dense automation per block. */
+static void enqueue_param_event(TruceAUv2 *inst,
+                                AudioUnitParameterID id,
+                                AudioUnitParameterValue value,
+                                UInt32 sampleOffset) {
+    if (!inst) return;
+    if (inst->suppressHostParamQueue) return;
+    if (inst->paramEventCount >= 512) {
+        // Coalesce: overwrite latest event with same param_id
+        for (uint32_t i = inst->paramEventCount; i > 0; i--) {
+            if (inst->paramEvents[i - 1].param_id == id) {
+                inst->paramEvents[i - 1].sample_offset = sampleOffset;
+                inst->paramEvents[i - 1].value = (float)value;
+                return;
+            }
+        }
+        return;
+    }
+    AuParamEvent *ev = &inst->paramEvents[inst->paramEventCount++];
+    ev->sample_offset = sampleOffset;
+    ev->param_id = id;
+    ev->value = (float)value;
+}
+
 /* Called from Rust GUI callback to notify the AU host of a parameter change.
  *
  * Sets the value via `AudioUnitSetParameter` (which updates the host's
@@ -181,8 +223,11 @@ static void fill_param_event(AudioUnitEvent *event, AudioUnit unit,
 void truce_au_v2_host_set_param(void *ctx, uint32_t param_id, float value) {
     TruceAUv2 *inst = au_ctx_map_lookup(ctx);
     if (!inst || !inst->componentInstance) return;
+    Boolean oldSuppress = inst->suppressHostParamQueue;
+    inst->suppressHostParamQueue = true;
     AudioUnitSetParameter(inst->componentInstance, param_id,
                           kAudioUnitScope_Global, 0, value, 0);
+    inst->suppressHostParamQueue = oldSuppress;
     AudioUnitEvent event;
     fill_param_event(&event, inst->componentInstance, param_id,
                      kAudioUnitEvent_ParameterValueChange);
@@ -1078,10 +1123,11 @@ static OSStatus au_v2_get_parameter(void *self_, AudioUnitParameterID id,
 static OSStatus au_v2_set_parameter(void *self_, AudioUnitParameterID id,
                                      AudioUnitScope scope, AudioUnitElement elem,
                                      AudioUnitParameterValue value, UInt32 bufferOffset) {
-    (void)scope; (void)elem; (void)bufferOffset;
+    (void)scope; (void)elem;
     TruceAUv2 *inst = (TruceAUv2 *)self_;
     if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
     g_callbacks->param_set_value(inst->rustCtx, id, (double)value);
+    enqueue_param_event(inst, id, value, bufferOffset);
     return noErr;
 }
 
@@ -1094,6 +1140,22 @@ static OSStatus au_v2_schedule_parameters(void *self_,
         if (events[i].eventType == kParameterEvent_Immediate) {
             g_callbacks->param_set_value(inst->rustCtx,
                 events[i].parameter, (double)events[i].eventValues.immediate.value);
+            enqueue_param_event(inst,
+                events[i].parameter,
+                events[i].eventValues.immediate.value,
+                events[i].eventValues.immediate.bufferOffset);
+        } else if (events[i].eventType == kParameterEvent_Ramped) {
+            // Send the ramp end value at the ramp start offset.
+            // Truce's internal param smoother handles interpolation
+            // from the current value toward the target. This is not
+            // sample-accurate AU ramp reproduction but matches the
+            // VST3 pattern (target value at start offset).
+            AudioUnitParameterValue value = events[i].eventValues.ramp.endValue;
+            UInt32 offset = events[i].eventValues.ramp.startBufferOffset;
+            g_callbacks->param_set_value(inst->rustCtx,
+                events[i].parameter,
+                (double)value);
+            enqueue_param_event(inst, events[i].parameter, value, offset);
         }
     }
     return noErr;
@@ -1254,21 +1316,34 @@ static OSStatus au_v2_render(void *self_,
     AuTransportSnapshot transport;
     fill_transport_snapshot(inst, inTimeStamp, &transport);
 
+    /* Clamp queued parameter-event sample offsets to this block's
+     * frame count. AUv2 SetParameter carries no block-relative
+     * sample offset; ScheduleParameters offsets may be from a
+     * different scheduling context. Out-of-range offsets confuse
+     * the Rust chunker — clamp to the last frame so the event at
+     * least lands in this block. */
+    for (uint32_t i = 0; i < inst->paramEventCount; i++) {
+        if (inst->paramEvents[i].sample_offset >= inFrameCount) {
+            inst->paramEvents[i].sample_offset =
+                inFrameCount > 0 ? (inFrameCount - 1) : 0;
+        }
+    }
+
     /* AU v2 hosts deliver MIDI exclusively through the legacy
      * `MusicDeviceMIDIEvent` path (3-byte MIDI 1.0); they don't have a
      * MIDIEventList equivalent. Forward NULL / 0 for the MIDI 2.0
-     * UMP array so the Rust event-decoder skips it. Same story for
-     * the parameter-automation array - AU v2's `AudioUnitSetParameter`
-     * has no sample-offset slot, so per-sample ramps don't exist at
-     * the v2 format boundary; param changes land synchronously
-     * through `param_set_value` instead. */
+     * UMP array so the Rust event-decoder skips it. Pass the pending
+     * parameter-event queue so host automation enters Rust cb_process
+     * as EventBody::ParamChange rows, matching VST3/AUv3 behaviour. */
     g_callbacks->process(inst->rustCtx, inPtrs, outPtrs,
                          numIn, numOut, inFrameCount,
                          inst->midiBuffer, inst->midiCount,
                          NULL, 0,
-                         NULL, 0,
+                         inst->paramEvents,
+                         inst->paramEventCount,
                          &transport);
     inst->midiCount = 0;
+    inst->paramEventCount = 0;
 
     /* Drain plugin → host MIDI. Channel-voice events go through
      * `output_event_at` (filtered to fit in 3-byte MIDI 1.0
@@ -1520,6 +1595,9 @@ static void *truce_au_v2_factory(const AudioComponentDescription *desc) {
     inst->interface.Close = au_v2_close;
     inst->interface.Lookup = au_v2_lookup;
     inst->interface.reserved = NULL;
+
+    inst->paramEventCount = 0;
+    inst->suppressHostParamQueue = false;
 
     /* 132 KiB: matches truce_core::SYSEX_POOL_PREALLOC (128 KiB)
      * plus headroom for per-packet headers (≈14 B × ≤256 events).
