@@ -1,4 +1,5 @@
 use std::ffi::CString;
+use std::os::raw::c_char;
 
 use crate::ffi::Vst3ParamDescriptor;
 
@@ -6,6 +7,14 @@ const PROXY_BASE: u32 = 0x6d63_6d00;
 const PROXY_CHANNELS: u32 = 16;
 const PROXY_CCS: u32 = 128;
 const PROXY_COUNT: u32 = PROXY_CHANNELS * PROXY_CCS;
+
+fn leak_cstr(s: String) -> *const c_char {
+    CString::new(s).unwrap().into_raw()
+}
+
+fn leak_static(s: &str) -> *const c_char {
+    CString::new(s).unwrap().into_raw()
+}
 
 pub fn is_enabled(info: &truce_core::info::PluginInfo) -> bool {
     info.accepts_midi_in
@@ -43,19 +52,19 @@ pub fn descriptors() -> Vec<Vst3ParamDescriptor> {
     let mut descs = Vec::with_capacity(PROXY_COUNT as usize);
     for id in iter_param_ids() {
         let (ch, cc) = from_param_id(id).unwrap();
-        let name = format!("CC {ch}:{cc}");
-        let cs = CString::new(name).unwrap();
+        // Display channel 1-based: hosts and users expect "Ch 1" not "Ch 0".
+        let display_ch = ch + 1;
         descs.push(Vst3ParamDescriptor {
             id,
-            name: cs.into_raw(),
-            short_name: std::ptr::null(),
-            units: std::ptr::null(),
+            name: leak_cstr(format!("MIDI CC {cc} Ch {display_ch}")),
+            short_name: leak_cstr(format!("CC{cc}")),
+            units: leak_static(""),
             min: 0.0,
             max: 1.0,
             default_normalized: 0.0,
             step_count: 127,
             flags: 1,
-            group: std::ptr::null(),
+            group: leak_static("MIDI CC Proxy"),
         });
     }
     descs

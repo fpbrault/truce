@@ -553,14 +553,24 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
     out: *mut c_char,
     out_len: u32,
 ) -> u32 {
-    unsafe {
-        // `out_len == 0` would underflow on `out_len as usize - 1`
-        // and let `copy_nonoverlapping` write the full formatted
-        // string into a buffer the host claimed had zero capacity.
-        // Treat zero capacity as "host wants nothing" and return.
-        if out_len == 0 || out.is_null() {
-            return 0;
+    // `out_len == 0` would underflow on `out_len as usize - 1`
+    // and let `copy_nonoverlapping` write the full formatted
+    // string into a buffer the host claimed had zero capacity.
+    // Treat zero capacity as "host wants nothing" and return.
+    if out_len == 0 || out.is_null() {
+        return 0;
+    }
+    if vst3_midi_cc_proxy::is_proxy_id(id) {
+        unsafe {
+            let text = format!("{}", vst3_midi_cc_proxy::normalized_to_cc(value));
+            let bytes = text.as_bytes();
+            let len = bytes.len().min((out_len as usize) - 1);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
+            *out.add(len) = 0;
+            return len_u32(len);
         }
+    }
+    unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         match inst.params_arc.format_value(id, value) {
             Some(text) => {
