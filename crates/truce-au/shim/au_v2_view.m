@@ -42,33 +42,156 @@
 #ifndef TRUCE_AU_FIXED_CONTAINER_NAME
 #define TRUCE_AU_FIXED_CONTAINER_NAME TruceAuFixedContainer
 #endif
+#ifndef TRUCE_AU_RESIZE_HANDLE_NAME
+#define TRUCE_AU_RESIZE_HANDLE_NAME TruceAuResizeHandle
+#endif
 
-/// Fixed-size container the host parents the editor into. AU v2
-/// has no standardised host-driven resize protocol, and the major
-/// hosts (Logic, REAPER, Ableton, Cubase) each interpret view
-/// sizing slightly differently. We sidestep the whole mess by
-/// pinning the container to the editor's natural size from
-/// `gui_get_size` and ignoring any attempt by the host to resize
-/// us. Use AU v3 (or CLAP / VST3 / LV2) for resizable editors.
+static const CGFloat kTruceResizeHandleSize = 18.0;
+static const CGFloat kTruceResizeHandleInset = 3.0;
+
+@class TRUCE_AU_FIXED_CONTAINER_NAME;
+
+@interface TRUCE_AU_RESIZE_HANDLE_NAME : NSView
+@property(nonatomic, weak) TRUCE_AU_FIXED_CONTAINER_NAME *container;
+@property(nonatomic, assign) NSPoint dragStartPoint;
+@property(nonatomic, assign) NSSize dragStartSize;
+@end
+
+/// Container the host parents the editor into. AU v2 has no
+/// standardised host-driven resize protocol, so resizable editors use an
+/// AppKit corner handle that changes this NSView's frame. Hosts observe
+/// the frame change through normal Cocoa layout notifications.
 @interface TRUCE_AU_FIXED_CONTAINER_NAME : NSView
 @property(nonatomic, assign) void *rustCtx;
 @property(nonatomic, assign) const AuCallbacks *callbacks;
+@property(nonatomic, strong) TRUCE_AU_RESIZE_HANDLE_NAME *resizeHandle;
+- (void)syncResizeHandleVisibility;
+- (void)bringResizeHandleToFront;
+- (void)resizeFromHandleWithDelta:(NSSize)delta;
+@end
+
+@implementation TRUCE_AU_RESIZE_HANDLE_NAME
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+
+    [[NSColor colorWithCalibratedWhite:0.72 alpha:0.75] setStroke];
+    NSBezierPath *path = [NSBezierPath bezierPath];
+    [path setLineWidth:1.0];
+
+    CGFloat maxX = NSMaxX(self.bounds) - kTruceResizeHandleInset;
+    CGFloat maxY = NSMaxY(self.bounds) - kTruceResizeHandleInset;
+    for (NSInteger i = 0; i < 3; i++) {
+        CGFloat offset = 5.0 + (CGFloat)i * 5.0;
+        [path moveToPoint:NSMakePoint(maxX - offset, maxY)];
+        [path lineToPoint:NSMakePoint(maxX, maxY - offset)];
+    }
+    [path stroke];
+}
+
+- (void)resetCursorRects {
+    [self addCursorRect:self.bounds cursor:[NSCursor arrowCursor]];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    self.dragStartPoint = [self.window convertPointToScreen:event.locationInWindow];
+    self.dragStartSize = self.container.frame.size;
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    NSPoint currentPoint = [self.window convertPointToScreen:event.locationInWindow];
+    NSSize delta = NSMakeSize(
+        currentPoint.x - self.dragStartPoint.x,
+        self.dragStartPoint.y - currentPoint.y);
+    [self.container resizeFromHandleWithDelta:delta];
+}
+
 @end
 
 @implementation TRUCE_AU_FIXED_CONTAINER_NAME
-- (void)setFrameSize:(NSSize)newSize {
-    // Pin to the editor's natural size. Any host call to resize
-    // us (Logic embedding into its plug-in pane, Ableton's frame
-    // measurement, REAPER's FX panel layout) is ignored.
-    if (self.rustCtx != NULL && self.callbacks != NULL) {
-        uint32_t natW = 0, natH = 0;
-        self.callbacks->gui_get_size(self.rustCtx, &natW, &natH);
-        if (natW > 0 && natH > 0) {
-            [super setFrameSize:NSMakeSize((CGFloat)natW, (CGFloat)natH)];
-            return;
-        }
+
+- (instancetype)initWithFrame:(NSRect)frameRect {
+    self = [super initWithFrame:frameRect];
+    if (self) {
+        self.autoresizesSubviews = YES;
+        _resizeHandle = [[TRUCE_AU_RESIZE_HANDLE_NAME alloc]
+            initWithFrame:NSMakeRect(NSWidth(frameRect) - kTruceResizeHandleSize,
+                          0,
+                          kTruceResizeHandleSize,
+                          kTruceResizeHandleSize)];
+        _resizeHandle.container = self;
+        _resizeHandle.autoresizingMask = NSViewMinXMargin | NSViewMaxYMargin;
+        _resizeHandle.hidden = YES;
+        [self addSubview:_resizeHandle];
     }
-    [super setFrameSize:newSize];
+    return self;
+}
+
+- (BOOL)isResizable {
+    return self.rustCtx != NULL && self.callbacks != NULL &&
+        self.callbacks->gui_can_resize(self.rustCtx) != 0;
+}
+
+- (NSSize)currentEditorSize {
+    uint32_t w = 0, h = 0;
+    if (self.rustCtx != NULL && self.callbacks != NULL) {
+        self.callbacks->gui_get_size(self.rustCtx, &w, &h);
+    }
+    if (w > 0 && h > 0) {
+        return NSMakeSize((CGFloat)w, (CGFloat)h);
+    }
+    return self.frame.size;
+}
+
+- (void)syncResizeHandleVisibility {
+    self.resizeHandle.hidden = ![self isResizable];
+    [self bringResizeHandleToFront];
+}
+
+- (void)bringResizeHandleToFront {
+    if (self.resizeHandle.superview == self && !self.resizeHandle.hidden) {
+        [self addSubview:self.resizeHandle positioned:NSWindowAbove relativeTo:nil];
+        [self.resizeHandle setNeedsDisplay:YES];
+    }
+}
+
+- (NSSize)applyEditorSize:(NSSize)requestedSize {
+    if (self.rustCtx == NULL || self.callbacks == NULL) {
+        return requestedSize;
+    }
+
+    if (![self isResizable]) {
+        return [self currentEditorSize];
+    }
+
+    uint32_t requestedW = (uint32_t)MAX(1.0, requestedSize.width);
+    uint32_t requestedH = (uint32_t)MAX(1.0, requestedSize.height);
+    self.callbacks->gui_set_size(self.rustCtx, requestedW, requestedH);
+    return [self currentEditorSize];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+    NSSize acceptedSize = [self applyEditorSize:newSize];
+    [super setFrameSize:acceptedSize];
+    [self syncResizeHandleVisibility];
+}
+
+- (void)resizeFromHandleWithDelta:(NSSize)delta {
+    NSSize requestedSize = NSMakeSize(
+        self.resizeHandle.dragStartSize.width + delta.width,
+        self.resizeHandle.dragStartSize.height + delta.height);
+    NSSize acceptedSize = [self applyEditorSize:requestedSize];
+
+    NSRect frame = self.frame;
+    frame.origin.y -= acceptedSize.height - frame.size.height;
+    frame.size = acceptedSize;
+    [super setFrame:frame];
+    [self syncResizeHandleVisibility];
+    [self bringResizeHandleToFront];
 }
 @end
 
@@ -98,10 +221,6 @@
 
     if (!cb->gui_has_editor(ctx)) return nil;
 
-    // AU v2 ignores `preferredSize` and any `.resizable(true)` on
-    // the editor. Resize-capable editors (CLAP / VST3 / LV2 /
-    // AU v3 / standalone) get host-driven resize; AU v2 stays
-    // fixed at the editor's natural size for every host.
     uint32_t w = 0, h = 0;
     cb->gui_get_size(ctx, &w, &h);
     if (w == 0 || h == 0) return nil;
@@ -112,6 +231,7 @@
         [[TRUCE_AU_FIXED_CONTAINER_NAME alloc] initWithFrame:frame];
     container.rustCtx = ctx;
     container.callbacks = cb;
+    [container syncResizeHandleVisibility];
     // PATCH (cosmo): defer gui_open until the host has attached our
     // container to its window. The Cosmo editor validates that the
     // parent NSView already belongs to a window before embedding the
@@ -119,6 +239,8 @@
     // before the view hierarchy is live.
     dispatch_async(dispatch_get_main_queue(), ^{
         cb->gui_open(ctx, (__bridge void *)container);
+        [container syncResizeHandleVisibility];
+        [container bringResizeHandleToFront];
     });
     return container;
 }

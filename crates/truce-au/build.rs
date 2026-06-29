@@ -58,6 +58,7 @@ fn main() {
     // Gain / GUI Zoo collisions REAPER warns about all flow through
     // this one class.
     let fixed_container_name = format!("TruceAuFixedContainer_{sanitized}");
+    let resize_handle_name = format!("TruceAuResizeHandle_{sanitized}");
 
     let mut build = cc::Build::new();
     build.file("shim/au_shim_common.c");
@@ -89,6 +90,7 @@ fn main() {
             "TRUCE_AU_FIXED_CONTAINER_NAME",
             fixed_container_name.as_str(),
         );
+        build.define("TRUCE_AU_RESIZE_HANDLE_NAME", resize_handle_name.as_str());
     }
 
     build.compile("au_shim");
